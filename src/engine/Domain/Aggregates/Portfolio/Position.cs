@@ -4,9 +4,9 @@ using Engine.Domain.ValueObjects;
 
 public class Position
 {
-    public Ticker Ticker {; }
-    public decimal Quantity {; private set; }
-    public Money AveragePurchasePrice {; private set; }
+    public Ticker Ticker { get; }
+    public decimal Quantity { get; private set; }
+    public Money AveragePurchasePrice { get; private set; }
 
     public Position(Ticker ticker, decimal quantity, Money averagePurchasePrice)
     {

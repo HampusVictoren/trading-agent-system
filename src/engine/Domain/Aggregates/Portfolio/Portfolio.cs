@@ -4,8 +4,8 @@ using Engine.Domain.ValueObjects;
 
 public class Portfolio
 {
-    public Guid Id {; } = Guid.NewGuid();
-    public Money CashBalance {; private set; }
+    public Guid Id { get; } = Guid.NewGuid();
+    public Money CashBalance { get; private set; }
     private readonly List<Position> _positions = new();
     public IReadOnlyCollection<Position> Positions => _positions.AsReadOnly();
 

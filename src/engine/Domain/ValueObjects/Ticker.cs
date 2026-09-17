@@ -1,8 +1,8 @@
-namespace TradingEngine.Domain.ValueObjects;
+namespace Engine.Domain.ValueObjects;
 
 public record Ticker
 {
-    public string Value {; }
+    public string Value { get; }
 
     public Ticker(string value)
     {
