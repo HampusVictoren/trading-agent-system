@@ -1,0 +1,24 @@
+# .NET
+bin/
+obj/
+appsettings.Development.json
+
+# Känsliga filer & miljövariabler
+.env
+.env.local
+*.pem
+*.key
+
+# .NET User Secrets / lokala inställningar
+appsettings.Development.json
+appsettings.Local.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.env
+
+# Docker / IDE
+.vscode/
+.idea/
