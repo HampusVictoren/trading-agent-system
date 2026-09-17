@@ -5,9 +5,8 @@ app = FastAPI(
     version="1.0.0",
     description="Python AI Agent Service for Financial Analysis"
 )
-
+app.include_router(router)
 @app.get("/health")
 def health_check():
     return {"status": "online", "service": "agents"}
 
-app.include_router(router)
