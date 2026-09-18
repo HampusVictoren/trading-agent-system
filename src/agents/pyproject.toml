@@ -9,8 +9,11 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "ag2[openai]>=1.0.5",
+    "asyncpg>=0.31.0",
     "fastmcp>=3.4.7",
     "mcp[cli]<2",
+    "openai>=3.16.1",
+    "pgvector>=0.5.0",
     "yfinance>=1.7.0",
 ]
 
