@@ -1,5 +1,5 @@
 from enum import Enum
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 class ActionEnum(str, Enum):
     BUY = "BUY"
@@ -12,3 +12,9 @@ class InvestmentProposal(BaseModel):
     amount_usd: float = Field(..., ge=0, description="Belopp i USD")
     confidence: float = Field(..., ge=0.0, le=1.0, description="Konfidensgrad")
     reasoning: str = Field(..., description="Motivering till beslutet")
+
+    @model_validator(mode="after")
+    def buy_requires_amount(self) -> "InvestmentProposal":
+        if self.action == ActionEnum.BUY and self.amount_usd <= 0:
+            raise ValueError("amount_usd måste vara större än 0 vid BUY")
+        return self
