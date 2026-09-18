@@ -11,7 +11,9 @@ A hybrid, modular automated trading agent that runs entirely locally:
 - **PostgreSQL + pgvector** (Docker) holds hard facts and the agents' semantic memory (`agent_memories`).
 - **Ollama** is the LLM backend for both text generation (`llama3.2`) and embeddings (`nomic-embed-text`). The plan is to add Claude or Grok later.
 
-Code comments, log messages, agent prompts and exception messages are written in **Swedish**. Follow that convention when editing existing code.
+Code comments, log messages, agent prompts and exception messages are written in **Swedish**. Follow that convention when editing existing code. **Commit messages are written in English.**
+
+`docs/arkitektur-roadmap.md` holds the architecture assessment and the staged plan (written in Swedish). Read it before starting work on a new stage.
 
 ## Commands
 
