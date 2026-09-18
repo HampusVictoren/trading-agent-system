@@ -1,15 +1,17 @@
-import json
-import re
+import logging
 from ag2 import Agent, tool
+from app.domain.models import ActionEnum, InvestmentProposal
 from app.infrastructure.ag2.config import get_llm_config
 from app.infrastructure.mcp.market_data_server import get_stock_quote
+
+logger = logging.getLogger(__name__)
 
 @tool
 def get_stock_quote_tool(ticker: str) -> dict:
     """Hämtar aktuellt pris, P/E-tal och nyckeltal för en aktieticker via FastMCP."""
     return get_stock_quote(ticker)
 
-async def run_agent_analysis(ticker: str) -> dict:
+async def run_agent_analysis(ticker: str) -> InvestmentProposal:
     llm_config = get_llm_config()
 
     # 1. Analyst Agent med MCP-verktyg
@@ -33,20 +35,14 @@ async def run_agent_analysis(ticker: str) -> dict:
         config=llm_config,
     )
 
-    # 3. Portfolio Manager Agent
+    # 3. Portfolio Manager Agent (svarsformatet styrs av response_schema nedan)
     portfolio_manager = Agent(
         "PortfolioManager",
         prompt=(
-            "Du är ansvarig för portföljen. Lyssna på analytikerns och risk managerns slutsatser. "
-            "Fatta ett slutgiltigt beslut och svara EENBART med ett giltigt JSON-objekt i följande format:\n"
-            "{\n"
-            '  "ticker": "TICKER",\n'
-            '  "action": "BUY" eller "HOLD",\n'
-            '  "amount_usd": 250.0,\n'
-            '  "confidence": 0.85,\n'
-            '  "reasoning": "Kort motivering som sammanfattar valet."\n'
-            "}\n"
-            "Svara INTE med någon övrig text, markdown-kodblock eller förklaringar utöver JSON-objektet."
+            "Du är ansvarig för portföljen. Lyssna på analytikerns och risk managerns slutsatser "
+            "och fatta ett slutgiltigt beslut: action ska vara BUY eller HOLD, amount_usd är beloppet "
+            "i USD att köpa för (0 vid HOLD), confidence är din säkerhet mellan 0 och 1 och "
+            "reasoning är en kort motivering som sammanfattar valet."
         ),
         config=llm_config,
     )
@@ -60,26 +56,26 @@ async def run_agent_analysis(ticker: str) -> dict:
         risk_reply = await risk_manager.ask(f"Granska följande analys för {ticker}:\n{analyst_summary}")
         risk_summary = risk_reply.body
 
-        # Steg C: Portfolio Manager fattar beslut
+        # Steg C: Portfolio Manager fattar beslut som valideras mot InvestmentProposal
         pm_reply = await portfolio_manager.ask(
             f"Fatta beslut för {ticker} baserat på:\n"
             f"Analys: {analyst_summary}\n"
-            f"Risk: {risk_summary}"
+            f"Risk: {risk_summary}",
+            response_schema=InvestmentProposal,
         )
-        raw_response = pm_reply.body
+        proposal = await pm_reply.content(retries=2)
+        if proposal is None:
+            raise ValueError("Portfolio Manager returnerade inget svar.")
 
-        # Tvätta ur JSON om LLM inkluderade markdown-fencing
-        json_match = re.search(r"\{.*\}", raw_response, re.DOTALL)
-        if json_match:
-            return json.loads(json_match.group(0))
-
-        return json.loads(raw_response)
+        return proposal.model_copy(update={"ticker": ticker.upper()})
 
     except Exception as e:
-        return {
-            "ticker": ticker.upper(),
-            "action": "BUY",
-            "amount_usd": 250.0,
-            "confidence": 0.5,
-            "reasoning": f"Fallback p.g.a. fel under AG2 v1.0 agentdebatten: {str(e)}"
-        }
+        # Ett fel får aldrig leda till ett köp – motorn ignorerar allt som inte är BUY
+        logger.exception("Agentkedjan misslyckades för %s", ticker)
+        return InvestmentProposal(
+            ticker=ticker.upper(),
+            action=ActionEnum.HOLD,
+            amount_usd=0.0,
+            confidence=0.0,
+            reasoning=f"Fallback (HOLD) p.g.a. fel i agentkedjan: {e}",
+        )

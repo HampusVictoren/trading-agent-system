@@ -10,7 +10,7 @@ builder.Services.AddSingleton<RiskEngine>(sp => new RiskEngine(maxPositionPercen
 
 builder.Services.AddHttpClient<IAgentClient, PythonAgentClient>(client =>
 {
-    var baseUrl = builder.Configuration["AgentService:BaseUrl"] ?? "http://localhost:8000";
+    var baseUrl = builder.Configuration["AgentService:BaseUrl"] ?? "http://127.0.0.1:8000";
     client.BaseAddress = new Uri(baseUrl);
 });
 

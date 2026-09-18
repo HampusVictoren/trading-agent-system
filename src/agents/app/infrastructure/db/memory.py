@@ -4,7 +4,7 @@ import httpx
 from openai import AsyncOpenAI
 from pgvector.asyncpg import register_vector
 
-DB_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/tradingdb")
+DB_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:5432/tradingdb")
 OLLAMA_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434/v1")
 
 # trust_env=False tvingar httpx att ignorera proxy och ansluta direkt till 127.0.0.1
