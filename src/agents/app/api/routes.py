@@ -1,18 +1,17 @@
 from fastapi import APIRouter
-from app.domain.models import InvestmentProposal, ActionEnum
+from pydantic import BaseModel
+from app.infrastructure.ag2.team import run_agent_analysis
 
 router = APIRouter()
 
-@router.get("/health")
-def health_check():
-    return {"status": "online", "service": "agents"}
+class InvestmentProposal(BaseModel):
+    ticker: str
+    action: str
+    amount_usd: float
+    confidence: float
+    reasoning: str
 
 @router.post("/analyze/{ticker}", response_model=InvestmentProposal)
 async def analyze_ticker(ticker: str):
-    return InvestmentProposal(
-        ticker=ticker.upper(),
-        action=ActionEnum.BUY,
-        amount_usd=250.0,
-        confidence=0.85,
-        reasoning=f"Preliminär analys av {ticker.upper()} visar goda nyckeltal."
-    )
+    proposal_data = await run_agent_analysis(ticker)
+    return InvestmentProposal(**proposal_data)

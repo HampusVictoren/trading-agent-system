@@ -1,0 +1,22 @@
+[project]
+name = "agents"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "HampusVictoren", email = "hampus.victoren@hotmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "ag2[openai]>=1.0.5",
+    "fastmcp>=3.4.7",
+    "mcp[cli]<2",
+    "yfinance>=1.7.0",
+]
+
+[project.scripts]
+agents = "agents:main"
+
+[build-system]
+requires = ["uv_build>=0.12.6,<0.13.0"]
+build-backend = "uv_build"
