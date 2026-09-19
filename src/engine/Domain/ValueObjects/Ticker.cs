@@ -7,7 +7,7 @@ public record Ticker
     public Ticker(string value)
     {
         if (string.IsNullOrWhiteSpace(value))
-            throw new ArgumentException("Ticker kan inte vara tom.", nameof(value));
+            throw new ArgumentException("Ticker must not be empty.", nameof(value));
 
         Value = value.Trim().ToUpperInvariant();
     }
