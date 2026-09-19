@@ -11,9 +11,10 @@ A hybrid, modular automated trading agent that runs entirely locally:
 - **PostgreSQL + pgvector** (Docker) holds hard facts and the agents' semantic memory (`agent_memories`).
 - **Ollama** is the LLM backend for both text generation (`llama3.2`) and embeddings (`nomic-embed-text`). The plan is to add Claude or Grok later.
 
-Code comments, log messages, agent prompts and exception messages are written in **Swedish**. Follow that convention when editing existing code. **Commit messages are written in English.**
+Everything in this repo is written in **English** — code, comments, log messages, exception messages, commit messages and documentation. There are exactly two exceptions:
 
-`docs/arkitektur-roadmap.md` holds the architecture assessment and the staged plan (written in Swedish). Read it before starting work on a new stage.
+- **Agent prompts** in `src/agents/app/infrastructure/ag2/` stay in Swedish, so the agents' `reasoning` comes back in Swedish.
+- **`docs/arkitektur-roadmap.md`** is written in Swedish. It holds the architecture assessment and the staged plan — read it before starting work on a new stage.
 
 ## Commands
 

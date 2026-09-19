@@ -1,7 +1,9 @@
-from enum import Enum
+from enum import StrEnum
+
 from pydantic import BaseModel, Field, model_validator
 
-class ActionEnum(str, Enum):
+
+class ActionEnum(StrEnum):
     BUY = "BUY"
     SELL = "SELL"
     HOLD = "HOLD"

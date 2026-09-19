@@ -1,4 +1,5 @@
 import os
+
 import asyncpg
 import httpx
 from openai import AsyncOpenAI
@@ -7,13 +8,15 @@ from pgvector.asyncpg import register_vector
 DB_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:5432/tradingdb")
 OLLAMA_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434/v1")
 
-# trust_env=False tvingar httpx att ignorera proxy och ansluta direkt till 127.0.0.1
+# trust_env=False forces httpx to ignore any proxy and connect straight to 127.0.0.1
 http_client = httpx.AsyncClient(trust_env=False)
 
 client = AsyncOpenAI(
     base_url=OLLAMA_URL,
     api_key="ollama",
-    http_client=http_client
+    # openai 3.x expects httpx2.AsyncClient; httpx 0.28 is duck-compatible here.
+    # Stage 1 moves client creation into the FastAPI lifespan and resolves this properly.
+    http_client=http_client,  # type: ignore[arg-type]
 )
 
 async def get_embedding(text: str) -> list[float]:

@@ -2,23 +2,19 @@
 bin/
 obj/
 appsettings.Development.json
+appsettings.Local.json
 
-# Känsliga filer & miljövariabler
+# Secrets and environment variables
 .env
 .env.local
 *.pem
 *.key
 
-# .NET User Secrets / lokala inställningar
-appsettings.Development.json
-appsettings.Local.json
-
 # Python
 __pycache__/
 *.py[cod]
 .venv/
-.env
 
-# Docker / IDE
+# IDE
 .vscode/
 .idea/

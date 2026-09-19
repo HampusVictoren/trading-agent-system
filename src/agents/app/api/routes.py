@@ -1,4 +1,5 @@
 from fastapi import APIRouter
+
 from app.domain.models import InvestmentProposal
 from app.infrastructure.ag2.team import run_agent_analysis
 

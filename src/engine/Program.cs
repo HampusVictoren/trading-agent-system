@@ -1,8 +1,8 @@
 using Engine.Application.Interfaces;
 using Engine.Application.UseCases;
 using Engine.Domain.Services;
-using Engine.Infrastructure.Clients.Agents;
 using Engine.Hosting.Workers;
+using Engine.Infrastructure.Clients.Agents;
 
 var builder = Host.CreateApplicationBuilder(args);
 
