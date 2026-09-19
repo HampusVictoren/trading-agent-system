@@ -17,11 +17,16 @@ concurrency:
 
 # Actions are pinned to full commit SHAs, not tags. A tag can be moved if an
 # action's repository is compromised; a SHA cannot. Dependabot keeps them current.
+#
+# Runners are pinned to an Ubuntu release too, so that an OS upgrade is a change
+# made on purpose rather than one that arrives when GitHub moves ubuntu-latest.
+# 24.04 matches the WSL environment the code is developed in. Dependabot does not
+# update runner labels, so the next upgrade is a manual edit.
 
 jobs:
   engine:
     name: Engine (.NET)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -43,7 +48,7 @@ jobs:
 
   agents:
     name: Agents (Python)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: src/agents
@@ -79,7 +84,7 @@ jobs:
 
   secrets:
     name: Secret scan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       GITLEAKS_VERSION: 8.30.1
       # Pinned here rather than downloaded next to the binary: a checksum file
@@ -103,7 +108,7 @@ jobs:
 
   vulnerabilities:
     name: Vulnerability scan (advisory)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Advisory by design: a new CVE in an untouched transitive dependency should
     # not block unrelated work. Dependabot opens the fix as its own PR.
     continue-on-error: true
@@ -114,7 +119,12 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
+      # No cache here. By default this job would save to the same key as the
+      # agents job, and whichever job saves first decides what the agents job
+      # restores until uv.lock changes. This job only needs pip-audit.
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          enable-cache: false
 
       - name: .NET packages
         run: dotnet list TradingSystem.slnx package --vulnerable --include-transitive
