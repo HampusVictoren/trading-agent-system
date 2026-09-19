@@ -29,6 +29,8 @@ build-backend = "uv_build"
 [dependency-groups]
 dev = [
     "mypy>=1.14",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.25",
     "ruff>=0.9",
 ]
 
@@ -59,3 +61,7 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = "app.domain.*"
 disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

@@ -19,6 +19,6 @@ public record Money(decimal Amount, string Currency = "USD")
     private void EnsureSameCurrency(Money other)
     {
         if (Currency != other.Currency)
-            throw new InvalidOperationException($"Kan inte blanda valutor {Currency} och {other.Currency}.");
+            throw new InvalidOperationException($"Cannot mix currencies {Currency} and {other.Currency}.");
     }
 }
