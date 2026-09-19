@@ -19,13 +19,13 @@ public class ProcessProposalUseCase
     public async Task ExecuteAsync(Portfolio portfolio, string tickerSymbol, CancellationToken cancellationToken = default)
     {
         var proposal = await _agentClient.AnalyzeTickerAsync(tickerSymbol, cancellationToken);
-        
+
         if (proposal == null || proposal.Action != "BUY")
             return;
 
         var ticker = new Ticker(proposal.Ticker);
         var intendedSpend = new Money(proposal.AmountUsd, "USD");
-        
+
         _riskEngine.ValidateTrade(portfolio, ticker, intendedSpend, portfolio.CashBalance);
         portfolio.ExecuteBuy(ticker, quantity: 1m, intendedSpend);
     }

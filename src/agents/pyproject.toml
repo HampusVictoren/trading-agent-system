@@ -1,7 +1,7 @@
 [project]
 name = "agents"
 version = "0.1.0"
-description = "Add your description here"
+description = "FastAPI-tjänst som kör ett AG2-agentteam för aktieanalys"
 readme = "README.md"
 authors = [
     { name = "HampusVictoren", email = "hampus.victoren@hotmail.com" }
@@ -21,9 +21,41 @@ dependencies = [
     "yfinance>=1.7.0",
 ]
 
-[project.scripts]
-agents = "agents:main"
 
 [build-system]
 requires = ["uv_build>=0.12.6,<0.13.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "mypy>=1.14",
+    "ruff>=0.9",
+]
+
+# app/ sits directly in the project root, not under src/.
+# Without this the wheel builds empty and `app` is only importable
+# because the working directory happens to be src/agents.
+[tool.uv.build-backend]
+module-name = "app"
+module-root = ""
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC", "S"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]   # assert is the whole point in tests
+
+[tool.mypy]
+python_version = "3.12"
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "app.domain.*"
+disallow_untyped_defs = true

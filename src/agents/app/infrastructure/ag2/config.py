@@ -1,5 +1,7 @@
 import os
+
 from ag2.config import OpenAIConfig
+
 
 def get_llm_config():
     """Returnerar konfiguration för AG2 v1.0+."""

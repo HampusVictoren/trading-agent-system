@@ -1,5 +1,7 @@
 import logging
+
 from ag2 import Agent, tool
+
 from app.domain.models import ActionEnum, InvestmentProposal
 from app.infrastructure.ag2.config import get_llm_config
 from app.infrastructure.mcp.market_data_server import get_stock_quote
@@ -14,7 +16,7 @@ def get_stock_quote_tool(ticker: str) -> dict:
 async def run_agent_analysis(ticker: str) -> InvestmentProposal:
     llm_config = get_llm_config()
 
-    # 1. Analyst Agent med MCP-verktyg
+    # 1. Analyst agent with its MCP tool
     analyst = Agent(
         "MarketAnalyst",
         prompt=(
@@ -25,7 +27,7 @@ async def run_agent_analysis(ticker: str) -> InvestmentProposal:
         tools=[get_stock_quote_tool],
     )
 
-    # 2. Risk Manager Agent
+    # 2. Risk manager agent
     risk_manager = Agent(
         "RiskManager",
         prompt=(
@@ -35,12 +37,13 @@ async def run_agent_analysis(ticker: str) -> InvestmentProposal:
         config=llm_config,
     )
 
-    # 3. Portfolio Manager Agent (svarsformatet styrs av response_schema nedan)
+    # 3. Portfolio manager agent (response shape is driven by response_schema below)
     portfolio_manager = Agent(
         "PortfolioManager",
         prompt=(
             "Du är ansvarig för portföljen. Lyssna på analytikerns och risk managerns slutsatser "
-            "och fatta ett slutgiltigt beslut: action ska vara BUY eller HOLD, amount_usd är beloppet "
+            "och fatta ett slutgiltigt beslut: action ska vara BUY eller HOLD, "
+            "amount_usd är beloppet "
             "i USD att köpa för (0 vid HOLD), confidence är din säkerhet mellan 0 och 1 och "
             "reasoning är en kort motivering som sammanfattar valet."
         ),
@@ -48,15 +51,19 @@ async def run_agent_analysis(ticker: str) -> InvestmentProposal:
     )
 
     try:
-        # Steg A: Analytikern kör analys via sitt verktyg
-        analyst_reply = await analyst.ask(f"Analysera aktien {ticker}. Använd get_stock_quote_tool för att hämta data.")
+        # Step A: the analyst runs its analysis through the tool
+        analyst_reply = await analyst.ask(
+            f"Analysera aktien {ticker}. Använd get_stock_quote_tool för att hämta data."
+        )
         analyst_summary = analyst_reply.body
 
-        # Steg B: Risk Manager granskar
-        risk_reply = await risk_manager.ask(f"Granska följande analys för {ticker}:\n{analyst_summary}")
+        # Step B: the risk manager reviews it
+        risk_reply = await risk_manager.ask(
+            f"Granska följande analys för {ticker}:\n{analyst_summary}"
+        )
         risk_summary = risk_reply.body
 
-        # Steg C: Portfolio Manager fattar beslut som valideras mot InvestmentProposal
+        # Step C: the portfolio manager decides, validated against InvestmentProposal
         pm_reply = await portfolio_manager.ask(
             f"Fatta beslut för {ticker} baserat på:\n"
             f"Analys: {analyst_summary}\n"
@@ -70,7 +77,7 @@ async def run_agent_analysis(ticker: str) -> InvestmentProposal:
         return proposal.model_copy(update={"ticker": ticker.upper()})
 
     except Exception as e:
-        # Ett fel får aldrig leda till ett köp – motorn ignorerar allt som inte är BUY
+        # An error must never lead to a buy - the engine ignores anything that is not BUY
         logger.exception("Agentkedjan misslyckades för %s", ticker)
         return InvestmentProposal(
             ticker=ticker.upper(),

@@ -1,8 +1,8 @@
 namespace Engine.Domain.Services;
 
 using Engine.Domain.Aggregates.Portfolio;
-using Engine.Domain.ValueObjects;
 using Engine.Domain.Exceptions;
+using Engine.Domain.ValueObjects;
 
 public class RiskEngine
 {
@@ -20,13 +20,13 @@ public class RiskEngine
         if (intendedSpend.Amount > maxAllowedSpend)
         {
             throw new RiskViolationException(
-                $"Köporder för {ticker.Value} på ${intendedSpend.Amount} överskrider riskgränsen på 5% (${maxAllowedSpend}).");
+                $"Buy order for {ticker.Value} of ${intendedSpend.Amount} exceeds the 5% risk limit (${maxAllowedSpend}).");
         }
 
         if (intendedSpend.Amount > portfolio.CashBalance.Amount)
         {
             throw new RiskViolationException(
-                $"Otillräckligt kassaflöde. Tillgängligt: ${portfolio.CashBalance.Amount}, Krävs: ${intendedSpend.Amount}.");
+                $"Insufficient cash. Available: ${portfolio.CashBalance.Amount}, required: ${intendedSpend.Amount}.");
         }
     }
 }

@@ -1,5 +1,7 @@
 from fastapi import FastAPI
+
 from app.api.routes import router
+
 app = FastAPI(
     title="Trading Agent Service",
     version="1.0.0",

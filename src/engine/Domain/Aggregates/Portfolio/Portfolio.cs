@@ -18,10 +18,10 @@ public class Portfolio
     {
         var totalCost = price.Amount * quantity;
         if (CashBalance.Amount < totalCost)
-            throw new InvalidOperationException("Otillräckligt saldo i portföljen.");
+            throw new InvalidOperationException("Insufficient cash balance in the portfolio.");
 
         CashBalance = CashBalance.Subtract(new Money(totalCost, price.Currency));
-        
+
         var existing = _positions.FirstOrDefault(p => p.Ticker == ticker);
         if (existing != null)
         {

@@ -27,13 +27,13 @@ public class TradingWorker : BackgroundService
 
                 try
                 {
-                    _logger.LogInformation("Begär analys för AAPL...");
+                    _logger.LogInformation("Requesting analysis for AAPL...");
                     await useCase.ExecuteAsync(portfolio, "AAPL", stoppingToken);
-                    _logger.LogInformation("Kassa kvar i portföljen: ${Cash}", portfolio.CashBalance.Amount);
+                    _logger.LogInformation("Cash remaining in portfolio: ${Cash}", portfolio.CashBalance.Amount);
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Fel vid anrop eller exekvering.");
+                    _logger.LogError(ex, "Error while calling the agent service or executing the trade.");
                 }
             }
 
