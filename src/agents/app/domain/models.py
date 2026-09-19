@@ -8,6 +8,7 @@ class ActionEnum(StrEnum):
     SELL = "SELL"
     HOLD = "HOLD"
 
+
 class InvestmentProposal(BaseModel):
     ticker: str = Field(..., description="Aktiens ticker-symbol")
     action: ActionEnum = Field(..., description="BUY, SELL eller HOLD")

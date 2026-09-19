@@ -21,12 +21,13 @@ Everything in this repo is written in **English** — code, comments, log messag
 Everything runs inside WSL (Ubuntu-24.04).
 
 ```bash
-# Tests, lint and formatting - what CI runs
+# Tests, lint and formatting - what .github/workflows/ci.yml runs
 dotnet build TradingSystem.slnx                          # TreatWarningsAsErrors is on
 dotnet test --solution TradingSystem.slnx                # xunit v3 on Microsoft.Testing.Platform
 dotnet format TradingSystem.slnx --verify-no-changes
 
 cd src/agents && uv run ruff check app/ tests/
+cd src/agents && uv run ruff format --check app/ tests/
 cd src/agents && uv run mypy app/
 cd src/agents && uv run pytest
 ```

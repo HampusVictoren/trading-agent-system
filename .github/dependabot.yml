@@ -1,0 +1,28 @@
+version: 2
+
+# Weekly, grouped per ecosystem, so updates arrive as a handful of PRs rather
+# than one per package. Each one runs through CI before it can merge.
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: nuget
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      nuget:
+        patterns: ["*"]
+
+  - package-ecosystem: uv
+    directory: /src/agents
+    schedule:
+      interval: weekly
+    groups:
+      python:
+        patterns: ["*"]

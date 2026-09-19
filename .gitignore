@@ -14,6 +14,8 @@ appsettings.Local.json
 __pycache__/
 *.py[cod]
 .venv/
+dist/
+requirements.lock
 
 # IDE
 .vscode/
