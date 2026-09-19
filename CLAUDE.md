@@ -120,6 +120,6 @@ Both services follow a Clean Architecture / DDD layout: `Domain` → `Applicatio
 - **Model quality:** `llama3.2` (3B) often gives weak or contradictory reasoning, even though the JSON is valid. A larger local model or Claude/Grok would do better.
 - **Risk limit:** `PortfolioManager` isn't told the portfolio's cash or the engine's 5% limit. It often proposes amounts far above the limit (1,000–100,000 USD), and `RiskEngine` rejects them. The rejection is logged as `fail` with a stack trace, even though it's an expected business outcome.
 - **Timing:** one analysis cycle takes about 12–15 s with `llama3.2`. The engine's `HttpClient` uses the default 100 s timeout.
-- **Leftovers:** `application/analysis_service.py`, `ag2/analyst_agent.py`, `ag2/risk_agent.py` and `llm/config.py` are empty placeholders. `market_data/stock_client.py` duplicates the MCP quote logic and is unused.
+- **Empty packages:** `app/application/`, `app/infrastructure/llm/` and `app/infrastructure/market_data/` contain only `__init__.py`; the placeholder files in them were deleted in stage 0. The roadmap puts the provider factory in `llm/provider.py` in stage 3.
 - **Engine database access:** the `engine_svc` role and the `trading` schema exist, but the engine has no DB access code until stage 4.
 - **AG2 API version:** AG2 is used through its v1.0+ API (`from ag2 import Agent, tool`, `ag2.config.OpenAIConfig`, `await agent.ask(...)`). The pre-1.0 `autogen`/`ConversableAgent` API is not used here.
