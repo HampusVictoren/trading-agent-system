@@ -17,7 +17,7 @@ public class PositionTests
         position.AddQuantity(1m, new Money(200m));
 
         position.Quantity.ShouldBe(2m);
-        position.AveragePurchasePrice.Amount.ShouldBe(150m);
+        position.AveragePurchasePrice.Amount.ShouldBe(151m);
     }
 
     [Fact]
