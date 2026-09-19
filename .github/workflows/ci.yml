@@ -1,0 +1,126 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+# Least privilege: nothing here needs to write to the repository.
+permissions:
+  contents: read
+
+# A newer push to the same branch makes the older run pointless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Actions are pinned to full commit SHAs, not tags. A tag can be moved if an
+# action's repository is compromised; a SHA cannot. Dependabot keeps them current.
+
+jobs:
+  engine:
+    name: Engine (.NET)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore TradingSystem.slnx
+
+      - name: Build (warnings are errors)
+        run: dotnet build TradingSystem.slnx --no-restore -warnaserror
+
+      - name: Check formatting
+        run: dotnet format TradingSystem.slnx --verify-no-changes --no-restore
+
+      - name: Test
+        run: dotnet test --solution TradingSystem.slnx --no-build
+
+  agents:
+    name: Agents (Python)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/agents
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          enable-cache: true
+
+      # --locked fails if uv.lock has drifted from pyproject.toml.
+      - name: Install
+        run: uv sync --locked
+
+      - name: Lint
+        run: uv run ruff check app/ tests/
+
+      - name: Check formatting
+        run: uv run ruff format --check app/ tests/
+
+      - name: Type-check
+        run: uv run mypy app/
+
+      - name: Test
+        run: uv run pytest
+
+      # Regression guard: app/ was once silently missing from the built wheel,
+      # and the service only ran because the working directory hid it.
+      - name: Wheel must contain the app package
+        run: |
+          uv build --wheel -o dist
+          uv run python -c 'import glob,sys,zipfile; n=sum(1 for x in zipfile.ZipFile(glob.glob("dist/*.whl")[0]).namelist() if x.startswith("app/") and x.endswith(".py")); print(f"{n} python files under app/ in the wheel"); sys.exit(0 if n >= 10 else 1)'
+
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      # Pinned here rather than downloaded next to the binary: a checksum file
+      # from the same release cannot vouch for that release.
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # scan the whole history, not just the last commit
+
+      - name: Install gitleaks
+        run: |
+          curl -sSfL -o gitleaks.tgz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  gitleaks.tgz" | sha256sum --check -
+          tar -xzf gitleaks.tgz gitleaks
+
+      # Blocking: a leaked secret always stops the build.
+      - name: Scan for secrets
+        run: ./gitleaks git . --redact --no-banner
+
+  vulnerabilities:
+    name: Vulnerability scan (advisory)
+    runs-on: ubuntu-latest
+    # Advisory by design: a new CVE in an untouched transitive dependency should
+    # not block unrelated work. Dependabot opens the fix as its own PR.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+
+      - name: .NET packages
+        run: dotnet list TradingSystem.slnx package --vulnerable --include-transitive
+
+      - name: Python packages
+        working-directory: src/agents
+        run: |
+          uv export --format requirements-txt --no-dev --no-emit-project --quiet > requirements.lock
+          uvx pip-audit --requirement requirements.lock --disable-pip --progress-spinner off

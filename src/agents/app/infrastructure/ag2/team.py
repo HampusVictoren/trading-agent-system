@@ -8,10 +8,12 @@ from app.infrastructure.mcp.market_data_server import get_stock_quote
 
 logger = logging.getLogger(__name__)
 
+
 @tool
 def get_stock_quote_tool(ticker: str) -> dict:
     """Hämtar aktuellt pris, P/E-tal och nyckeltal för en aktieticker via FastMCP."""
     return get_stock_quote(ticker)
+
 
 async def run_agent_analysis(ticker: str) -> InvestmentProposal:
     llm_config = get_llm_config()

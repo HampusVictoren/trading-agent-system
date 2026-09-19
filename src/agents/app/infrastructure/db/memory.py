@@ -19,32 +19,35 @@ client = AsyncOpenAI(
     http_client=http_client,  # type: ignore[arg-type]
 )
 
+
 async def get_embedding(text: str) -> list[float]:
-    response = await client.embeddings.create(
-        input=text,
-        model="nomic-embed-text"
-    )
+    response = await client.embeddings.create(input=text, model="nomic-embed-text")
     return response.data[0].embedding
+
 
 async def save_memory(ticker: str, action: str, reasoning: str):
     conn = await asyncpg.connect(DB_URL)
     await register_vector(conn)
-    
+
     embedding = await get_embedding(f"{ticker} {action}: {reasoning}")
     await conn.execute(
         """
         INSERT INTO agent_memories (ticker, action, reasoning, embedding)
         VALUES ($1, $2, $3, $4)
         """,
-        ticker.upper(), action.upper(), reasoning, embedding
+        ticker.upper(),
+        action.upper(),
+        reasoning,
+        embedding,
     )
     await conn.close()
+
 
 async def search_past_memories(ticker: str, query: str, limit: int = 3) -> str:
     try:
         conn = await asyncpg.connect(DB_URL)
         await register_vector(conn)
-        
+
         query_embedding = await get_embedding(query)
         rows = await conn.fetch(
             """
@@ -55,7 +58,9 @@ async def search_past_memories(ticker: str, query: str, limit: int = 3) -> str:
             ORDER BY embedding <=> $1
             LIMIT $3
             """,
-            query_embedding, ticker.upper(), limit
+            query_embedding,
+            ticker.upper(),
+            limit,
         )
         await conn.close()
 
