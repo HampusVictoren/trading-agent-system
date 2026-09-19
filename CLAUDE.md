@@ -8,7 +8,7 @@ A hybrid, modular automated trading agent that runs entirely locally:
 - The **.NET 10 engine** (`src/engine`) is deterministic and rule-based. It owns scheduling, the portfolio (cash, positions), the `RiskEngine` that checks proposals against hard rules, and order execution.
 - The **Python agent service** (`src/agents`) is a FastAPI app. It exposes `POST /analyze/{ticker}` and runs a team of AG2 v1.0+ agents that reason over market data and return a validated JSON decision.
 - A **FastMCP server** exposes market-data tools such as `get_stock_quote`, backed by yfinance.
-- **PostgreSQL + pgvector** (Docker) holds hard facts and the agents' semantic memory (`agent_memories`).
+- **PostgreSQL + pgvector** (Docker) holds hard facts and the agents' semantic memory (`agent.agent_memories`).
 - **Ollama** is the LLM backend for both text generation (`llama3.2`) and embeddings (`nomic-embed-text`). The plan is to add Claude or Grok later.
 
 Everything in this repo is written in **English** — code, comments, log messages, exception messages, commit messages and documentation. There are exactly two exceptions:
@@ -36,9 +36,9 @@ cd src/agents && uv run pytest
 requires for xunit v3. Note the `--solution` flag: the new runner needs it.
 
 ```bash
-# Database: the running container is trading-db (postgres/postgres, db tradingdb, port 5432)
-docker start trading-db
-docker exec -it trading-db psql -U postgres -d tradingdb
+# Database: compose owns the trading-db container. Needs .env in the repo root (see .env.example).
+docker compose up -d
+docker exec -it trading-db psql -U postgres -d tradingdb   # superuser, via the container's local socket
 
 # Python agent service — run from src/agents (Python 3.12, managed with uv)
 uv sync
@@ -73,26 +73,21 @@ The engine reads `AgentService:BaseUrl` from `appsettings.json`.
 - **Use explicit IPv4 `127.0.0.1`, never `localhost`**, for Ollama, FastAPI and Postgres. `localhost` can resolve to `::1` and time out.
 - `memory.py` creates its Ollama client with `httpx.AsyncClient(trust_env=False)`, so a system proxy can't intercept local calls. Keep that for any new client that talks to Ollama.
 - **Embeddings are 768-dimensional** (`nomic-embed-text`), not OpenAI's 1536. If you switch embedding models, you have to change the column type too.
-- **The DB container is `trading-db`**, started by hand with `postgres/postgres`. **It is not the service in `docker-compose.yml`**: that file defines `trading_postgres` with `devuser/devpassword`, which doesn't exist in `trading-db`. Other Postgres containers (e.g. `stockinvestor-db`, `backend-db-1`) conflict on port 5432 and must be stopped.
+- **The DB container is `trading-db`, and `docker-compose.yml` owns it.** Never create it by hand. It binds to `127.0.0.1:5432` only. Other Postgres containers (e.g. `stockinvestor-db`, `backend-db-1`) conflict on port 5432 and must be stopped.
+- **Secrets live in two gitignored files, on purpose.** `.env` in the repo root holds the superuser, `engine_svc` and `agent_svc` passwords for compose. `src/agents/.env` holds only the agent's own `DATABASE_URL`. The agent service must never see the other two, or the per-service roles mean nothing.
 
 ## Database schema
 
-`agent_memories` was created by hand in `trading-db`. No migration for it exists in the repo:
+`db/init/01-schema.sh` builds the database. It runs **once**, on the first start of an empty volume, so editing it has no effect until the volume is recreated (`docker compose down -v && docker compose up -d` — this deletes all data).
 
-```sql
-CREATE EXTENSION IF NOT EXISTS vector;
-CREATE TABLE agent_memories (
-    id SERIAL PRIMARY KEY,
-    ticker VARCHAR(10) NOT NULL,
-    action VARCHAR(10) NOT NULL,
-    reasoning TEXT NOT NULL,
-    embedding vector(768),
-    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX agent_memories_embedding_idx ON agent_memories USING hnsw (embedding vector_cosine_ops);
-```
+| Schema | Owner | Holds |
+|---|---|---|
+| `trading` | `engine_svc` | Portfolio, orders and decisions (EF Core, from stage 4). Empty today. |
+| `agent` | `agent_svc` | `agent.agent_memories` — pgvector semantic memory |
 
-`search_past_memories` ranks rows by cosine distance (`<=>`), filtered by ticker.
+Each role owns its schema, so its migration tool can create tables there, and has **no access to the other's** — not even to see what tables exist. Neither can create anything in `public`. Only the two roles and the superuser may connect. The `vector` extension stays in `public`, because `pgvector.asyncpg.register_vector` looks it up there.
+
+`agent.agent_memories` has a `bigint` identity key, a `NOT NULL` 768-dimensional `embedding`, and an HNSW index with `vector_cosine_ops`. `search_past_memories` ranks rows by cosine distance (`<=>`), filtered by ticker. Always schema-qualify table names.
 
 ## Architecture
 
@@ -126,5 +121,5 @@ Both services follow a Clean Architecture / DDD layout: `Domain` → `Applicatio
 - **Risk limit:** `PortfolioManager` isn't told the portfolio's cash or the engine's 5% limit. It often proposes amounts far above the limit (1,000–100,000 USD), and `RiskEngine` rejects them. The rejection is logged as `fail` with a stack trace, even though it's an expected business outcome.
 - **Timing:** one analysis cycle takes about 12–15 s with `llama3.2`. The engine's `HttpClient` uses the default 100 s timeout.
 - **Leftovers:** `application/analysis_service.py`, `ag2/analyst_agent.py`, `ag2/risk_agent.py` and `llm/config.py` are empty placeholders. `market_data/stock_client.py` duplicates the MCP quote logic and is unused.
-- **Engine database access:** the engine's `ConnectionStrings:Database` is configured, but the engine has no DB access code yet.
+- **Engine database access:** the `engine_svc` role and the `trading` schema exist, but the engine has no DB access code until stage 4.
 - **AG2 API version:** AG2 is used through its v1.0+ API (`from ag2 import Agent, tool`, `ag2.config.OpenAIConfig`, `await agent.ask(...)`). The pre-1.0 `autogen`/`ConversableAgent` API is not used here.

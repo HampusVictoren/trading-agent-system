@@ -1,20 +1,30 @@
+# Local development database. Compose owns this container - do not create
+# trading-db by hand. Secrets come from .env in the repo root; see .env.example.
 services:
-  postgres:
-    image: pgvector/pgvector:pg16
-    container_name: trading_postgres
+  db:
+    # Pinned rather than the floating :pg16 tag, so every machine and every
+    # rebuild gets the same Postgres and pgvector.
+    image: pgvector/pgvector:0.8.6-pg16
+    container_name: trading-db
     environment:
-      POSTGRES_USER: devuser
-      POSTGRES_PASSWORD: devpassword
       POSTGRES_DB: tradingdb
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      # Read once by db/init/01-schema.sh to create the per-service login roles.
+      ENGINE_DB_PASSWORD: ${ENGINE_DB_PASSWORD:?set ENGINE_DB_PASSWORD in .env}
+      AGENT_DB_PASSWORD: ${AGENT_DB_PASSWORD:?set AGENT_DB_PASSWORD in .env}
     ports:
-      - "5432:5432"
+      # Loopback only. A bare "5432:5432" publishes the database to the network.
+      - "127.0.0.1:5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - trading-db-data:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U devuser -d tradingdb"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d tradingdb"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
+    restart: unless-stopped
 
 volumes:
-  postgres_data:
+  trading-db-data:
