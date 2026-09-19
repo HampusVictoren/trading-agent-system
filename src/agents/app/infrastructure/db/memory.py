@@ -5,7 +5,11 @@ import httpx
 from openai import AsyncOpenAI
 from pgvector.asyncpg import register_vector
 
-DB_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:5432/tradingdb")
+# No fallback: a default connection string is a hardcoded credential, and
+# connecting as the wrong role would defeat the per-service schema separation.
+DB_URL = os.getenv("DATABASE_URL")
+if not DB_URL:
+    raise RuntimeError("DATABASE_URL is not set; see src/agents/.env.example")
 OLLAMA_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434/v1")
 
 # trust_env=False forces httpx to ignore any proxy and connect straight to 127.0.0.1
@@ -32,7 +36,7 @@ async def save_memory(ticker: str, action: str, reasoning: str):
     embedding = await get_embedding(f"{ticker} {action}: {reasoning}")
     await conn.execute(
         """
-        INSERT INTO agent_memories (ticker, action, reasoning, embedding)
+        INSERT INTO agent.agent_memories (ticker, action, reasoning, embedding)
         VALUES ($1, $2, $3, $4)
         """,
         ticker.upper(),
@@ -53,7 +57,7 @@ async def search_past_memories(ticker: str, query: str, limit: int = 3) -> str:
             """
             SELECT action, reasoning, created_at,
                    1 - (embedding <=> $1) AS similarity
-            FROM agent_memories
+            FROM agent.agent_memories
             WHERE ticker = $2
             ORDER BY embedding <=> $1
             LIMIT $3
