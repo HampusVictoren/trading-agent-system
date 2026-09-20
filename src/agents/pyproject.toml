@@ -14,10 +14,15 @@ dependencies = [
     # Capped: fastmcp 3 -> 4 arrived inside an unrelated Dependabot PR because
     # this had no upper bound. A new major must be its own, visible update.
     "fastmcp>=4.0.5,<5",
-    "httpx>=0.28.1",
+    # openai 3.x types its http_client against httpx2 (pydantic's successor to httpx), and
+    # memory.py needs a client of its own to set trust_env=False. Declared directly rather
+    # than relied on through openai, and capped so a new major is its own Dependabot PR.
+    "httpx2>=2.13,<3",
     "openai>=3.16.1",
     "pgvector>=0.5.0",
-    "python-dotenv>=1.2.3",
+    # Imported directly by app/domain/models.py and app/settings.py.
+    "pydantic>=2.12,<3",
+    "pydantic-settings>=2.15,<3",
     "uvicorn>=0.53.0",
     "yfinance>=1.7.0",
 ]
@@ -54,6 +59,9 @@ select = ["E", "F", "I", "UP", "B", "ASYNC", "S"]
 
 [tool.mypy]
 python_version = "3.12"
+# Without the plugin mypy reads BaseSettings' required fields as required constructor
+# arguments, even though the whole point is that the environment supplies them.
+plugins = ["pydantic.mypy"]
 warn_unused_configs = true
 warn_redundant_casts = true
 warn_unused_ignores = true

@@ -46,10 +46,19 @@ uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 curl -X POST http://127.0.0.1:8000/analyze/AAPL
 uv run python -m app.infrastructure.mcp.market_data_server   # run the FastMCP server standalone
 
-# Smoke-test memory. Use a single asyncio.run: the module-level httpx client in memory.py can't be reused across event loops.
-uv run python -c "import asyncio; from app.infrastructure.db.memory import save_memory, search_past_memories
+# Smoke-test memory. MemoryStore takes a pool and an embeddings client, both built by the
+# FastAPI lifespan in app/main.py; a script builds its own the same way.
+uv run python -c "import asyncio, asyncpg, httpx2
+from openai import AsyncOpenAI
+from pgvector.asyncpg import register_vector
+from app.infrastructure.db.memory import MemoryStore
+from app.settings import get_settings
 async def main():
-    await save_memory('TEST','HOLD','Röktest'); print(await search_past_memories('TEST','röktest'))
+    s = get_settings()
+    async with httpx2.AsyncClient(trust_env=False) as http, asyncpg.create_pool(
+            dsn=s.database_url.get_secret_value(), init=register_vector) as pool:
+        store = MemoryStore(pool, AsyncOpenAI(base_url=str(s.ollama_base_url), api_key='ollama', http_client=http))
+        await store.save('TEST','HOLD','Röktest'); print(await store.search('TEST','röktest'))
 asyncio.run(main())"
 
 # .NET engine (net10.0 Worker SDK)
@@ -59,11 +68,13 @@ dotnet run --project src/engine
 
 The working directory must be `src/agents` for the `app.*` imports to resolve.
 
-**Configuration:** `src/agents/app/__init__.py` loads `src/agents/.env` automatically, so it applies to uvicorn, scripts and `python -c`. Variables already set in the shell take precedence. See `.env.example` for the keys:
-- `DATABASE_URL`
+**Configuration:** `src/agents/app/settings.py` defines every setting as a typed, **required** field and reads `src/agents/.env` itself, so it applies to uvicorn, scripts and `python -c`. Variables already set in the shell take precedence. Nothing has a default: an incomplete environment stops the service at startup rather than falling back to OpenAI's cloud API or the wrong database role. Read them with `get_settings()`, never `os.getenv`. See `.env.example` for the keys:
+- `DATABASE_URL` (`SecretStr` - it carries the `agent_svc` password)
 - `OLLAMA_BASE_URL` (embeddings)
 - `LLM_BASE_URL` and `LLM_MODEL` (AG2 through `OpenAIConfig` against Ollama's OpenAI-compatible `/v1`)
-- `OPENAI_API_KEY`
+- `OPENAI_API_KEY` (`SecretStr`)
+
+**Shared resources are built once**, in the FastAPI `lifespan` in `app/main.py`: the `httpx2` client, the `AsyncOpenAI` embeddings client, the AG2 model configuration and an `asyncpg` pool. They reach a route as `Resources` through `app/dependencies.py`. Nothing creates a client at import time, so no client is bound to the wrong event loop. The pool opens a connection at startup, which means **`docker compose up -d` has to have run before `uvicorn`**.
 
 The engine reads `AgentService:BaseUrl` from `appsettings.json`.
 
@@ -71,7 +82,7 @@ The engine reads `AgentService:BaseUrl` from `appsettings.json`.
 
 - **Ollama runs on Windows**, not in WSL. It listens on `0.0.0.0:11434` (`OLLAMA_HOST=0.0.0.0`). WSL runs in **mirrored networking mode** (`networkingMode=mirrored` in `%USERPROFILE%\.wslconfig`), so `127.0.0.1:11434` inside WSL reaches Windows. Without mirrored mode, `127.0.0.1` in WSL is WSL itself: you get `APIConnectionError` / `ConnectError('All connection attempts failed')` and would need the Windows host IP (`ip route show default`).
 - **Use explicit IPv4 `127.0.0.1`, never `localhost`**, for Ollama, FastAPI and Postgres. `localhost` can resolve to `::1` and time out.
-- `memory.py` creates its Ollama client with `httpx.AsyncClient(trust_env=False)`, so a system proxy can't intercept local calls. Keep that for any new client that talks to Ollama.
+- The lifespan creates the Ollama client with `httpx2.AsyncClient(trust_env=False)`, so a system proxy can't intercept local calls. Keep that for any new client that talks to Ollama. It is `httpx2`, not `httpx`, because that is what `openai` 3.x types `http_client` against.
 - **Embeddings are 768-dimensional** (`nomic-embed-text`), not OpenAI's 1536. If you switch embedding models, you have to change the column type too.
 - **The DB container is `trading-db`, and `docker-compose.yml` owns it.** Never create it by hand. It binds to `127.0.0.1:5432` only. Other Postgres containers (e.g. `stockinvestor-db`, `backend-db-1`) conflict on port 5432 and must be stopped.
 - **Secrets live in two gitignored files, on purpose.** `.env` in the repo root holds the superuser, `engine_svc` and `agent_svc` passwords for compose. `src/agents/.env` holds only the agent's own `DATABASE_URL`. The agent service must never see the other two, or the per-service roles mean nothing.
@@ -87,7 +98,7 @@ The engine reads `AgentService:BaseUrl` from `appsettings.json`.
 
 Each role owns its schema, so its migration tool can create tables there, and has **no access to the other's** — not even to see what tables exist. Neither can create anything in `public`. Only the two roles and the superuser may connect. The `vector` extension stays in `public`, because `pgvector.asyncpg.register_vector` looks it up there.
 
-`agent.agent_memories` has a `bigint` identity key, a `NOT NULL` 768-dimensional `embedding`, and an HNSW index with `vector_cosine_ops`. `search_past_memories` ranks rows by cosine distance (`<=>`), filtered by ticker. Always schema-qualify table names.
+`agent.agent_memories` has a `bigint` identity key, a `NOT NULL` 768-dimensional `embedding`, and an HNSW index with `vector_cosine_ops`. `MemoryStore.search` ranks rows by cosine distance (`<=>`), filtered by ticker. Always schema-qualify table names.
 
 ## Architecture
 
@@ -115,7 +126,7 @@ Both services follow a Clean Architecture / DDD layout: `Domain` → `Applicatio
 ### Intended design vs. current code
 
 - **MCP calls:** the design has agents calling tools over the MCP protocol. `team.py` actually imports `get_stock_quote` from the MCP server module and calls it in-process.
-- **Memory:** `memory.py` works, including writes and search against `trading-db`, but it isn't wired into the flow yet. The plan is a `search_history_tool` on `RiskManager` and a `save_memory` call after each analysis cycle.
+- **Memory:** `MemoryStore` works, including writes and search against `trading-db`, and the lifespan builds one - but no route uses it yet. The plan is a `search_history_tool` on `RiskManager` and a `save` call after each analysis cycle.
 - **LLM provider:** switching providers through an env var is planned but not built. AG2 1.0.5 ships `AnthropicConfig` (needs `ag2[anthropic]`) and `XAIConfig` (needs `xai_sdk`). Grok also works through `OpenAIConfig` with `base_url=https://api.x.ai/v1`. `ag2/config.py` currently always builds an `OpenAIConfig`.
 - **Model quality:** `llama3.2` (3B) often gives weak or contradictory reasoning, even though the JSON is valid. A larger local model or Claude/Grok would do better.
 - **Risk limit:** `PortfolioManager` isn't told the portfolio's cash or the engine's 5% limit. It often proposes amounts far above the limit (1,000–100,000 USD), and `RiskEngine` rejects them. The rejection is logged as `fail` with a stack trace, even though it's an expected business outcome.

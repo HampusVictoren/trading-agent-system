@@ -1,9 +1,9 @@
 import logging
 
 from ag2 import Agent, tool
+from ag2.config import OpenAIConfig
 
 from app.domain.models import ActionEnum, InvestmentProposal
-from app.infrastructure.ag2.config import get_llm_config
 from app.infrastructure.mcp.market_data_server import get_stock_quote
 
 logger = logging.getLogger(__name__)
@@ -15,9 +15,9 @@ def get_stock_quote_tool(ticker: str) -> dict:
     return get_stock_quote(ticker)
 
 
-async def run_agent_analysis(ticker: str) -> InvestmentProposal:
-    llm_config = get_llm_config()
-
+async def run_agent_analysis(ticker: str, llm_config: OpenAIConfig) -> InvestmentProposal:
+    """Runs the three agents in sequence. The model configuration is built once by the
+    lifespan and passed in, so a request never constructs it."""
     # 1. Analyst agent with its MCP tool
     analyst = Agent(
         "MarketAnalyst",
@@ -80,7 +80,7 @@ async def run_agent_analysis(ticker: str) -> InvestmentProposal:
 
     except Exception as e:
         # An error must never lead to a buy - the engine ignores anything that is not BUY
-        logger.exception("Agentkedjan misslyckades för %s", ticker)
+        logger.exception("The agent chain failed for %s", ticker)
         return InvestmentProposal(
             ticker=ticker.upper(),
             action=ActionEnum.HOLD,
