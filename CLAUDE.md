@@ -73,13 +73,23 @@ The working directory must be `src/agents` for the `app.*` imports to resolve.
 - `OLLAMA_BASE_URL` (embeddings)
 - `LLM_BASE_URL` and `LLM_MODEL` (AG2 through `OpenAIConfig` against Ollama's OpenAI-compatible `/v1`)
 - `OPENAI_API_KEY` (`SecretStr`)
+- `AGENT_API_KEY` (`SecretStr`) - what a caller must present as `X-Api-Key` to start an analysis
 - `LLM_TIMEOUT_SECONDS` - caps one LLM call. Without it the openai client waits 600 s to read a response, which makes a 504 unreachable in practice.
 
 **Shared resources are built once**, in the FastAPI `lifespan` in `app/main.py`: the `httpx2` client, the `AsyncOpenAI` embeddings client, the AG2 model configuration and an `asyncpg` pool. They reach a route as `Resources` through `app/dependencies.py`. Nothing creates a client at import time, so no client is bound to the wrong event loop. The pool opens a connection at startup, which means **`docker compose up -d` has to have run before `uvicorn`**.
 
+**`/analyze` requires `X-Api-Key`**, compared with `hmac.compare_digest` so the comparison takes the same time whichever byte differs first. A missing key and a wrong key both answer 401 `unauthorized`, saying nothing about which it was. `/health` and `/ready` stay open, because a load balancer has to be able to ask whether the service is up.
+
 **Every request carries a correlation id.** `CorrelationIdMiddleware` reads `X-Correlation-Id`, or invents one, echoes it on the response and puts it in every log line. Logs are JSON, configured in the lifespan, so uvicorn's own lines are formatted too - except the two banner lines it prints before startup. `/health` is liveness and checks nothing else on purpose; `/ready` checks the database and the LLM backend and answers 503 until both do.
 
-The engine reads `AgentService:BaseUrl` from `appsettings.json`.
+The engine reads `AgentService:BaseUrl`, `RequestTimeoutSeconds`, `RiskPolicy` and `Trading` from `appsettings.json`, all validated at startup. **`AgentService:ApiKey` is not there**, because it is a secret: locally it lives in the user secrets store, outside the repository, and elsewhere it comes from the environment.
+
+```bash
+# Both sides need the same value. Generate one, then give it to each:
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+# -> AGENT_API_KEY=<key> in src/agents/.env
+dotnet user-secrets set "AgentService:ApiKey" "<key>" --project src/engine
+```
 
 ## Local environment (Windows + WSL2)
 
@@ -119,6 +129,7 @@ Each role owns its schema, so its migration tool can create tables there, and ha
    | Failure | Status | `error_code` |
    |---|---|---|
    | Decision made, including HOLD | 200 | - |
+   | No or wrong `X-Api-Key` | 401 | `unauthorized` |
    | Ticker is not a ticker | 422 | `invalid_request` |
    | LLM answered with an error status | 502 | `llm_failed` |
    | Model never matched the schema, after AG2's retries | 502 | `agent_response_invalid` |

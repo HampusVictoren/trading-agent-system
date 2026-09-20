@@ -6,10 +6,13 @@ they pin them now, before team.py is rewritten in stages 2-3.
 """
 
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 
+from app.api.security import HEADER as API_KEY_HEADER
 from app.application.errors import (
     AgentChainFailed,
     AgentResponseInvalid,
@@ -21,6 +24,7 @@ from app.dependencies import get_resources
 from app.domain.models import ActionEnum, InvestmentProposal
 from app.main import app
 from app.observability.correlation import HEADER
+from app.settings import get_settings
 
 A_PROPOSAL = InvestmentProposal(
     ticker="AAPL", action=ActionEnum.BUY, amount_usd=500.0, confidence=0.8, reasoning="because"
@@ -29,6 +33,8 @@ A_PROPOSAL = InvestmentProposal(
 # Stands for anything an exception message might carry that a caller has no business
 # seeing: hostnames, roles, ports, query fragments.
 INTERNAL_DETAIL = "connect failed for agent_svc at 127.0.0.1:5432"
+
+API_KEY = "a-test-key-of-some-length"
 
 
 @pytest.fixture
@@ -40,9 +46,17 @@ def client(monkeypatch):
             return analysis(ticker)
 
         monkeypatch.setattr("app.api.routes.run_agent_analysis", run)
-        app.dependency_overrides[get_resources] = lambda: SimpleNamespace(llm_config=None)
+        app.dependency_overrides[get_settings] = lambda: SimpleNamespace(
+            agent_api_key=SecretStr(API_KEY)
+        )
+        app.dependency_overrides[get_resources] = lambda: SimpleNamespace(
+            llm_config=None,
+            memory=SimpleNamespace(ping=AsyncMock(side_effect=OSError("no database"))),
+            http_client=SimpleNamespace(get=AsyncMock(side_effect=OSError("no llm"))),
+            llm_base_url="http://127.0.0.1:11434/v1",
+        )
         # No `with`, so the lifespan does not run and no database is needed.
-        return TestClient(app, raise_server_exceptions=False)
+        return TestClient(app, raise_server_exceptions=False, headers={API_KEY_HEADER: API_KEY})
 
     yield build
     app.dependency_overrides.clear()
@@ -153,3 +167,58 @@ def test_health_checks_nothing_but_the_process(client):
 
     assert response.status_code == 200
     assert response.json()["status"] == "alive"
+
+
+@pytest.mark.parametrize(
+    "supplied",
+    [
+        None,
+        "",
+        "wrong",
+        "a-test-key-of-some-lengtH",  # same length, one byte different
+        API_KEY + "x",
+    ],
+)
+def test_an_analysis_needs_the_api_key(client, supplied):
+    # /analyze starts an LLM run, so an unauthenticated one lets anything that can reach
+    # the port spend the machine's time.
+    headers = {} if supplied is None else {API_KEY_HEADER: supplied}
+    built = client(lambda ticker: A_PROPOSAL)
+
+    response = built.post("/analyze/AAPL", headers={**{API_KEY_HEADER: ""}, **headers})
+
+    assert response.status_code == 401
+    assert response.json()["error_code"] == "unauthorized"
+
+
+def test_a_rejection_does_not_say_whether_the_key_was_missing_or_wrong(client):
+    built = client(lambda ticker: A_PROPOSAL)
+
+    missing = built.post("/analyze/AAPL", headers={API_KEY_HEADER: ""})
+    wrong = built.post("/analyze/AAPL", headers={API_KEY_HEADER: "wrong"})
+
+    assert missing.json()["error_code"] == wrong.json()["error_code"]
+    assert missing.status_code == wrong.status_code == 401
+
+
+def test_the_right_key_is_let_through(client):
+    response = client(lambda ticker: A_PROPOSAL).post(
+        "/analyze/AAPL", headers={API_KEY_HEADER: API_KEY}
+    )
+
+    assert response.status_code == 200
+
+
+def test_liveness_needs_no_key(client):
+    response = client(lambda ticker: A_PROPOSAL).get("/health", headers={API_KEY_HEADER: ""})
+
+    assert response.status_code == 200
+
+
+def test_readiness_needs_no_key(client):
+    # A load balancer has to be able to ask whether the service is up. Both dependencies
+    # are stubbed as broken here, so a 503 proves the probe ran rather than being rejected.
+    response = client(lambda ticker: A_PROPOSAL).get("/ready", headers={API_KEY_HEADER: ""})
+
+    assert response.status_code == 503
+    assert response.json()["checks"] == {"database": "unavailable", "llm": "unavailable"}

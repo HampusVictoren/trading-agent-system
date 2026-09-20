@@ -37,6 +37,10 @@ class Settings(BaseSettings):
     # Any placeholder works while LLM_BASE_URL points at Ollama, but it is still a key.
     openai_api_key: SecretStr
 
+    # What a caller has to present to start an analysis. Without it the machine runs an
+    # unauthenticated endpoint that spends LLM time for anyone who can reach the port.
+    agent_api_key: SecretStr
+
     # HttpUrl rejects a malformed URL at startup, the same way the engine's
     # AgentServiceOptions.BaseUrl does. Note that it appends a trailing slash to a bare
     # host, so give these a path, as .env.example does.

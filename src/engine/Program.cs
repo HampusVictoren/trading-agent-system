@@ -8,6 +8,11 @@ using Polly.Telemetry;
 
 var builder = Host.CreateApplicationBuilder(args);
 
+// The agent service's API key is a secret, so it is not in appsettings.json. Locally it
+// lives in the user secrets store, outside the repository; in a container it comes from
+// the environment, where this line is simply a no-op because the store is not there.
+builder.Configuration.AddUserSecrets<Program>(optional: true);
+
 builder.Services.AddEngineOptions(builder.Configuration);
 
 builder.Services.AddSingleton<RiskEngine>(sp =>
