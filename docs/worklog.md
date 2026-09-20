@@ -7,7 +7,7 @@ A running record of what has been done, what was learned along the way, and what
 
 This file answers "where are we, how did we get here, and what is next". When resuming, read *Current state* and *Next steps* first, then the roadmap section for the next stage.
 
-**Last updated:** 2026-09-20, after PR #14.
+**Last updated:** 2026-09-20, after PR #18. **Stage 1 is done.**
 
 ## Resuming checklist
 
@@ -22,32 +22,49 @@ curl -s http://127.0.0.1:11434/api/tags    # is Ollama on Windows reachable from
 
 Then run the CI checks listed in CLAUDE.md before changing anything, so that a failure is known to be pre-existing.
 
+**Both services now refuse to start on an incomplete environment**, which is deliberate. On this machine everything is already in place; on a new clone it is not:
+
+| Needed | Where it lives | Set on this machine |
+|---|---|---|
+| `AGENT_API_KEY`, `LLM_TIMEOUT_SECONDS` and the rest | `src/agents/.env`, gitignored - see `.env.example` | yes, 2026-09-20 |
+| `AgentService:ApiKey`, the same value | .NET user secrets, `~/.microsoft/usersecrets`, outside the repo | yes, 2026-09-20 |
+
+`dotnet user-secrets list --project src/engine` shows whether the engine has its key, and prints the value, so do not run it where anyone can see the screen. Both sides must hold the *same* key or every cycle ends in 401.
+
+Two things that are easy to misread as broken:
+
+- **Docker Desktop's WSL integration can be off** while Docker itself runs on Windows. `docker` then fails in WSL, but `trading-db` may well be running and reachable at `127.0.0.1:5432` anyway, because WSL is in mirrored mode. Check the port before assuming the database is down.
+- **A dead port hangs rather than refuses** in mirrored mode, so anything without an explicit timeout looks like a freeze. Both services now have those timeouts; remember it when adding a new client.
+
 ---
 
 ## Current state
 
 - **Stage 0 is done** (2026-09-19), and the CI gate is verified in both directions.
-- **Stage 1 is in progress.** Its two .NET pull requests are merged; the three Python ones are not started. Stages 2–8 exist only as plan.
-- **`master` is at `41a5d3d`** (PR #14). Every CI job and CodeQL are green there.
-- **No open pull requests.**
-- **Branches:** `master` only, locally and on GitHub.
-- **The engine now reports outcomes honestly; the agent service still does not.** The engine reads its tickers, risk limit and timeouts from validated configuration, tells a failing agent service apart from a HOLD, and refuses an answer about another ticker. On the Python side any error is still a HOLD with HTTP 200, so the engine cannot yet tell "the model chose HOLD" from "Ollama is down". Closing that gap is the rest of stage 1.
+- **Stage 1 is done** (2026-09-20), in five pull requests: #13, #14, #16, #17 and #18. (#12 was the dependency pinning that preceded it, #15 this file.) Stages 2-8 exist only as plan.
+- **`master` is at `b421b1b`** (PR #18). Nothing reaches it without the three required checks passing, so what is there is green by construction.
+- **No open pull requests. Branches:** `master` only, locally and on GitHub.
+- **The lie is gone.** A failed analysis used to answer HTTP 200 with a HOLD, which the engine could not tell apart from a real decision. It now answers 401, 422, 502, 503 or 504 with `{error_code, correlation_id}`, and the engine reports the outcome rather than guessing at it.
+- **What the system does today** is otherwise unchanged: every `Trading:CycleIntervalSeconds`, for each ticker in `Trading:Tickers`, three AG2 agents reason over one yfinance quote and answer with the old `InvestmentProposal` contract. The engine sizes nothing - it buys quantity 1 at the proposed amount, and `RiskEngine` rejects most of those. Stage 2 changes the contract and gives the engine real sizing.
+
+**Stage 1's own criterion, verified end to end on 2026-09-20:**
+
+```
+Agent service unavailable for AAPL: The agent service answered 502 for AAPL.
+{"error_code":"unauthorized","correlation_id":"..."}   HTTP 401
+Bought 1 AAPL for $10.0. Cash left: $9990.0.
+```
+
+with 0 entries at error level, 0 stack traces, and 3 HTTP requests for 3 cycles.
 
 ## Next steps
 
 In order. Each is one branch, one commit and one PR.
 
-Stage 1 (roadmap estimate: 2 days) is split into five pull requests. The two .NET ones are merged.
+1. **Finding C - make the proposal DTO strict.** *Start here.* It is small, and it has to land **before the contract changes in stage 3**, or the migration happens blind. `InvestmentProposalDto` currently deserialises a body that honours none of the contract, filling non-nullable members with `null`, so a contract break goes silent instead of loud. The fix is `required` members; the plumbing already exists, because System.Text.Json throws `JsonException` for a missing required member, `PythonAgentClient` already translates that into `AgentResponseInvalidException`, and the worker already logs it as a warning. `JsonUnmappedMemberHandling.Disallow` is a separate decision: it also catches unexpected extra fields, but it couples the two services' release order.
+2. **Stage 2 - the contract and the engine's sizing, test-first** (roadmap estimate: 2-3 days). Read `docs/arkitektur-roadmap.md` before starting. Findings B and D belong in it: the ticker format rule plus escaping, and the currency guard on `Money` together with the missing `default` in `TradingWorker.LogOutcome`.
 
-1. ~~`TradeDecisionResult` and the ticker mismatch guard~~ — done, PR #13.
-2. ~~Typed options, `ValidateOnStart` and a resilient client~~ — done, PR #14.
-3. **Python typed configuration** (next): `app/settings.py` with pydantic-settings and `SecretStr`; `load_dotenv` out of `app/__init__.py`; a FastAPI `lifespan` that builds the LLM config and the HTTP clients once. That also fixes the event-loop-bound clients and the `httpx`/`httpx2` `type: ignore` in `memory.py`.
-4. **Honest errors:** typed exceptions mapped to 200, 422, 502, 503 and 504 instead of the catch-all HOLD; a global handler that returns `{error_code, correlation_id}` and never `str(e)`; JSON logs with `X-Correlation-Id`; `/health` separate from `/ready`. This PR also carries finding A below, because it is what makes a 5xx reachable, and the single HTTP-level test that pins today's behaviour before `team.py` is rewritten in stages 2–3.
-5. **`X-Api-Key`** with a constant-time comparison.
-
-**Stage 1 is done when** stopping Ollama mid-run makes the engine log that the agent service is unavailable instead of recording a HOLD, and a call without the API key is rejected. Verifying that needs PRs 3 and 4 together.
-
-After stage 1, and in any case before the contract changes in stage 3: finding C.
+Before stage 4, decide the cost model in the outcome function (finding F). Before stage 5, decide whether a trading calendar is a domain concept (finding E).
 
 ## Open findings
 
@@ -55,7 +72,29 @@ Six findings from a review of the repository on 2026-09-20. Every one was reprod
 was written down, and the reproduction is the *Verified* line. They live here rather than in the
 roadmap on purpose: the plan should change when a stage starts, not every time a finding arrives.
 
-### A — a failed analysis is sent twice
+| | Finding | Status |
+|---|---|---|
+| A | A failed analysis is sent twice | **Fixed** in PR #17 |
+| B | A ticker is interpolated into the URL without escaping | Open - stage 2 |
+| C | The proposal DTO accepts an answer that is not the contract | Open - **do this next**, before stage 3 |
+| D | A currency mix is reported as a bug, not as an outcome | Open - stage 2 |
+| E | There is no trading calendar anywhere in the plan | Open - decide before stage 5 |
+| F | Outcome measurement ignores transaction costs | Open - decide before stage 4 |
+
+### A — a failed analysis is sent twice (fixed, PR #17)
+
+**Resolved on 2026-09-20.** The client registration moved out of `Program.cs` into
+`AddAgentClient`, so the rule could be tested at all, and `Retry.ShouldHandle` now fires only for
+`HttpRequestException { HttpRequestError: ConnectionError }` — a connection that never came up.
+A timeout is excluded for the same reason as a response: the first request may still be running
+on the far side. Verified live as well: three engine cycles against a failing agent service
+produced exactly three HTTP requests. Three tests in `AgentClientResilienceTests` hold it.
+
+The same pull request also removed two hidden multipliers on the Python side: the openai client's
+own `max_retries=2`, which under AG2's schema retries is up to nine calls for one decision, and
+its 600 s read timeout, which made a 504 unreachable in practice.
+
+The original finding, for context:
 
 The resilience pipeline retries on a failing *response*, not just on a failing connection, so a
 5xx costs two full analyses. A 5xx arrives after the agents have already spent 12–15 s of LLM
@@ -70,7 +109,8 @@ Idempotency keyed on `correlation_id` is the heavier alternative if retrying a r
 turns out to be worth it.
 
 *Verified:* a counting primary handler behind the configured pipeline recorded **2 HTTP attempts**
-for one call that ended in `AgentServiceUnavailableException`.
+for one call that ended in `AgentServiceUnavailableException`. After the fix the same probe
+records 1 for a failing response and 2 for a refused connection.
 
 ### B — a ticker is interpolated into the URL without escaping
 
@@ -88,7 +128,7 @@ at the call site. The roadmap mentions only the first.
 `"AAPL/../../admin"` to `http://127.0.0.1:8000/ADMIN`, and `"AAPL?x=1"` to
 `http://127.0.0.1:8000/analyze/AAPL?X=1`. `Ticker.TryCreate` accepted all three.
 
-### C — the proposal DTO accepts an answer that is not the contract
+### C — the proposal DTO accepts an answer that is not the contract (do this next)
 
 `InvestmentProposalDto` is a positional record with non-nullable `string` properties, but
 System.Text.Json fills a missing member with `null` without complaining. A body that honours none
@@ -157,10 +197,14 @@ function and therefore an ideal test-first target.
 
 - **Orphan Docker volume** `trading-agent-system_postgres_data`, left from the original compose file. It holds no user tables (checked on a copy). Deleting it is the owner's call: `docker volume rm trading-agent-system_postgres_data`.
 - **Dependabot:** the first uv run failed (run 35465220355), but every Dependabot run on 2026-09-19 succeeded, so it looks like a one-off. Nothing to do unless it returns.
-- **`github-advanced-security` fails on most pull requests** (#4, #5, #6, #10, #11, #13 and #14; it passed on #7). It is GitHub's Copilot "Code scanning AI findings" job, it is not a required check, and it blocks nothing — but a check that is usually red trains you to ignore red. Decide whether to switch it off under *Settings → Advanced Security*.
-- **Swedish outside the agreed exceptions:** the `description` in `src/agents/pyproject.toml`, a log message in `team.py` (removed in stage 1), and the `Field` descriptions and validator message in `app/domain/models.py`. The last ones are sent to the LLM (in the JSON schema and in the retry error), so they arguably count as prompt text, and `models.py` is replaced in stages 2–3 anyway.
+- **`github-advanced-security` fails on most pull requests** (#4, #5, #6, #10, #11, #13, #14 and on through stage 1; it passed on #7). It is GitHub's Copilot "Code scanning AI findings" job, it is not a required check, and it blocks nothing — but a check that is usually red trains you to ignore red. Decide whether to switch it off under *Settings → Advanced Security*.
+- **Swedish outside the agreed exceptions:** the `description` in `src/agents/pyproject.toml`, the `Field` descriptions and validator message in `app/domain/models.py`, and the strings `MemoryStore.search` returns. The log message in `team.py` was translated in stage 1. The rest are all read by the model — in the JSON schema, in the retry error, or as a tool result — so they arguably count as prompt text. `models.py` is replaced in stages 2-3 anyway. Decide whether "prompt text" means the `ag2/` directory or wherever the words reach the model.
 - **Known gaps pinned by tests,** documenting current behaviour rather than asserting the right one: `Money` treats `usd` and `USD` as different currencies, and `Position.AddQuantity` adopts the incoming price's currency. Stage 2 gives `Money` a currency guard, together with finding D.
-- **Empty packages:** `app/application/`, `app/infrastructure/llm/` and `app/infrastructure/market_data/` hold only `__init__.py`.
+- **Empty packages:** `app/infrastructure/llm/` and `app/infrastructure/market_data/` hold only `__init__.py`. `app/application/` now holds the error vocabulary.
+- **The engine reads only the status code, not `error_code`.** 502, 503 and 504 all become `AgentUnavailable`, with the status in the log message. The engine's decision is the same in all three cases, so this was left alone in stage 1 — but it is a choice, not an oversight, and worth revisiting when the contract is versioned in stage 3.
+- **Uvicorn prints two lines before startup that are not JSON**, because `configure_logging()` runs in the lifespan. Moving it to import time would catch them but would also reconfigure logging in the middle of pytest. The real fix is a `--log-config` at deploy time, which belongs to stage 6.
+- **`MemoryStore` still is not wired into the flow.** The lifespan builds one and nothing uses it. The roadmap puts a `search_history_tool` on `RiskManager` and a `save` after each cycle in stages 2-3.
+- **One row with ticker `TEST`** sits in `agent.agent_memories` from the smoke test on 2026-09-20. Harmless; delete it if a clean table matters.
 
 ---
 
@@ -239,13 +283,19 @@ How the owner wants the work done. Apart from the language rule, none of this is
 
 ---
 
-## Stage 1 log (2026-09-20 → )
+## Stage 1 log (2026-09-20, done)
 
 - **PR #12 `deps-pin-fastmcp`** (`e0bc847`): `fastmcp>=4.0.5,<5`, so the next major version arrives as its own visible Dependabot PR, and `mcp[cli]` removed — the code never imports `mcp`, and fastmcp pulls it in anyway. The lockfile lost only `typer` and `shellingham`. Verified with a full run against Ollama rather than only the tests, because the MCP path has none and the HTTP 200 fallback hides a broken chain.
 - **PR #13 `stage-1-trade-decision-result`** (`bb114aa`): `ProcessProposalUseCase` returns a `TradeDecisionResult` instead of throwing or logging. It is a closed hierarchy — a private constructor keeps every case in one file — with `Executed`, `RejectedByRisk`, `NoAction`, `InvalidResponse` and `AgentUnavailable`. `Ticker.TryCreate` parses an agent's answer without throwing, and an answer about another ticker is refused: without that check a model replying "TSLA" to a question about AAPL made the engine buy TSLA. The worker now picks a log level per outcome, so a risk rejection is information rather than an error with a stack trace behind it. Written test-first: 12 tests red before the code existed.
 - **PR #14 `stage-1-typed-options`** (`c962c2e`): `AgentServiceOptions`, `RiskPolicyOptions` and `TradingOptions`, each `ValidateDataAnnotations().ValidateOnStart()`, plus a `TradingOptionsValidator` for the rule data annotations cannot express. **None of them has a default value**, so a mistyped section stops startup instead of running on a guessed risk limit. `AddStandardResilienceHandler` takes its attempt timeout from configuration and `HttpClient.Timeout` is `InfiniteTimeSpan`, so the pipeline owns the time — which matters more than it looks, because in WSL's mirrored networking a dead port hangs instead of refusing. The worker moved to `IServiceScopeFactory` and loops over the configured tickers.
   - A live run caught a regression the tests did not: a resilience timeout reached the worker as `Polly.Timeout.TimeoutRejectedException` and was logged as an unknown bug, undoing what PR #13 had just fixed. Corrected by translating transport failures inside `PythonAgentClient` into the two exceptions the port declares, and by demoting Polly's own telemetry to information. Afterwards the same run logged zero entries at error level.
-- **Review of the repository (2026-09-20).** Six findings reproduced and recorded under *Open findings*; two suggestions rejected with reasons.
+- **Review of the repository (2026-09-20).** Six findings reproduced and recorded under *Open findings*; two suggestions rejected with reasons. Written up in PR #15, which also brought this file onto `master`.
+- **PR #16 `stage-1-python-settings`** (`04ad352`): `app/settings.py` with pydantic-settings. Every value is required, because here the silent defaults were dangerous rather than merely wrong — a missing `LLM_BASE_URL` meant "call OpenAI's cloud API with your key" and a missing `LLM_MODEL` meant `gpt-4o-mini`. `SecretStr` on the two secrets, `HttpUrl` on the two base URLs, read through a cached `get_settings()` so that importing a module no longer depends on a `.env` file. A FastAPI `lifespan` builds the httpx2 client, the embeddings client, the AG2 configuration and an asyncpg pool once, and `memory.py` became a `MemoryStore` that is handed them — which is what fixes the clients being bound to whichever event loop imported the module first.
+  - `httpx2` replaced `httpx` as a declared dependency. It is pydantic's successor to httpx, and `openai` 3.x requires it, so the `type: ignore` in `memory.py` disappeared rather than moving. **Nothing was added to or removed from the lockfile**: all 112 packages were already installed, and only the declarations changed.
+  - The pool opening a connection at startup means an unreachable database now stops the service. asyncpg waits 60 s by default and a dead port hangs in WSL, so the connect timeout is 10 s and the failure names `docker compose`.
+- **PR #17 `stage-1-honest-errors`** (`7ca7ad2`): the reason the stage exists. `team.py` raises instead of falling back to HOLD, `app/application/errors.py` names the failures, and `app/api/errors.py` maps them to 422, 502, 503 and 504. A response body is `{error_code, correlation_id}` and nothing else — never `str(exception)`, which is how hostnames and roles leak to a caller. A ticker is validated against a pattern, so a malformed one costs 422 rather than 12-15 s of LLM time. `X-Correlation-Id` is read or invented and put in every log line; logs are JSON. `/health` is liveness, `/ready` checks the database and the LLM backend. Carries finding A. 20 HTTP-contract tests pin the behaviour before `team.py` is rewritten in stages 2-3.
+- **PR #18 `stage-1-api-key`** (`30271ef`): `X-Api-Key` on `/analyze`, compared with `hmac.compare_digest`. A missing key and a wrong key both answer 401, so the response says nothing about which it was. The dependency sits on the router rather than the route, so a route added later is closed by default; the two probes are defined outside it and stay open. The engine's key is required and validated at startup but deliberately absent from `appsettings.json`: locally it comes from .NET user secrets, outside the repository.
+- **Stage 1 closed 2026-09-20.** All twelve points in the roadmap's list are done, and the stage's own criterion was verified end to end in both halves. 52 Python tests and 61 .NET tests, from 11 and 19 when the stage started.
 
 ---
 
@@ -261,11 +311,20 @@ Things that cost time or were not obvious. Most are also recorded where they app
 - A resilience pipeline throws Polly's own exception types. Translate them where the adapter meets the transport, or they reach the application layer looking like bugs.
 - System.Text.Json fills a missing member of a positional record with `null` no matter how non-nullable the property is. Only `required` turns that into an error.
 - Microsoft.Testing.Platform does not print `ITestOutputHelper` output for a test that passes. To read a value out of a probe, assert it into the failure message.
+- Configuration that is only wired in `Program.cs` cannot be tested. Moving the client registration into an extension method was what made the retry rule testable at all.
+- `HttpRequestException` carries an `HttpRequestError`, so "the connection never came up" can be told apart from "the server answered badly" without string matching.
 
 **Python**
 - `uv_build` assumes a `src/` layout. This repo needs `module-name = "app"` and `module-root = ""`.
 - openai 3.x types its client against `httpx2`, so `memory.py` has a documented `type: ignore` until stage 1 moves client creation into the lifespan.
 - AG2 1.0.5: `ask()` without `stream=` runs on a fresh `MemoryStream` (`stream or MemoryStream()` in `Agent._open_run`), so agent objects shared between requests do not leak history.
+- `httpx2` is not a typosquat. It is pydantic's successor to httpx, and `openai` 3.x requires it (`httpx2<3,>=2.7.0`), which is why passing an `httpx` client needed a `type: ignore`.
+- AG2 does not wrap the LLM client's exceptions, so openai's come through unchanged. `APITimeoutError` is a **subclass of** `APIConnectionError`, so it has to be caught first or a timeout is reported as unreachable.
+- `reply.content(retries=2)` raises pydantic's `ValidationError` once the retries are spent, and costs 3 HTTP calls for one decision.
+- The openai client defaults to a **600 s read timeout and 2 retries of its own**. Stacked under AG2's schema retries that is up to nine calls for one decision, and it makes a 504 unreachable in practice. Both are set explicitly now.
+- A `ContextVar` set in a `BaseHTTPMiddleware.dispatch` does not reliably reach the endpoint, because the endpoint runs in another task. Plain ASGI middleware runs in the same task and does.
+- mypy reads `BaseSettings` fields as required constructor arguments unless `plugins = ["pydantic.mypy"]` is set. The plugin is the fix; a `type: ignore` would have been the wrong one.
+- FastAPI validates a path parameter against `Path(pattern=...)` and raises `RequestValidationError`, so a 422 needs a handler to come back in the same `{error_code, correlation_id}` shape as everything else.
 
 **CI and GitHub**
 - A Dependabot PR title names only the packages whose requirement changed. Read the `uv.lock` diff: a dependency without an upper bound can move a major version silently, as fastmcp did in PR #5.
@@ -278,6 +337,7 @@ Things that cost time or were not obvious. Most are also recorded where they app
 - Postgres init scripts run only on an empty volume. A change to `db/init/` takes `docker compose down -v && docker compose up -d`, which deletes all data.
 - `pgvector.asyncpg.register_vector` looks for the extension in `public`, so `vector` stays there.
 - The psql variables `:'x'` and `:"x"` quote a literal and an identifier safely, so the shell never splices a password into SQL.
-- Docker Desktop's WSL integration must be enabled for Ubuntu-24.04, or `docker` fails even though the binary exists.
+- Docker Desktop's WSL integration must be enabled for Ubuntu-24.04, or `docker` fails even though the binary exists. The container can still be running and reachable on `127.0.0.1` through mirrored networking, so a failing `docker` command does not mean the database is down.
+- `pkill -f "[p]attern"` still kills the shell that runs it if the literal text appears **later on the same command line**, for example when the same command restarts the process it just stopped. Stopping and starting belong in separate commands.
 - Ollama runs on Windows, and WSL reaches it at `127.0.0.1` only in mirrored networking mode. Use `127.0.0.1`, never `localhost`.
 - Searching for `[åäö]` misses Swedish words without those letters. Two exception messages survived PR #2 that way.
