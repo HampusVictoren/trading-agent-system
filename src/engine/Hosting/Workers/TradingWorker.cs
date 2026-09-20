@@ -3,18 +3,19 @@ namespace Engine.Hosting.Workers;
 using Engine.Application.UseCases;
 using Engine.Domain.Aggregates.Portfolio;
 using Engine.Domain.ValueObjects;
+using Engine.Hosting.Options;
+using Microsoft.Extensions.Options;
 
 public class TradingWorker : BackgroundService
 {
-    private const string TickerSymbol = "AAPL";
-    private static readonly TimeSpan CycleInterval = TimeSpan.FromSeconds(15);
-
-    private readonly IServiceProvider _serviceProvider;
+    private readonly IServiceScopeFactory _scopeFactory;
+    private readonly TradingOptions _options;
     private readonly ILogger<TradingWorker> _logger;
 
-    public TradingWorker(IServiceProvider serviceProvider, ILogger<TradingWorker> logger)
+    public TradingWorker(IServiceScopeFactory scopeFactory, IOptions<TradingOptions> options, ILogger<TradingWorker> logger)
     {
-        _serviceProvider = serviceProvider;
+        _scopeFactory = scopeFactory;
+        _options = options.Value;
         _logger = logger;
     }
 
@@ -24,34 +25,38 @@ public class TradingWorker : BackgroundService
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            using (var scope = _serviceProvider.CreateScope())
+            foreach (var tickerSymbol in _options.Tickers)
             {
+                if (stoppingToken.IsCancellationRequested)
+                    return;
+
+                using var scope = _scopeFactory.CreateScope();
                 var useCase = scope.ServiceProvider.GetRequiredService<ProcessProposalUseCase>();
 
                 try
                 {
-                    _logger.LogInformation("Requesting analysis for {Ticker}...", TickerSymbol);
-                    var result = await useCase.ExecuteAsync(portfolio, TickerSymbol, stoppingToken);
+                    _logger.LogInformation("Requesting analysis for {Ticker}...", tickerSymbol);
+                    var result = await useCase.ExecuteAsync(portfolio, tickerSymbol, stoppingToken);
                     LogOutcome(result, portfolio);
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
-                    break;
+                    return;
                 }
                 catch (Exception ex)
                 {
                     // Only a bug reaches this point: every expected outcome is a result.
-                    _logger.LogError(ex, "Unexpected failure in the trading cycle.");
+                    _logger.LogError(ex, "Unexpected failure in the trading cycle for {Ticker}.", tickerSymbol);
                 }
             }
 
             try
             {
-                await Task.Delay(CycleInterval, stoppingToken);
+                await Task.Delay(_options.CycleInterval, stoppingToken);
             }
             catch (OperationCanceledException)
             {
-                break;
+                return;
             }
         }
     }

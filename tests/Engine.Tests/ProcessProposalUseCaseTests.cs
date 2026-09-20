@@ -108,8 +108,9 @@ public class ProcessProposalUseCaseTests
     [Fact]
     public async Task Execute_reports_malformed_json_as_an_invalid_response()
     {
-        // The service answered, but not with the contract - an HTML error page, say.
-        var result = await SutThrowing(new JsonException("unexpected token")).ExecuteAsync(NewPortfolio(), Requested, TestContext.Current.CancellationToken);
+        // The client translates the transport's own exceptions; this layer only maps them.
+        var invalid = new AgentResponseInvalidException("not the agreed JSON", new JsonException("unexpected token"));
+        var result = await SutThrowing(invalid).ExecuteAsync(NewPortfolio(), Requested, TestContext.Current.CancellationToken);
 
         result.ShouldBeOfType<TradeDecisionResult.InvalidResponse>();
     }
@@ -117,8 +118,8 @@ public class ProcessProposalUseCaseTests
     [Fact]
     public async Task Execute_reports_a_connection_failure_as_an_unavailable_agent_service()
     {
-        var result = await SutThrowing(new HttpRequestException("connection refused"))
-            .ExecuteAsync(NewPortfolio(), Requested, TestContext.Current.CancellationToken);
+        var unavailable = new AgentServiceUnavailableException("no answer", new HttpRequestException("connection refused"));
+        var result = await SutThrowing(unavailable).ExecuteAsync(NewPortfolio(), Requested, TestContext.Current.CancellationToken);
 
         result.ShouldBeOfType<TradeDecisionResult.AgentUnavailable>();
     }
@@ -126,9 +127,9 @@ public class ProcessProposalUseCaseTests
     [Fact]
     public async Task Execute_reports_a_timeout_as_an_unavailable_agent_service()
     {
-        // HttpClient signals a timeout as TaskCanceledException while our own token is still live.
-        var result = await SutThrowing(new TaskCanceledException("timeout"))
-            .ExecuteAsync(NewPortfolio(), Requested, TestContext.Current.CancellationToken);
+        // Whatever timed out - HttpClient or the resilience pipeline - the client reports it as one thing.
+        var unavailable = new AgentServiceUnavailableException("no answer in time", new TaskCanceledException("timeout"));
+        var result = await SutThrowing(unavailable).ExecuteAsync(NewPortfolio(), Requested, TestContext.Current.CancellationToken);
 
         result.ShouldBeOfType<TradeDecisionResult.AgentUnavailable>();
     }
