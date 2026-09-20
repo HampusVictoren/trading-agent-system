@@ -1,12 +1,17 @@
 namespace Engine.Application.UseCases;
 
+using System.Text.Json;
+using Engine.Application.Dtos;
 using Engine.Application.Interfaces;
 using Engine.Domain.Aggregates.Portfolio;
+using Engine.Domain.Exceptions;
 using Engine.Domain.Services;
 using Engine.Domain.ValueObjects;
 
 public class ProcessProposalUseCase
 {
+    private const string BuyAction = "BUY";
+
     private readonly IAgentClient _agentClient;
     private readonly RiskEngine _riskEngine;
 
@@ -16,17 +21,63 @@ public class ProcessProposalUseCase
         _riskEngine = riskEngine;
     }
 
-    public async Task ExecuteAsync(Portfolio portfolio, string tickerSymbol, CancellationToken cancellationToken = default)
+    /// <summary>
+    /// Runs one analysis cycle for a ticker and reports what came of it. Every expected
+    /// outcome is returned as a <see cref="TradeDecisionResult"/>; exceptions are left for bugs.
+    /// </summary>
+    public async Task<TradeDecisionResult> ExecuteAsync(Portfolio portfolio, string tickerSymbol, CancellationToken cancellationToken = default)
     {
-        var proposal = await _agentClient.AnalyzeTickerAsync(tickerSymbol, cancellationToken);
+        var requested = new Ticker(tickerSymbol);
 
-        if (proposal == null || proposal.Action != "BUY")
-            return;
+        InvestmentProposalDto? proposal;
+        try
+        {
+            proposal = await _agentClient.AnalyzeTickerAsync(requested.Value, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw; // We are shutting down, which is not a failing agent service.
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            // Unreachable service, a failing status code, or a timeout: HttpClient reports
+            // its own timeout as TaskCanceledException while our token is still live.
+            return new TradeDecisionResult.AgentUnavailable(requested, ex.Message);
+        }
+        catch (JsonException ex)
+        {
+            // The service answered, but not with the contract - an HTML error page, say.
+            return new TradeDecisionResult.InvalidResponse(requested, ex.Message);
+        }
 
-        var ticker = new Ticker(proposal.Ticker);
+        if (proposal is null)
+            return new TradeDecisionResult.InvalidResponse(requested, "the agent service returned an empty body");
+
+        if (!Ticker.TryCreate(proposal.Ticker, out var answered))
+            return new TradeDecisionResult.InvalidResponse(requested, "the answer carries no ticker");
+
+        // The answer must be about what we asked about. Without this check, a model that
+        // replies "TSLA" to a question about AAPL makes the engine buy TSLA.
+        if (answered != requested)
+            return new TradeDecisionResult.InvalidResponse(requested, $"the answer is about {answered.Value}");
+
+        if (proposal.Action != BuyAction)
+            return new TradeDecisionResult.NoAction(requested, proposal.Action);
+
         var intendedSpend = new Money(proposal.AmountUsd, "USD");
 
-        _riskEngine.ValidateTrade(portfolio, ticker, intendedSpend, portfolio.CashBalance);
-        portfolio.ExecuteBuy(ticker, quantity: 1m, intendedSpend);
+        try
+        {
+            _riskEngine.ValidateTrade(portfolio, requested, intendedSpend, portfolio.CashBalance);
+        }
+        catch (RiskViolationException ex)
+        {
+            // Stage 2 replaces this catch: RiskEngine.Evaluate will return a RiskDecision
+            // instead of throwing, since a rejection is a business outcome.
+            return new TradeDecisionResult.RejectedByRisk(requested, ex.Message);
+        }
+
+        portfolio.ExecuteBuy(requested, quantity: 1m, intendedSpend);
+        return new TradeDecisionResult.Executed(requested, 1m, intendedSpend);
     }
 }
