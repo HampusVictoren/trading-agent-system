@@ -1,12 +1,18 @@
-import logging
-
 from ag2 import Agent, tool
 from ag2.config import OpenAIConfig
+from ag2.exceptions import AG2Error
+from openai import APIConnectionError, APIStatusError, APITimeoutError
+from pydantic import ValidationError
 
-from app.domain.models import ActionEnum, InvestmentProposal
+from app.application.errors import (
+    AgentChainFailed,
+    AgentResponseInvalid,
+    LlmFailed,
+    LlmTimeout,
+    LlmUnreachable,
+)
+from app.domain.models import InvestmentProposal
 from app.infrastructure.mcp.market_data_server import get_stock_quote
-
-logger = logging.getLogger(__name__)
 
 
 @tool
@@ -73,18 +79,24 @@ async def run_agent_analysis(ticker: str, llm_config: OpenAIConfig) -> Investmen
             response_schema=InvestmentProposal,
         )
         proposal = await pm_reply.content(retries=2)
-        if proposal is None:
-            raise ValueError("Portfolio Manager returnerade inget svar.")
 
-        return proposal.model_copy(update={"ticker": ticker.upper()})
+    # APITimeoutError is a subclass of APIConnectionError, so it has to be caught first.
+    except APITimeoutError as e:
+        raise LlmTimeout(f"The LLM did not answer in time for {ticker}.") from e
+    except APIConnectionError as e:
+        raise LlmUnreachable(f"The LLM backend could not be reached for {ticker}.") from e
+    except APIStatusError as e:
+        raise LlmFailed(f"The LLM backend answered {e.status_code} for {ticker}.") from e
+    except ValidationError as e:
+        # ask(response_schema=...) already asked the model again with the validation error;
+        # this is what is left after those retries.
+        raise AgentResponseInvalid(
+            f"The model never answered in the agreed shape for {ticker}: {e}"
+        ) from e
+    except AG2Error as e:
+        raise AgentChainFailed(f"The agent chain failed for {ticker}: {e}") from e
 
-    except Exception as e:
-        # An error must never lead to a buy - the engine ignores anything that is not BUY
-        logger.exception("The agent chain failed for %s", ticker)
-        return InvestmentProposal(
-            ticker=ticker.upper(),
-            action=ActionEnum.HOLD,
-            amount_usd=0.0,
-            confidence=0.0,
-            reasoning=f"Fallback (HOLD) p.g.a. fel i agentkedjan: {e}",
-        )
+    if proposal is None:
+        raise AgentResponseInvalid(f"The portfolio manager returned no answer for {ticker}.")
+
+    return proposal.model_copy(update={"ticker": ticker.upper()})

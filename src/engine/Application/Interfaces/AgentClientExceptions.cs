@@ -11,6 +11,12 @@ public sealed class AgentServiceUnavailableException : Exception
         : base(message, innerException)
     {
     }
+
+    /// <summary>For a failing status code, where the status itself is the whole story.</summary>
+    public AgentServiceUnavailableException(string message)
+        : base(message)
+    {
+    }
 }
 
 /// <summary>The agent service answered, but not with the agreed contract.</summary>

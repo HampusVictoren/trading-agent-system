@@ -30,7 +30,15 @@ public class PythonAgentClient : IAgentClient
         try
         {
             var response = await _httpClient.PostAsync($"analyze/{ticker}", null, cancellationToken);
-            response.EnsureSuccessStatusCode();
+
+            if (!response.IsSuccessStatusCode)
+            {
+                // Since stage 1 the agent service answers honestly: 502 and 504 mean the agents
+                // failed, 503 that a backend is down. The engine treats them alike - no decision
+                // this cycle - but the status code goes in the log, so the reason is not lost.
+                throw new AgentServiceUnavailableException(
+                    $"The agent service answered {(int)response.StatusCode} for {ticker}.");
+            }
 
             return await response.Content.ReadFromJsonAsync<InvestmentProposalDto>(Options, cancellationToken);
         }
