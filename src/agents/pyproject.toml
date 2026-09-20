@@ -11,9 +11,10 @@ dependencies = [
     "ag2[openai]>=1.0.5",
     "asyncpg>=0.31.0",
     "fastapi>=0.141.1",
-    "fastmcp>=3.4.7",
+    # Capped: fastmcp 3 -> 4 arrived inside an unrelated Dependabot PR because
+    # this had no upper bound. A new major must be its own, visible update.
+    "fastmcp>=4.0.5,<5",
     "httpx>=0.28.1",
-    "mcp[cli]<3",
     "openai>=3.16.1",
     "pgvector>=0.5.0",
     "python-dotenv>=1.2.3",
