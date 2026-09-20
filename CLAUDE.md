@@ -73,8 +73,11 @@ The working directory must be `src/agents` for the `app.*` imports to resolve.
 - `OLLAMA_BASE_URL` (embeddings)
 - `LLM_BASE_URL` and `LLM_MODEL` (AG2 through `OpenAIConfig` against Ollama's OpenAI-compatible `/v1`)
 - `OPENAI_API_KEY` (`SecretStr`)
+- `LLM_TIMEOUT_SECONDS` - caps one LLM call. Without it the openai client waits 600 s to read a response, which makes a 504 unreachable in practice.
 
 **Shared resources are built once**, in the FastAPI `lifespan` in `app/main.py`: the `httpx2` client, the `AsyncOpenAI` embeddings client, the AG2 model configuration and an `asyncpg` pool. They reach a route as `Resources` through `app/dependencies.py`. Nothing creates a client at import time, so no client is bound to the wrong event loop. The pool opens a connection at startup, which means **`docker compose up -d` has to have run before `uvicorn`**.
+
+**Every request carries a correlation id.** `CorrelationIdMiddleware` reads `X-Correlation-Id`, or invents one, echoes it on the response and puts it in every log line. Logs are JSON, configured in the lifespan, so uvicorn's own lines are formatted too - except the two banner lines it prints before startup. `/health` is liveness and checks nothing else on purpose; `/ready` checks the database and the LLM backend and answers 503 until both do.
 
 The engine reads `AgentService:BaseUrl` from `appsettings.json`.
 
@@ -104,14 +107,26 @@ Each role owns its schema, so its migration tool can create tables there, and ha
 
 ### Request flow
 
-1. `TradingWorker` (`src/engine/Hosting/Workers`) is a `BackgroundService` that holds a single in-memory `Portfolio` (10,000 USD). Every 15 seconds it runs `ProcessProposalUseCase` for a hard-coded ticker (`AAPL`).
+1. `TradingWorker` (`src/engine/Hosting/Workers`) is a `BackgroundService` that holds a single in-memory `Portfolio` (10,000 USD). Every `Trading:CycleIntervalSeconds` it runs `ProcessProposalUseCase` for each ticker in `Trading:Tickers`.
 2. `PythonAgentClient` calls `POST /analyze/{ticker}` on the agent service.
 3. `routes.py` calls `run_agent_analysis` in `app/infrastructure/ag2/team.py`. It runs three AG2 agents **sequentially**, not as a group chat:
    - `MarketAnalyst` fetches market data with a tool.
    - `RiskManager` reviews the analysis for downside and valuation risk.
    - `PortfolioManager` is called with `ask(..., response_schema=InvestmentProposal)`. AG2 sends the schema as `response_format` (json_schema), and `reply.content(retries=2)` validates the answer with pydantic. On a validation error, it asks the model again with the error message.
-   - If anything fails, the function logs the error and returns **`HOLD` with `amount_usd=0`**, with `reasoning` starting with `"Fallback (HOLD)"`. An error can never lead to a buy.
-4. Back in the engine, anything that isn't `BUY` is ignored. `RiskEngine.ValidateTrade` enforces a 5% max position size and a cash check (and throws `RiskViolationException`), then `Portfolio.ExecuteBuy` runs with `quantity: 1` and the proposed amount as the price.
+   - If anything fails, `run_agent_analysis` raises an `AnalysisError` from `app/application/errors.py`. **There is no fallback HOLD**: a failure that looks like a decision is one the engine cannot tell apart from a real one.
+4. `app/api/errors.py` turns that into an honest status code, and a body of `{error_code, correlation_id}` and nothing else. The detail is logged, never returned.
+
+   | Failure | Status | `error_code` |
+   |---|---|---|
+   | Decision made, including HOLD | 200 | - |
+   | Ticker is not a ticker | 422 | `invalid_request` |
+   | LLM answered with an error status | 502 | `llm_failed` |
+   | Model never matched the schema, after AG2's retries | 502 | `agent_response_invalid` |
+   | A step failed for a reason of AG2's own | 502 | `agent_chain_failed` |
+   | LLM backend unreachable | 503 | `llm_unreachable` |
+   | LLM did not answer within `LLM_TIMEOUT_SECONDS` | 504 | `llm_timeout` |
+
+5. Back in the engine, a non-2xx becomes `AgentUnavailable` with the status code in the message; anything that isn't `BUY` is ignored. `RiskEngine.ValidateTrade` enforces a 5% max position size and a cash check (and throws `RiskViolationException`), then `Portfolio.ExecuteBuy` runs with `quantity: 1` and the proposed amount as the price.
 
 ### Cross-service contract
 
@@ -131,6 +146,6 @@ Both services follow a Clean Architecture / DDD layout: `Domain` → `Applicatio
 - **Model quality:** `llama3.2` (3B) often gives weak or contradictory reasoning, even though the JSON is valid. A larger local model or Claude/Grok would do better.
 - **Risk limit:** `PortfolioManager` isn't told the portfolio's cash or the engine's 5% limit. It often proposes amounts far above the limit (1,000–100,000 USD), and `RiskEngine` rejects them. The rejection is logged as `fail` with a stack trace, even though it's an expected business outcome.
 - **Timing:** one analysis cycle takes about 12–15 s with `llama3.2`. The engine's `HttpClient` uses the default 100 s timeout.
-- **Empty packages:** `app/application/`, `app/infrastructure/llm/` and `app/infrastructure/market_data/` contain only `__init__.py`; the placeholder files in them were deleted in stage 0. The roadmap puts the provider factory in `llm/provider.py` in stage 3.
+- **Empty packages:** `app/infrastructure/llm/` and `app/infrastructure/market_data/` contain only `__init__.py`; the placeholder files in them were deleted in stage 0. The roadmap puts the provider factory in `llm/provider.py` in stage 3.
 - **Engine database access:** the `engine_svc` role and the `trading` schema exist, but the engine has no DB access code until stage 4.
 - **AG2 API version:** AG2 is used through its v1.0+ API (`from ag2 import Agent, tool`, `ag2.config.OpenAIConfig`, `await agent.ask(...)`). The pre-1.0 `autogen`/`ConversableAgent` API is not used here.

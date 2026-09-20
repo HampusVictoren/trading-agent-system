@@ -14,6 +14,7 @@ ENVIRONMENT = {
     "LLM_BASE_URL": "http://127.0.0.1:11434/v1",
     "LLM_MODEL": "llama3.2",
     "OLLAMA_BASE_URL": "http://127.0.0.1:11434/v1",
+    "LLM_TIMEOUT_SECONDS": "30",
 }
 
 
@@ -47,6 +48,7 @@ def test_every_value_is_read_from_the_environment(environment):
     assert str(settings.llm_base_url) == ENVIRONMENT["LLM_BASE_URL"]
     assert str(settings.ollama_base_url) == ENVIRONMENT["OLLAMA_BASE_URL"]
     assert settings.llm_model == "llama3.2"
+    assert settings.llm_timeout_seconds == 30.0
 
 
 @pytest.mark.parametrize("missing", sorted(ENVIRONMENT))

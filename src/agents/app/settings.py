@@ -45,6 +45,10 @@ class Settings(BaseSettings):
 
     llm_model: str
 
+    # Without this the openai client waits 600 s to read a response, so a hung backend
+    # would hold a request for ten minutes and a 504 would be unreachable in practice.
+    llm_timeout_seconds: float
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

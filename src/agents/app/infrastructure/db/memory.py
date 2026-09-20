@@ -22,6 +22,11 @@ class MemoryStore:
         self._pool = pool
         self._embeddings = embeddings
 
+    async def ping(self) -> None:
+        """Raises if the database cannot be reached. Used by the readiness probe."""
+        async with self._pool.acquire() as conn:
+            await conn.fetchval("SELECT 1")
+
     async def embed(self, text: str) -> list[float]:
         response = await self._embeddings.embeddings.create(input=text, model=EMBEDDING_MODEL)
         return response.data[0].embedding

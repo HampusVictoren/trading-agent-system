@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 
+import httpx2
 from ag2.config import OpenAIConfig
 from fastapi import Request
 
@@ -14,6 +15,8 @@ class Resources:
 
     llm_config: OpenAIConfig
     memory: MemoryStore
+    http_client: httpx2.AsyncClient
+    llm_base_url: str
 
 
 def get_resources(request: Request) -> Resources:
