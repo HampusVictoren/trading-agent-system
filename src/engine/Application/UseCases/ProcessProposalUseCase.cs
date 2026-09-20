@@ -1,6 +1,5 @@
 namespace Engine.Application.UseCases;
 
-using System.Text.Json;
 using Engine.Application.Dtos;
 using Engine.Application.Interfaces;
 using Engine.Domain.Aggregates.Portfolio;
@@ -38,13 +37,13 @@ public class ProcessProposalUseCase
         {
             throw; // We are shutting down, which is not a failing agent service.
         }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        catch (AgentServiceUnavailableException ex)
         {
-            // Unreachable service, a failing status code, or a timeout: HttpClient reports
-            // its own timeout as TaskCanceledException while our token is still live.
+            // Unreachable, a failing status code, or no answer in time. The client translates
+            // the transport's own exceptions, so this layer never sees HttpClient or Polly.
             return new TradeDecisionResult.AgentUnavailable(requested, ex.Message);
         }
-        catch (JsonException ex)
+        catch (AgentResponseInvalidException ex)
         {
             // The service answered, but not with the contract - an HTML error page, say.
             return new TradeDecisionResult.InvalidResponse(requested, ex.Message);
