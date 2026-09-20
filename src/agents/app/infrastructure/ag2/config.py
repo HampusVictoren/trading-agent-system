@@ -1,16 +1,16 @@
-import os
-
 from ag2.config import OpenAIConfig
 
+from app.settings import Settings
 
-def get_llm_config():
-    """Returnerar konfiguration för AG2 v1.0+."""
-    api_key = os.getenv("OPENAI_API_KEY", "dummy-key")
-    model = os.getenv("LLM_MODEL", "gpt-4o-mini")
-    base_url = os.getenv("LLM_BASE_URL", None)
 
-    kwargs = {"model": model, "api_key": api_key}
-    if base_url:
-        kwargs["base_url"] = base_url
+def build_llm_config(settings: Settings) -> OpenAIConfig:
+    """The AG2 model configuration, built once by the lifespan.
 
-    return OpenAIConfig(**kwargs)
+    Stage 3 turns this into a provider factory. Until then everything goes through
+    OpenAIConfig, which also covers Ollama's OpenAI-compatible endpoint.
+    """
+    return OpenAIConfig(
+        model=settings.llm_model,
+        api_key=settings.openai_api_key.get_secret_value(),
+        base_url=str(settings.llm_base_url),
+    )

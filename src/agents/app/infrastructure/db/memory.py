@@ -1,82 +1,78 @@
-import os
+"""pgvector-backed semantic memory for the agents.
+
+The clients and the connection pool are built once by the FastAPI lifespan and handed in,
+rather than created at import time. Creating them at import bound them to whichever event
+loop happened to import the module first, which is why the smoke test in CLAUDE.md had to
+run inside a single asyncio.run().
+"""
 
 import asyncpg
-import httpx
 from openai import AsyncOpenAI
-from pgvector.asyncpg import register_vector
 
-# No fallback: a default connection string is a hardcoded credential, and
-# connecting as the wrong role would defeat the per-service schema separation.
-DB_URL = os.getenv("DATABASE_URL")
-if not DB_URL:
-    raise RuntimeError("DATABASE_URL is not set; see src/agents/.env.example")
-OLLAMA_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434/v1")
-
-# trust_env=False forces httpx to ignore any proxy and connect straight to 127.0.0.1
-http_client = httpx.AsyncClient(trust_env=False)
-
-client = AsyncOpenAI(
-    base_url=OLLAMA_URL,
-    api_key="ollama",
-    # openai 3.x expects httpx2.AsyncClient; httpx 0.28 is duck-compatible here.
-    # Stage 1 moves client creation into the FastAPI lifespan and resolves this properly.
-    http_client=http_client,  # type: ignore[arg-type]
-)
+# nomic-embed-text produces 768 dimensions, which is what the embedding column is declared
+# as. Changing the model means changing the column, so this is deliberately not a setting.
+EMBEDDING_MODEL = "nomic-embed-text"
+EMBEDDING_DIMENSIONS = 768
 
 
-async def get_embedding(text: str) -> list[float]:
-    response = await client.embeddings.create(input=text, model="nomic-embed-text")
-    return response.data[0].embedding
+class MemoryStore:
+    """Reads and writes agent.agent_memories. One instance per process, built by the lifespan."""
 
+    def __init__(self, pool: asyncpg.Pool, embeddings: AsyncOpenAI) -> None:
+        self._pool = pool
+        self._embeddings = embeddings
 
-async def save_memory(ticker: str, action: str, reasoning: str):
-    conn = await asyncpg.connect(DB_URL)
-    await register_vector(conn)
+    async def embed(self, text: str) -> list[float]:
+        response = await self._embeddings.embeddings.create(input=text, model=EMBEDDING_MODEL)
+        return response.data[0].embedding
 
-    embedding = await get_embedding(f"{ticker} {action}: {reasoning}")
-    await conn.execute(
+    async def save(self, ticker: str, action: str, reasoning: str) -> None:
+        embedding = await self.embed(f"{ticker} {action}: {reasoning}")
+
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO agent.agent_memories (ticker, action, reasoning, embedding)
+                VALUES ($1, $2, $3, $4)
+                """,
+                ticker.upper(),
+                action.upper(),
+                reasoning,
+                embedding,
+            )
+
+    async def search(self, ticker: str, query: str, limit: int = 3) -> str:
+        """Returns the closest past analyses as text for an agent to read.
+
+        The result is written for the model, which is why it is in Swedish and why a
+        failure becomes a sentence rather than an exception: a missing memory must not
+        end an analysis. Stage 1's error handling covers the routes, not this string.
         """
-        INSERT INTO agent.agent_memories (ticker, action, reasoning, embedding)
-        VALUES ($1, $2, $3, $4)
-        """,
-        ticker.upper(),
-        action.upper(),
-        reasoning,
-        embedding,
-    )
-    await conn.close()
+        try:
+            query_embedding = await self.embed(query)
 
-
-async def search_past_memories(ticker: str, query: str, limit: int = 3) -> str:
-    try:
-        conn = await asyncpg.connect(DB_URL)
-        await register_vector(conn)
-
-        query_embedding = await get_embedding(query)
-        rows = await conn.fetch(
-            """
-            SELECT action, reasoning, created_at,
-                   1 - (embedding <=> $1) AS similarity
-            FROM agent.agent_memories
-            WHERE ticker = $2
-            ORDER BY embedding <=> $1
-            LIMIT $3
-            """,
-            query_embedding,
-            ticker.upper(),
-            limit,
-        )
-        await conn.close()
+            async with self._pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT action, reasoning, created_at,
+                           1 - (embedding <=> $1) AS similarity
+                    FROM agent.agent_memories
+                    WHERE ticker = $2
+                    ORDER BY embedding <=> $1
+                    LIMIT $3
+                    """,
+                    query_embedding,
+                    ticker.upper(),
+                    limit,
+                )
+        except Exception as e:
+            return f"Kunde inte hämta historiskt minne: {e}"
 
         if not rows:
             return f"Inga tidigare sparade analyser hittades för {ticker}."
 
-        results = []
-        for r in rows:
-            results.append(
-                f"[{r['created_at'].strftime('%Y-%m-%d')}] Beslut: {r['action']} | "
-                f"Likhet: {r['similarity']:.2f} | Motivering: {r['reasoning']}"
-            )
-        return "\n".join(results)
-    except Exception as e:
-        return f"Kunde inte hämta historiskt minne: {str(e)}"
+        return "\n".join(
+            f"[{r['created_at'].strftime('%Y-%m-%d')}] Beslut: {r['action']} | "
+            f"Likhet: {r['similarity']:.2f} | Motivering: {r['reasoning']}"
+            for r in rows
+        )

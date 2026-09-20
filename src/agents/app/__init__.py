@@ -1,8 +1,6 @@
-from pathlib import Path
+"""The agent service.
 
-from dotenv import load_dotenv
-
-# Load src/agents/.env before any submodule is imported
-# (memory.py reads environment variables at import time).
-# Variables already set in the shell take precedence.
-load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+Configuration used to be loaded here with load_dotenv, because memory.py read environment
+variables at import time and therefore depended on import order. Both are gone: settings
+are read on demand in app.settings, which reads the .env file itself.
+"""
