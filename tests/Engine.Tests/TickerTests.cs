@@ -29,4 +29,27 @@ public class TickerTests
     {
         Should.Throw<ArgumentException>(() => new Ticker(input!));
     }
+
+    [Theory]
+    [InlineData("aapl", "AAPL")]
+    [InlineData("  msft  ", "MSFT")]
+    public void TryCreate_accepts_and_normalises_valid_input(string input, string expected)
+    {
+        Ticker.TryCreate(input, out var ticker).ShouldBeTrue();
+
+        ticker!.Value.ShouldBe(expected);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData(null)]
+    public void TryCreate_refuses_an_empty_value_without_throwing(string? input)
+    {
+        // The engine parses agent answers with this. A malformed answer is an expected
+        // outcome, so it must not arrive as an exception.
+        Ticker.TryCreate(input, out var ticker).ShouldBeFalse();
+
+        ticker.ShouldBeNull();
+    }
 }
