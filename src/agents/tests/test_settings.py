@@ -11,6 +11,7 @@ from app.settings import Settings, get_settings
 ENVIRONMENT = {
     "DATABASE_URL": "postgresql://agent_svc:placeholder@127.0.0.1:5432/tradingdb",
     "OPENAI_API_KEY": "placeholder",
+    "AGENT_API_KEY": "placeholder-agent-key",
     "LLM_BASE_URL": "http://127.0.0.1:11434/v1",
     "LLM_MODEL": "llama3.2",
     "OLLAMA_BASE_URL": "http://127.0.0.1:11434/v1",

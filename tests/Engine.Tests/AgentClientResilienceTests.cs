@@ -22,10 +22,17 @@ public class AgentClientResilienceTests
 
         public int Attempts => Volatile.Read(ref _attempts);
 
+        public HttpRequestMessage? LastRequest { get; private set; }
+
         public CountingHandler(HttpStatusCode status) =>
             _respond = () => new HttpResponseMessage(status)
             {
-                Content = new StringContent("""{"error_code":"llm_failed","correlation_id":"x"}""", Encoding.UTF8, "application/json")
+                Content = new StringContent(
+                    status == HttpStatusCode.OK
+                        ? """{"ticker":"AAPL","action":"HOLD","amount_usd":0,"confidence":0.5,"reasoning":"n/a"}"""
+                        : """{"error_code":"llm_failed","correlation_id":"x"}""",
+                    Encoding.UTF8,
+                    "application/json")
             };
 
         public CountingHandler(Exception thrown) => _respond = () => throw thrown;
@@ -33,6 +40,7 @@ public class AgentClientResilienceTests
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Interlocked.Increment(ref _attempts);
+            LastRequest = request;
             return Task.FromResult(_respond());
         }
     }
@@ -45,6 +53,7 @@ public class AgentClientResilienceTests
             {
                 ["AgentService:BaseUrl"] = "http://127.0.0.1:8000",
                 ["AgentService:RequestTimeoutSeconds"] = "30",
+                ["AgentService:ApiKey"] = "a-test-key",
                 ["RiskPolicy:MaxPositionPercentage"] = "0.05",
                 ["Trading:Tickers:0"] = "AAPL",
                 ["Trading:CycleIntervalSeconds"] = "15",
@@ -85,6 +94,20 @@ public class AgentClientResilienceTests
             () => client.AnalyzeTickerAsync("AAPL", TestContext.Current.CancellationToken));
 
         exception.Message.ShouldContain("504");
+    }
+
+    [Fact]
+    public async Task Every_call_carries_the_api_key()
+    {
+        // Set on the client rather than per request, so no code path can forget it.
+        var handler = new CountingHandler(HttpStatusCode.OK);
+        var (client, provider) = Build(handler);
+        using var _ = provider;
+
+        await client.AnalyzeTickerAsync("AAPL", TestContext.Current.CancellationToken);
+
+        handler.LastRequest!.Headers.GetValues(AgentClientExtensions.ApiKeyHeader)
+            .ShouldBe(["a-test-key"]);
     }
 
     [Fact]

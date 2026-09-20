@@ -8,6 +8,8 @@ using Microsoft.Extensions.Options;
 
 public static class AgentClientExtensions
 {
+    public const string ApiKeyHeader = "X-Api-Key";
+
     /// <summary>
     /// Registers the agent client together with the resilience policy it runs under.
     /// It lives here rather than in Program.cs so that the retry rule can be tested:
@@ -18,7 +20,13 @@ public static class AgentClientExtensions
         services
             .AddHttpClient<IAgentClient, PythonAgentClient>((sp, client) =>
             {
-                client.BaseAddress = new Uri(sp.GetRequiredService<IOptions<AgentServiceOptions>>().Value.BaseUrl);
+                var options = sp.GetRequiredService<IOptions<AgentServiceOptions>>().Value;
+
+                client.BaseAddress = new Uri(options.BaseUrl);
+
+                // The agent service refuses an analysis without this. It is set once here
+                // rather than per request, so no code path can forget it.
+                client.DefaultRequestHeaders.Add(ApiKeyHeader, options.ApiKey);
 
                 // The resilience pipeline below owns the timeouts. HttpClient's own 100 s default
                 // would cut across the whole pipeline and report a less useful cancellation.

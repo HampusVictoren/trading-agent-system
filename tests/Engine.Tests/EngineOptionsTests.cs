@@ -13,6 +13,7 @@ public class EngineOptionsTests
     {
         ["AgentService:BaseUrl"] = "http://127.0.0.1:8000",
         ["AgentService:RequestTimeoutSeconds"] = "30",
+        ["AgentService:ApiKey"] = "a-test-key",
         ["RiskPolicy:MaxPositionPercentage"] = "0.05",
         ["Trading:Tickers:0"] = "AAPL",
         ["Trading:CycleIntervalSeconds"] = "15",
@@ -49,6 +50,15 @@ public class EngineOptionsTests
         Resolve<RiskPolicyOptions>().MaxPositionPercentage.ShouldBe(0.05m);
         Resolve<TradingOptions>().Tickers.ShouldBe(["AAPL"]);
         Resolve<TradingOptions>().CycleInterval.ShouldBe(TimeSpan.FromSeconds(15));
+    }
+
+    [Fact]
+    public void A_missing_api_key_is_rejected()
+    {
+        // The agent service refuses an analysis without it, so starting without one only
+        // buys a cycle of 401s. It is a secret, so it comes from user secrets or the
+        // environment rather than appsettings.json - which is exactly why it can be absent.
+        Should.Throw<OptionsValidationException>(() => Resolve<AgentServiceOptions>(("AgentService:ApiKey", null)));
     }
 
     [Fact]

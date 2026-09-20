@@ -17,4 +17,11 @@ public sealed class AgentServiceOptions
     /// </summary>
     [Range(1, 600)]
     public int RequestTimeoutSeconds { get; init; }
+
+    /// <summary>
+    /// Sent as X-Api-Key on every call. It is a secret, so it is never in appsettings.json:
+    /// in development it comes from user secrets, and elsewhere from the environment.
+    /// </summary>
+    [Required]
+    public string ApiKey { get; init; } = string.Empty;
 }
