@@ -1,0 +1,11 @@
+{
+  "instrument": { "type": "equity", "symbol": "MSFT" },
+  "stance": "HOLD",
+  "conviction": 0.31,
+  "thesis": "Ingen tydlig katalysator före nästa rapport, och kursen ligger mitt i intervallet.",
+  "key_risks": ["Rapporten kan flytta kursen åt båda håll"],
+  "horizon_days": 20,
+  "reference_price": 421.5,
+  "quote_as_of": "2026-09-21T14:03:05Z",
+  "run": { "team_id": "default", "team_version": "8f3a1c9e", "revisions": 0 }
+}

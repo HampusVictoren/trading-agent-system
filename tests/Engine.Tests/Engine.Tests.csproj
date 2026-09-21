@@ -13,6 +13,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The contract test reads these rather than a copy pasted into the test, so that
+         drift between the checked-in contract and the engine's types is what fails. -->
+    <Content Include="../../contracts/**/*.json" LinkBase="contracts" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="xunit.v3" Version="4.0.1" />
     <PackageReference Include="Shouldly" Version="4.3.0" />
     <PackageReference Include="NSubstitute" Version="6.2.0" />

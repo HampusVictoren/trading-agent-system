@@ -26,4 +26,10 @@ public sealed class AgentResponseInvalidException : Exception
         : base(message, innerException)
     {
     }
+
+    /// <summary>For a value that deserialised but makes no sense, where there is no inner failure.</summary>
+    public AgentResponseInvalidException(string message)
+        : base(message)
+    {
+    }
 }

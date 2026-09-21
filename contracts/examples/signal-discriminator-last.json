@@ -1,0 +1,11 @@
+{
+  "instrument": { "symbol": "BRK.B", "type": "equity" },
+  "stance": "SELL",
+  "conviction": 0.62,
+  "thesis": "Premien mot substansvärdet är den högsta på två år.",
+  "key_risks": ["Premien kan bestå längre än horisonten"],
+  "horizon_days": 20,
+  "reference_price": 502.0,
+  "quote_as_of": "2026-09-21T14:03:09Z",
+  "run": { "team_id": "default", "team_version": "8f3a1c9e", "revisions": 0 }
+}
