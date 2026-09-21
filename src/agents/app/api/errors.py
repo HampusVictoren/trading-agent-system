@@ -16,22 +16,26 @@ from app.application.errors import (
     AgentChainFailed,
     AgentResponseInvalid,
     AnalysisError,
+    InstrumentNotFound,
     LlmFailed,
     LlmTimeout,
     LlmUnreachable,
+    MarketDataUnavailable,
 )
 from app.observability.correlation import current_correlation_id
 
 logger = logging.getLogger(__name__)
 
 # 502: the backend answered, but not usefully. 503: it could not be reached at all.
-# 504: it accepted the request and never answered.
+# 504: it accepted the request and never answered. 422: the request was the problem.
 STATUS_BY_ERROR: dict[type[AnalysisError], int] = {
     LlmTimeout: 504,
     LlmUnreachable: 503,
     LlmFailed: 502,
     AgentResponseInvalid: 502,
     AgentChainFailed: 502,
+    MarketDataUnavailable: 503,
+    InstrumentNotFound: 422,
 }
 
 

@@ -7,7 +7,7 @@ A running record of what has been done, what was learned along the way, and what
 
 This file answers "where are we, how did we get here, and what is next". When resuming, read *Current state* and *Next steps* first, then the roadmap section for the next stage.
 
-**Last updated:** 2026-09-21, after PR #25. **Stage 2 is done.**
+**Last updated:** 2026-09-21, after stage 3's second pull request. **Stage 3 is in progress: two of five are in.**
 
 ## Resuming checklist
 
@@ -40,10 +40,10 @@ Two things that are easy to misread as broken:
 
 ## Current state
 
-- **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21. Stages 3-8 exist only as plan.
-- **`master` is at PR #25.** Nothing reaches it without the three required checks passing, so what is there is green by construction.
-- **No open pull requests. Branches:** `master` only, locally and on GitHub.
-- **Stage 2 changed nothing you can see when you run it**, on purpose. The whole new path - contract, instrument union, sizing, the risk gate - exists behind the seam and is exercised only by tests. Stage 3 switches it on. Running the engine today still gives the stage 1 behaviour: three agents on the old `InvestmentProposal` contract, `quantity: 1` at the proposed amount, and `RiskEngine.ValidateTrade` rejecting most of it.
+- **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21. **Stage 3 started** 2026-09-21 and is two pull requests in, of five. Stages 4-8 exist only as plan.
+- **`master` is at PR #26**, stage 3's first. Nothing reaches it without the three required checks passing, so what is there is green by construction.
+- **Branches:** `master` plus `stage-3-fact-sheet`, which is stage 3's second pull request.
+- **Nothing you can see when you run it has changed since stage 1**, and that holds until stage 3's fifth pull request. Everything built in stage 2 and so far in stage 3 sits behind the seam and is exercised only by tests. Running the engine today still gives the stage 1 behaviour: three agents on the old `InvestmentProposal` contract, `quantity: 1` at the proposed amount, and `RiskEngine.ValidateTrade` rejecting most of it.
 - **What is now impossible** rather than merely unlikely: the agents cannot name an amount (the contract has no `amount_usd`, and a test refuses one that reappears); an answer that is not the contract cannot deserialise into nulls; a position cannot be sized against cash instead of net asset value; and an order cannot be placed on a quote that is stale or dated in the future.
 
 ## Next steps
@@ -52,13 +52,21 @@ Two things that are easy to misread as broken:
 
 The stage's own framing matters more than its parts: *what it delivers is the experiment cycle, not the team.* The machinery - `TeamSpec`, typed handoffs, prompt files, `team_version` - is what gets built. Which team is actually good is settled by stage 4's outcomes, not by guessing now.
 
-Roughly, in the order the roadmap puts them:
+The work was split into five pull requests. The order differs from the roadmap's list on purpose: the roadmap leads with the provider factory, which is self-contained and blocks nothing, while the models are what everything else refers to. So the vocabulary comes first, then what fills it, then the machinery, then the switch-over.
 
-1. **Provider factory** in `app/infrastructure/llm/provider.py`, returning AG2's own `ModelConfig`, with a lazy import per branch. Switching provider becomes an environment variable.
-2. **`TeamSpec` and typed handoffs** - a step reads named earlier results rather than a shared transcript, validated at startup: the last step must produce `TradeSignal`, a step may not read a later step's schema, and two steps may not share an `output_schema`.
-3. **`FactSheet` in `app/domain/facts.py`** - pure functions over market data. Its shape is a decision the roadmap now flags explicitly: free text versus numbers is expensive to change afterwards.
-4. **Prompts as files**, hashed into `team_version` together with the spec, so a changed prompt is a new version.
-5. **The switch-over**: `POST /v1/signals`, the engine calls the new endpoint, and the old path plus `RiskViolationException` and `ValidateTrade` are deleted. Finding B goes with them.
+| # | Branch | What it does | State |
+|---|---|---|---|
+| 1 | `stage-3-contract-models` | The wire contract in Python, and the `TradeView` split | merged, PR #26 |
+| 2 | `stage-3-fact-sheet` | `FactSheet`, the market-data port, the step schemas | open |
+| 3 | - | Provider factory: `ModelSpec`/`LlmSettings`, lazy import per branch, `TAS_`-prefixed nested settings | not started |
+| 4 | - | `TeamSpec`, the pipeline, prompt files, `team_version` | not started |
+| 5 | - | The switch-over | not started |
+
+**What remains, in detail:**
+
+3. **Provider factory** in `app/infrastructure/llm/provider.py`, returning AG2's own `ModelConfig` (verified present as a `Protocol` in 1.0.5), with a lazy import per branch so a missing extra gives a legible error. Settings move to a nested `TAS_LLM__DEFAULT__*` block with per-role overrides; startup refuses a role name no team uses, so a typo cannot fall back to the default. **Every environment variable is renamed** in this PR - `.env.example`, `CLAUDE.md` and the local `src/agents/.env` all change. The concrete reason for the prefix: `OPENAI_API_KEY` is what openai's own SDK reads, a shell value wins over `.env`, and a real cloud key in a developer's shell would silently become this service's key.
+4. **`TeamSpec` and typed handoffs** - a step reads named earlier results rather than a shared transcript, validated at startup: the last step must produce `TradeView`, a step may not read a later step's schema, and two steps may not share an `output_schema`. Prompts move to `app/teams/default/prompts/` as files and are hashed into `team_version` together with the spec, so a changed prompt is a new version. Tests use `ag2.testing.TestConfig` and `TrackingConfig`, both verified present. **The largest of the five, and the one that does not split usefully**: validation with no pipeline is code nobody runs, and a pipeline with no version produces statistics stage 4 cannot read. This PR also updates CLAUDE.md's language rule, which still points at `app/infrastructure/ag2/`.
+5. **The switch-over**: `POST /v1/signals`, the engine calls the new endpoint, and the old path plus `InvestmentProposal`, `InvestmentProposalDto`, `RiskViolationException` and `ValidateTrade` are deleted. Finding B goes with them. This is where `PositionSizer` and `RiskEngine.Evaluate` - built and tested in stage 2, called by nobody - are finally wired in, and the only stage 3 PR that changes what the system does. It also adds the length guard to `TradeSignalMapper`: the caps are in the JSON schema, but System.Text.Json does not read JSON Schema, so the engine does not enforce them yet.
 
 Before stage 4, decide the cost model in the outcome function (finding F) and how attribution will work. Before stage 5, decide whether a trading calendar is a domain concept (finding E), and turn finding D's currency mismatch into an outcome rather than a throw.
 
@@ -361,6 +369,55 @@ red is decoration.
 
 ---
 
+## Stage 3 log (2026-09-21 ->, in progress)
+
+**What the stage delivers is the experiment cycle, not the team.** The roadmap's own framing,
+added in PR #22, is what drives the order: the machinery is built to be cheap to replace, and
+which team is actually good is settled by stage 4's outcomes rather than guessed at now.
+
+**Five decisions were taken before any code was written.** Four were put as a choice with a
+recommendation; the fifth came out of reading the engine's DTOs and is the one that changed
+the most.
+
+| Decision | Taken | Why |
+|---|---|---|
+| `FactSheet`'s shape | Numbers and categories, no free text | `longBusinessSummary` was 300 characters of external text going straight into a prompt, and there is no number in it. A news step will bring prose under its own schema and its own caps. |
+| Environment variables | `TAS_` prefix, nested `TAS_LLM__*` | `OPENAI_API_KEY` is read by openai's own SDK, and a shell value beats `.env`. A real cloud key in a developer's shell would quietly become this service's key. |
+| The analyst's tools | None in stage 3 | The fact sheet holds everything it needs, so the tool was a second route to the same numbers - and its `{"error": ...}` shape looks to a model like a successful call. |
+| Where things live | Split across layers | The pipeline is a use case, the agent construction is AG2-specific, the teams are data. `app/domain` stays free of AG2. |
+| **What the model is asked for** | Only the view | Not offered as a choice, because it is forced: `team_version` is a startup-computed hash. But the line fell further than that - see below. |
+
+**The fifth decision is the one worth remembering.** The engine sizes an order as
+`floor(budget / reference_price)`. A model asked to fill in `reference_price` therefore decides
+how many shares are bought - the same hole decision 1 closed for the amount, one level down. So
+the contract is split: `TradeView` is what the last step is asked for (`stance`, `conviction`,
+`thesis`, `key_risks`, `horizon_days`), and `TradeSignal` inherits it and adds what code is
+responsible for - the instrument from the request, the price and its timestamp from the fact
+sheet, the run's identity from the team. Three tests exist only to guard that line.
+
+- **PR #26 `stage-3-contract-models`** (`8ec85bd`): the Python half of `contracts/trade-signal.schema.json`, and the `TradeView` split above. The engine has read the checked-in examples since PR #21; now both sides do, so drift fails a test rather than turning up as a 502. Also capped the free-text fields **in the schema itself** - `thesis` at 2000 characters, `key_risks` at 5 of 300 - because the roadmap's principle is that the schema is the ceiling on what is handed over, and an uncapped field is no ceiling. The caps live once per side and a test compares them.
+- **`stage-3-fact-sheet`** (open): three commits.
+  - `facts.py`, written test-first: a known price series has one right answer for a return and a volatility, which is the case where writing the test first pays. Returns count back to a **calendar date** so a holiday week does not turn a one-month return into a five-week one; volatility counts **bars**, because it is a property of the observations. `None` rather than zero throughout - a share with no earnings has no P/E, and zero would be a claim. The price passes through unrounded, since it becomes `reference_price` and then an order size; everything derived is rounded to a basis point, which is tokens saved in every prompt that reads the sheet.
+  - `MarketDataProvider` in `app/application/ports.py`, implemented as `CachingMarketData` (TTL, timeout, `asyncio.to_thread`, error translation - all of it tested against a fake) over `yfinance_source` (the only file that imports yfinance, and the only place its payload is whitelisted). It **raises** rather than returning `{"error": ...}`. An unknown symbol is 422 `instrument_not_found`; a source that is down is 503 `market_data_unavailable`, because a typo and an outage call for different fixes.
+  - `MarketRead` and `RiskAssessment` as the typed handovers, categories rather than scores: a model choosing between three labels is more reliable than the same model producing a calibrated number. Neither repeats a figure from the fact sheet, because copying a number through a model is how it gets changed on the way.
+
+**The generic test is the one to copy elsewhere.** Rather than asserting a cap per field, it walks
+every schema an agent fills, resolves pydantic's `$defs`, and asserts that no string anywhere in it
+lacks a `maxLength`. A field added later is covered without anyone remembering. A second test feeds
+the walk a deliberately leaky model, so a bug in the walk cannot make the first one vacuous.
+
+**Counts:** 137 Python tests, from 52 when the stage started. 154 .NET, unchanged - the engine has
+not been touched in this stage yet.
+
+**Mutation counts**, continuing the habit from stage 2: asking the view for the price 3 red,
+dropping `extra="forbid"` 1, changing a cap in the schema file 2, allowing a naive timestamp 1;
+off-by-one in the volatility window 1, counting rows instead of calendar days 1, dropping the
+rounding 1, leaving the live price out of the 52-week high 1, population instead of sample
+deviation 1, removing the oldest-first guard 1; caching for ever 1, dropping the cache prune 1,
+folding an unknown symbol into an outage 1, calling the source without `to_thread` 1.
+
+---
+
 ## Lessons and gotchas
 
 Things that cost time or were not obvious. Most are also recorded where they apply.
@@ -393,6 +450,13 @@ Things that cost time or were not obvious. Most are also recorded where they app
 - A `ContextVar` set in a `BaseHTTPMiddleware.dispatch` does not reliably reach the endpoint, because the endpoint runs in another task. Plain ASGI middleware runs in the same task and does.
 - mypy reads `BaseSettings` fields as required constructor arguments unless `plugins = ["pydantic.mypy"]` is set. The plugin is the fix; a `type: ignore` would have been the wrong one.
 - FastAPI validates a path parameter against `Path(pattern=...)` and raises `RequestValidationError`, so a 422 needs a handler to come back in the same `{error_code, correlation_id}` shape as everything else.
+- Pydantic serialises `Decimal` as a JSON **string** in JSON mode, and the engine's `required decimal` refuses that. A price on the wire is a `float`; the engine converts on arrival, where the arithmetic actually happens.
+- A pydantic discriminated union needs **at least two** members - `Field(discriminator=...)` on a one-member union is an error. A `Literal` on the discriminator field does the same job until the second variant exists.
+- Ruff's `UP040` rejects `X: TypeAlias = Y` and wants PEP 695's `type X = Y`. Pydantic handles the latter fine on 3.12.
+- `zip(xs, xs[1:], strict=True)` always raises: the second argument is one shorter by construction. Offset pairs need `zip(xs[:-1], xs[1:], strict=True)`.
+- `@runtime_checkable` makes `isinstance` work against a `Protocol` by method name, which is enough to assert that an implementation still fits its port.
+- yfinance's `period="1y"` ends **364** days back, so a twelve-month return is impossible to compute from it. `"2y"` is the smallest period that works.
+- yfinance returns `NaN` as readily as `None` for a figure it does not have, and `NaN` reaches a prompt as the word `nan`, which a model is free to read as a number.
 
 **CI and GitHub**
 - A Dependabot PR title names only the packages whose requirement changed. Read the `uv.lock` diff: a dependency without an upper bound can move a major version silently, as fastmcp did in PR #5.
