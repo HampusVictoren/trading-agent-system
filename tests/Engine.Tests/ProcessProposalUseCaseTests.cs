@@ -18,7 +18,14 @@ public class ProcessProposalUseCaseTests
     private static Portfolio NewPortfolio(decimal cash = 10_000m) => new(new Money(cash, "USD"));
 
     private static InvestmentProposalDto Proposal(string action, decimal amount, string ticker = Requested) =>
-        new(ticker, action, amount, 0.8, "reasoning");
+        new()
+        {
+            Ticker = ticker,
+            Action = action,
+            AmountUsd = amount,
+            Confidence = 0.8,
+            Reasoning = "reasoning"
+        };
 
     private static ProcessProposalUseCase SutReturning(InvestmentProposalDto? proposal)
     {
