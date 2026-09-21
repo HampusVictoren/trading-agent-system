@@ -29,14 +29,16 @@
       "maximum": 1
     },
     "thesis": {
-      "description": "Why, in the agents' own words. Stored, never parsed.",
+      "description": "Why, in the agents' own words. Stored, never parsed. Capped because an uncapped free-text field is one an agent can fill with anything, and every reader downstream pays for it: the next step's prompt, the engine, stage 4's decision table.",
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "maxLength": 2000
     },
     "key_risks": {
-      "description": "What would make the thesis wrong.",
+      "description": "What would make the thesis wrong. Capped for the same reason as the thesis.",
       "type": "array",
-      "items": { "type": "string", "minLength": 1 }
+      "maxItems": 5,
+      "items": { "type": "string", "minLength": 1, "maxLength": 300 }
     },
     "horizon_days": {
       "description": "The period the view is meant to play out over. Stage 4 measures the outcome at this horizon and at fixed ones, so that two team versions can be compared.",
