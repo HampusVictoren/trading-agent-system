@@ -44,3 +44,25 @@ class AgentChainFailed(AnalysisError):
     """A step in the chain failed for a reason of AG2's own, such as a tool."""
 
     error_code = "agent_chain_failed"
+
+
+class MarketDataUnavailable(AnalysisError):
+    """The market-data source could not be reached, or did not answer in time.
+
+    Separate from the LLM failures above because it is a different dependency: the engine
+    can act on "prices are down" differently from "the model is down", and stage 4 will
+    want to tell the two apart when it explains a gap in the decision history.
+    """
+
+    error_code = "market_data_unavailable"
+
+
+class InstrumentNotFound(AnalysisError):
+    """A well-formed symbol that no market-data source knows.
+
+    A caller error rather than a service failure, so it answers 422 - but not the same 422
+    as a malformed ticker, because "MSFT typed as MSF" and "MSFT does not exist" call for
+    different fixes.
+    """
+
+    error_code = "instrument_not_found"
