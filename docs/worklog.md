@@ -7,7 +7,7 @@ A running record of what has been done, what was learned along the way, and what
 
 This file answers "where are we, how did we get here, and what is next". When resuming, read *Current state* and *Next steps* first, then the roadmap section for the next stage.
 
-**Last updated:** 2026-09-21, after PR #20. **Stage 1 is done**, and finding C with it.
+**Last updated:** 2026-09-21, after PR #25. **Stage 2 is done.**
 
 ## Resuming checklist
 
@@ -40,30 +40,27 @@ Two things that are easy to misread as broken:
 
 ## Current state
 
-- **Stage 0 is done** (2026-09-19), and the CI gate is verified in both directions.
-- **Stage 1 is done** (2026-09-20), in five pull requests: #13, #14, #16, #17 and #18. (#12 was the dependency pinning that preceded it, #15 this file.) Stages 2-8 exist only as plan.
-- **`master` is at PR #20.** Nothing reaches it without the three required checks passing, so what is there is green by construction.
+- **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21. Stages 3-8 exist only as plan.
+- **`master` is at PR #25.** Nothing reaches it without the three required checks passing, so what is there is green by construction.
 - **No open pull requests. Branches:** `master` only, locally and on GitHub.
-- **The lie is gone.** A failed analysis used to answer HTTP 200 with a HOLD, which the engine could not tell apart from a real decision. It now answers 401, 422, 502, 503 or 504 with `{error_code, correlation_id}`, and the engine reports the outcome rather than guessing at it.
-- **What the system does today** is otherwise unchanged: every `Trading:CycleIntervalSeconds`, for each ticker in `Trading:Tickers`, three AG2 agents reason over one yfinance quote and answer with the old `InvestmentProposal` contract. The engine sizes nothing - it buys quantity 1 at the proposed amount, and `RiskEngine` rejects most of those. Stage 2 changes the contract and gives the engine real sizing.
-
-**Stage 1's own criterion, verified end to end on 2026-09-20:**
-
-```
-Agent service unavailable for AAPL: The agent service answered 502 for AAPL.
-{"error_code":"unauthorized","correlation_id":"..."}   HTTP 401
-Bought 1 AAPL for $10.0. Cash left: $9990.0.
-```
-
-with 0 entries at error level, 0 stack traces, and 3 HTTP requests for 3 cycles.
+- **Stage 2 changed nothing you can see when you run it**, on purpose. The whole new path - contract, instrument union, sizing, the risk gate - exists behind the seam and is exercised only by tests. Stage 3 switches it on. Running the engine today still gives the stage 1 behaviour: three agents on the old `InvestmentProposal` contract, `quantity: 1` at the proposed amount, and `RiskEngine.ValidateTrade` rejecting most of it.
+- **What is now impossible** rather than merely unlikely: the agents cannot name an amount (the contract has no `amount_usd`, and a test refuses one that reappears); an answer that is not the contract cannot deserialise into nulls; a position cannot be sized against cash instead of net asset value; and an order cannot be placed on a quote that is stale or dated in the future.
 
 ## Next steps
 
-In order.
+**Stage 3 - the agent service on the new contract** (roadmap estimate: 3-4 days). Read `docs/arkitektur-roadmap.md` first; PR #22 added two paragraphs at the top of that stage which change what it delivers.
 
-1. **Stage 2 - the contract and the engine's sizing, test-first** (roadmap estimate: 2-3 days). Read `docs/arkitektur-roadmap.md` before starting. It is the largest stage so far and the only one that touches money, so agree the split into pull requests first. Findings B and D belong in it: the ticker format rule plus escaping, and the currency guard on `Money` together with the missing `default` in `TradingWorker.LogOutcome`.
+The stage's own framing matters more than its parts: *what it delivers is the experiment cycle, not the team.* The machinery - `TeamSpec`, typed handoffs, prompt files, `team_version` - is what gets built. Which team is actually good is settled by stage 4's outcomes, not by guessing now.
 
-Before stage 4, decide the cost model in the outcome function (finding F). Before stage 5, decide whether a trading calendar is a domain concept (finding E).
+Roughly, in the order the roadmap puts them:
+
+1. **Provider factory** in `app/infrastructure/llm/provider.py`, returning AG2's own `ModelConfig`, with a lazy import per branch. Switching provider becomes an environment variable.
+2. **`TeamSpec` and typed handoffs** - a step reads named earlier results rather than a shared transcript, validated at startup: the last step must produce `TradeSignal`, a step may not read a later step's schema, and two steps may not share an `output_schema`.
+3. **`FactSheet` in `app/domain/facts.py`** - pure functions over market data. Its shape is a decision the roadmap now flags explicitly: free text versus numbers is expensive to change afterwards.
+4. **Prompts as files**, hashed into `team_version` together with the spec, so a changed prompt is a new version.
+5. **The switch-over**: `POST /v1/signals`, the engine calls the new endpoint, and the old path plus `RiskViolationException` and `ValidateTrade` are deleted. Finding B goes with them.
+
+Before stage 4, decide the cost model in the outcome function (finding F) and how attribution will work. Before stage 5, decide whether a trading calendar is a domain concept (finding E), and turn finding D's currency mismatch into an outcome rather than a throw.
 
 ## Open findings
 
@@ -74,9 +71,9 @@ roadmap on purpose: the plan should change when a stage starts, not every time a
 | | Finding | Status |
 |---|---|---|
 | A | A failed analysis is sent twice | **Fixed** in PR #17 |
-| B | A ticker is interpolated into the URL without escaping | Open - stage 2 |
+| B | A ticker is interpolated into the URL without escaping | Open - **stage 3**, when the old path is switched off |
 | C | The proposal DTO accepts an answer that is not the contract | **Fixed** in PR #20 |
-| D | A currency mix is reported as a bug, not as an outcome | Open - stage 2 |
+| D | A currency mix is reported as a bug, not as an outcome | **Fixed** in PR #23 |
 | E | There is no trading calendar anywhere in the plan | Open - decide before stage 5 |
 | F | Outcome measurement ignores transaction costs | Open - decide before stage 4 |
 
@@ -110,6 +107,16 @@ turns out to be worth it.
 *Verified:* a counting primary handler behind the configured pipeline recorded **2 HTTP attempts**
 for one call that ended in `AgentServiceUnavailableException`. After the fix the same probe
 records 1 for a failing response and 2 for a refused connection.
+
+### B — a ticker is interpolated into the URL without escaping (moved to stage 3)
+
+**Still open, and deliberately not fixed in stage 2.** The new contract carries an
+`instrument` object rather than a ticker in the path, so the interpolation disappears with the
+old endpoint rather than being patched. Stage 3 switches that over; until then the tickers
+still come from `appsettings.json`. The format rule on the value object is worth doing anyway,
+since screening will produce symbols from market data.
+
+The original finding, for context:
 
 ### B — a ticker is interpolated into the URL without escaping
 
@@ -161,6 +168,22 @@ fields as well, but it couples the two services' release order and is a separate
 
 *Verified:* `{"ticker":"AAPL","stance":"BUY","conviction":0.8}` deserialised to
 `action=<null> amount=0 reasoning=<null>`, and `{}` deserialised to `ticker=<null>`.
+
+### D — a currency mix is reported as a bug, not as an outcome (fixed, PR #23)
+
+**Resolved on 2026-09-21.** Mixing currencies raises `CurrencyMismatchException` rather than
+`InvalidOperationException`, so a domain rule and a crash no longer look the same in a log;
+`Money` normalises a currency code, so `usd` and `USD` stopped being different currencies;
+`Position.AddQuantity` refuses a price in another currency instead of silently redenominating
+the position; and `TradingWorker.LogOutcome` gained a `default`. The two tests that pinned the
+old behaviour as known gaps now pin the rules.
+
+**One half is deliberately still open.** The finding's point was that a currency mix becomes an
+*expected outcome* once stage 5's universe holds an instrument not priced in USD. Today the
+engine is USD-only, so it is a bug, and a named domain exception is the honest answer. When
+stage 5 widens the universe this has to become a `RiskDecision.Rejected` rather than a throw.
+
+The original finding, for context:
 
 ### D — a currency mix is reported as a bug, not as an outcome
 
@@ -219,6 +242,8 @@ function and therefore an ideal test-first target.
 - **Empty packages:** `app/infrastructure/llm/` and `app/infrastructure/market_data/` hold only `__init__.py`. `app/application/` now holds the error vocabulary.
 - **The engine reads only the status code, not `error_code`.** 502, 503 and 504 all become `AgentUnavailable`, with the status in the log message. The engine's decision is the same in all three cases, so this was left alone in stage 1 — but it is a choice, not an oversight, and worth revisiting when the contract is versioned in stage 3.
 - **Uvicorn prints two lines before startup that are not JSON**, because `configure_logging()` runs in the lifespan. Moving it to import time would catch them but would also reconfigure logging in the middle of pytest. The real fix is a `--log-config` at deploy time, which belongs to stage 6.
+- **The contract carries no currency.** Every price in it is USD and so is the portfolio. Fine until stage 5 widens the universe, and noted in `TradeSignalMapper`. It goes with finding D's remaining half.
+- **`PositionSizer` and `RiskEngine.Evaluate` are registered but nothing resolves them.** Deliberate: registering them means the options-to-domain mapping is covered by `ValidateOnStart` now, and stage 3 becomes wiring rather than new code.
 - **`MemoryStore` still is not wired into the flow.** The lifespan builds one and nothing uses it. The roadmap puts a `search_history_tool` on `RiskManager` and a `save` after each cycle in stages 2-3.
 - **One row with ticker `TEST`** sits in `agent.agent_memories` from the smoke test on 2026-09-20. Harmless; delete it if a clean table matters.
 
@@ -316,6 +341,26 @@ How the owner wants the work done. Apart from the language rule, none of this is
 
 ---
 
+## Stage 2 log (2026-09-21, done)
+
+Four pull requests, and **not one of them changed what the running system does.** That was the
+point: the only component that touches money should be finished and proven before the agents
+are allowed to talk to it.
+
+- **PR #21 `stage-2-contract`** (`8498948`): the contract as files. `contracts/trade-signal.schema.json` holds the signal at the root and the request under `$defs`, with five examples. The signal carries a view and **no amount** - sizing is the engine's job, which is what keeps a prompt injection from becoming a large order. `instrument` is a discriminated union so a derivative becomes a new variant rather than a breaking change; `run` carries `team_id`/`team_version`/`revisions` that the engine stores and never decides on; the request carries the limits so the agents reason inside them. Wire types in `Application/Contracts`, domain types in `Domain/Signals`, and `TradeSignalMapper` as the seam - System.Text.Json checks the shape, not whether a value makes sense.
+  - The contract test reads the checked-in files with the same options object production uses. It holds that the discriminator-last example reads *and* that reading it without `AllowOutOfOrderMetadataProperties` throws, that an added `amount_usd` is refused, and that the schema's `required` list matches the DTO's fields. Renaming `horizon_days` on the engine's type turns six tests red, so the suite is not vacuous.
+- **PR #23 `stage-2-money-portfolio`** (`3f72bd5`): `Money` gained `Multiply`, `Divide` and `Min`, and a normalised currency code. `Portfolio.Value` returns `Valued` or `PriceMissing`: the engine cannot price a holding it is not analysing until stage 4 adds a quote endpoint, and valuing one at what it cost would overstate a loser - raising the position limit exactly when the portfolio had shrunk. Closed finding D.
+- **PR #24 `stage-2-position-sizer`** (`d5233ce`): `PositionSizer`, written as a table of sixteen rows before the code existed. `budget = min(position headroom, cash above the buffer) x conviction tier`, then `floor(budget / the signal's own price)`. `ConvictionTier` is deliberately discrete - none, half, all - because an LLM's conviction is not calibrated and scaling an amount by it reads a precision that is not there.
+- **PR #25 `stage-2-risk-decision`** (`001c711`): `RiskEngine.Evaluate` returns a `RiskDecision` instead of throwing, and **re-derives the limits the sizer already enforced** rather than trusting them. One test feeds the sizer's output straight into the gate: they compute from different directions, so they have to agree or one is wrong. It also refuses a quote that is too old *or dated in the future* - `quote_as_of` comes from the agent service, so without that check a future date would make every quote look fresh for ever.
+- **Stage 2 closed 2026-09-21.** 154 .NET tests, from 71 when the stage started. The old path is untouched and still throws; stage 3 deletes `ValidateTrade` and `RiskViolationException` with the old endpoint.
+
+**A habit that started here: check that a test can fail.** Every table in this stage was mutated
+deliberately - measuring headroom against cash, removing the cash buffer, rounding up, trusting
+the sizer, dropping the future-date check - and the failures were counted. A table that cannot go
+red is decoration.
+
+---
+
 ## Lessons and gotchas
 
 Things that cost time or were not obvious. Most are also recorded where they apply.
@@ -330,6 +375,12 @@ Things that cost time or were not obvious. Most are also recorded where they app
 - Microsoft.Testing.Platform does not print `ITestOutputHelper` output for a test that passes. To read a value out of a probe, assert it into the failure message.
 - Configuration that is only wired in `Program.cs` cannot be tested. Moving the client registration into an extension method was what made the retry rule testable at all.
 - `HttpRequestException` carries an `HttpRequestError`, so "the connection never came up" can be told apart from "the server answered badly" without string matching.
+- A `with` expression bypasses the constructor. A rule that normalises a value has to live in the property's `init` accessor, or a copy escapes it.
+- `required` cannot go on a positional record's parameters without `[SetsRequiredMembers]` on the generated constructor, which defeats the point. Strictness means init-only properties.
+- "No setting has a default" only catches a missing value when zero is outside its valid range. Zero is a legitimate cash buffer, so that one needs `[Required]` on a nullable to tell *absent* from *none*.
+- System.Text.Json refuses an out-of-order type discriminator with `NotSupportedException`, not `JsonException`. `AllowOutOfOrderMetadataProperties` fixes it, and an example with the discriminator last is what stops the setting being deleted by accident.
+- `[JsonUnmappedMemberHandling(Disallow)]` on a polymorphic variant does not reject the discriminator itself.
+- Mutating code to check a test can fail does not work with `if (false)`: CS0162 is a warning, and warnings are errors here. Change a comparison instead.
 
 **Python**
 - `uv_build` assumes a `src/` layout. This repo needs `module-name = "app"` and `module-root = ""`.
