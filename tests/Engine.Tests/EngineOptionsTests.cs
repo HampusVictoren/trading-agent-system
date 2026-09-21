@@ -16,6 +16,7 @@ public class EngineOptionsTests
         ["AgentService:ApiKey"] = "a-test-key",
         ["RiskPolicy:MaxPositionPercentage"] = "0.05",
         ["RiskPolicy:CashBufferPct"] = "0.10",
+        ["RiskPolicy:MaxQuoteAgeSeconds"] = "300",
         ["Trading:Tickers:0"] = "AAPL",
         ["Trading:CycleIntervalSeconds"] = "15",
     };
@@ -74,6 +75,17 @@ public class EngineOptionsTests
 
         policy.MaxPositionPct.ShouldBe(0.05m);
         policy.CashBufferPct.ShouldBe(0.10m);
+        policy.MaxQuoteAge.ShouldBe(TimeSpan.FromMinutes(5));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("0")]
+    [InlineData("3601")]
+    public void A_quote_age_limit_outside_the_allowed_range_is_rejected(string? value)
+    {
+        Should.Throw<OptionsValidationException>(
+            () => Resolve<RiskPolicyOptions>(("RiskPolicy:MaxQuoteAgeSeconds", value)));
     }
 
     [Fact]
