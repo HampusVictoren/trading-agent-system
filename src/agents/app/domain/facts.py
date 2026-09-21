@@ -25,10 +25,13 @@ TRADING_DAYS_PER_YEAR = 252
 # sheet, spent on precision the input never had.
 DERIVED_PRECISION = 4
 
-# A sector is a category rather than prose, but it still arrives from outside.
+# A sector is a category rather than prose, but it still arrives from outside. So does a
+# currency code, which is why both are capped: the same principle as the step schemas.
 MAX_SECTOR_LENGTH = 40
+MAX_CURRENCY_LENGTH = 8
 
 type Sector = Annotated[str, Field(max_length=MAX_SECTOR_LENGTH)]
+type Currency = Annotated[str, Field(min_length=1, max_length=MAX_CURRENCY_LENGTH)]
 
 
 class PriceBar(BaseModel):
@@ -51,7 +54,7 @@ class Quote(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     symbol: str
-    currency: str
+    currency: Currency
     price: Annotated[float, Field(gt=0)]
     pe_ratio: float | None
     sector: Sector | None
@@ -82,7 +85,7 @@ class FactSheet(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     symbol: str
-    currency: str
+    currency: Currency
     price: Annotated[float, Field(gt=0)]
     as_of: AwareDatetime
 
