@@ -1,4 +1,4 @@
-namespace Engine.Domain.Services;
+namespace Engine.Domain.Risk;
 
 using Engine.Domain.Aggregates.Portfolio;
 using Engine.Domain.Exceptions;
@@ -13,6 +13,10 @@ public class RiskEngine
         _maxPositionPercentage = maxPositionPercentage;
     }
 
+    /// <summary>
+    /// The old path's risk check. It throws, which is why a rejection reaches the worker as
+    /// an exception. Stage 3 deletes it along with the old endpoint; Evaluate replaces it.
+    /// </summary>
     public void ValidateTrade(Portfolio portfolio, Ticker ticker, Money intendedSpend, Money totalPortfolioValue)
     {
         var maxAllowedSpend = totalPortfolioValue.Amount * _maxPositionPercentage;

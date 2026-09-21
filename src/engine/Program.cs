@@ -1,6 +1,5 @@
 using Engine.Application.UseCases;
 using Engine.Domain.Risk;
-using Engine.Domain.Services;
 using Engine.Hosting;
 using Engine.Hosting.Options;
 using Engine.Hosting.Workers;
