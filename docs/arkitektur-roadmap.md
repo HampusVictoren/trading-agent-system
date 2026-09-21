@@ -186,6 +186,10 @@ Skriv testtabellen först. Varje rad i stycket ovan är ett testfall, och buggen
 
 ### Etapp 3 — Agenttjänsten mot nya kontraktet (3–4 dagar)
 
+**Vad etappen levererar är experimentcykeln, inte teamet.** Det som byggs här är maskineriet: `TeamSpec`, typade överlämningar, promptfiler, `team_version`. Vilket team som faktiskt är bra går inte att veta nu, och inte att gissa fram heller — en LLM som granskar en annan utan facit ger mest omformuleringar, och fler specialister känns alltid bättre i en demo än de är i utfallen. Etappen levererar därför ett tunt team som är billigt att byta ut, plus förmågan att byta det utan att röra Python. Vilken form teamet ska ha avgörs av etapp 4:s utfall.
+
+**`FactSheet`s form avgörs här.** Fritext eller siffror är ett vägval som är dyrt att ändra i efterhand: varje prosafält kostar tokens i varje steg som läser det, och fritext är dessutom den väg prompt injection kommer in. Principen står redan nedan, under *Schemat är taket för vad som lämnas över* — numeriska fält före prosa, `Field(max_length=...)` på varje fritextfält — men den ska tillämpas medvetet när fälten först definieras i `app/domain/facts.py`, eftersom ett nyhetssteg senare vill lägga till just prosa.
+
 **Provider-abstraktion.** Factory i `app/infrastructure/llm/provider.py` som returnerar `ModelConfig` (AG2:s eget protokoll — uppfinn inget nytt), med lazy import per gren:
 
 ```python
@@ -315,6 +319,10 @@ Behöver Python veta utfallet ("blev det köp?") går det över HTTP: motorn POS
 
 **Fasta horisonter utöver modellens egen.** `horizon_days` väljs av LLM:en, så två signaler mäts sällan över samma period, och två `team_version`s går inte att jämföra rakt av. Jobbet mäter därför varje signal även vid fasta horisonter — 1, 5 och 20 handelsdagar — och modellens egen horisont som en rad till, som visar om modellen kan bedöma tid. **Träff definieras per stance:** BUY träffar om instrumentet slår index, SELL om det går sämre än index, och HOLD om avvikelsen mot index håller sig inom ett band (t.ex. ±2 %). Definitionen är ett beslut i sig — skriv den som en ren funktion, test-först.
 
+**Baslinjen är en leverans.** Det tunna trestegsteamet från etapp 3 ska köra tillräckligt länge för att ge en mätt baslinje innan något läggs till. Utan den går det inte att säga om en nyhetsagent tillförde något eller bara kostade tokens — samma resonemang som gjorde granskningsrundorna villkorade i PR #11. Baslinjen är alltså inte "det vi råkar ha kört", utan en rad i etappens definition av klart: ett `team_version` med utfall vid de fasta horisonterna.
+
+**Mätningen måste tåla fler agenter.** Att jämföra `team_version` i klump säger att team B slog team A — inte att nyhetsagenten var skälet. Attribution behöver inte lösas nu, men hur `signal_outcomes` utformas i den här etappen avgör om frågan går att besvara senare. Ta ställning till det när tabellen designas.
+
 > **Backtest på historisk data bevisar ingenting för en LLM.** Modellen kan redan "veta" hur AAPL gick 2024 från sin träningsdata, så ett backtest ser bättre ut än verkligheten (lookahead bias). Det ärliga måttet är beslut loggade *framåt i tiden* och jämförda mot utfallet efteråt. Därför börjar mätningen här och inte i etapp 8.
 
 Tester: Testcontainers på båda sidor. Migrationerna testas båda vägar — `up` och `down` — så en misslyckad deploy går att rulla tillbaka. Utfallsberäkningen (avkastning, index, horisont som faller på helgdag) är rena funktioner — TDD.
@@ -351,7 +359,11 @@ OpenTelemetry i motorn med egna mätvärden (`decisions_total{outcome}`, `risk_r
 
 ### Etapp 8 — Riktigt team och kalibrering (öppen)
 
-Fler specialister (nyheter, makro, sentiment) som parallella steg med egna scheman, där en sammanvägande agent läser deras resultat — se `reads` i etapp 3. Nyheter kopplas in först när prompt-hygienen från etapp 3 håller. `ag2.network` med `TransitionGraph`/`Handoff` när fri routing tillför något utöver granskningsrundorna (se etapp 3) — t.ex. att en agent själv väljer vilken specialist som ska fråga vidare. Flera team per instrument med en aggregerande röst, när utfallen visar vilket team som faktiskt är bäst. Replay av sparade `FactSheet`s för att jämföra team och promptversioner på samma underlag. Kalibrering: jämför conviction mot utfallen från etapp 4 och justera sizing-kurvan och screeningens rankning. Det är här systemet slutar vara en demo.
+**Utbyggnad mot nyheter och omvärld: beställd, med villkor.** Fler specialister — nyheter, makro, sentiment — som parallella steg med egna scheman, där en sammanvägande agent läser deras resultat (se `reads` i etapp 3). Det är beställt, inte önskat: det är den halva av systemet där en LLM faktiskt har ett övertag, eftersom koden redan äger siffrorna (beslut 5). Två villkor gäller först: en **mätt baslinje** från etapp 4, så att tillskottet syns i utfall i stället för i känsla, och **prompt-hygienen från etapp 3**, eftersom extern text är den enda vägen prompt injection kommer in.
+
+**Datakällan är projektet, inte agenten.** Att lägga till ett nyhetssteg är en rad i `TeamSpec`. Att ha nyheter att ge det är en integration: källa, licens, avgränsning per instrument, och tidsstämplar som inte läcker framtid in i en utvärdering. Räkna med att arbetet ligger där, inte i agentkoden.
+
+Resten av etappen: `ag2.network` med `TransitionGraph`/`Handoff` när fri routing tillför något utöver granskningsrundorna (se etapp 3) — t.ex. att en agent själv väljer vilken specialist som ska fråga vidare. Flera team per instrument med en aggregerande röst, när utfallen visar vilket team som faktiskt är bäst. Replay av sparade `FactSheet`s för att jämföra team och promptversioner på samma underlag. Kalibrering: jämför conviction mot utfallen från etapp 4 och justera sizing-kurvan och screeningens rankning. Det är här systemet slutar vara en demo.
 
 ---
 
