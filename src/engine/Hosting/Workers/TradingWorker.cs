@@ -92,6 +92,17 @@ public class TradingWorker : BackgroundService
                 _logger.LogWarning(
                     "Agent service unavailable for {Ticker}: {Reason}", unavailable.Ticker.Value, unavailable.Reason);
                 break;
+
+            // Unreachable today: TradeDecisionResult has a private constructor, so a case can
+            // only be added in that file. But the compiler cannot prove exhaustiveness for a
+            // hierarchy - a switch expression would demand a discard arm too - so the choice
+            // is between saying nothing and saying this. An outcome that nobody logs is worse
+            // than a noisy line.
+            default:
+                _logger.LogWarning(
+                    "Unhandled trade decision {Outcome}. The worker is behind the result type.",
+                    result.GetType().Name);
+                break;
         }
     }
 }
