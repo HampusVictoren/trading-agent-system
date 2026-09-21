@@ -1,4 +1,5 @@
 using Engine.Application.UseCases;
+using Engine.Domain.Risk;
 using Engine.Domain.Services;
 using Engine.Hosting;
 using Engine.Hosting.Options;
@@ -17,6 +18,13 @@ builder.Services.AddEngineOptions(builder.Configuration);
 
 builder.Services.AddSingleton<RiskEngine>(sp =>
     new RiskEngine(sp.GetRequiredService<IOptions<RiskPolicyOptions>>().Value.MaxPositionPercentage));
+
+// Nothing resolves these yet - stage 3 switches the new path on - but registering them here
+// means the options-to-domain mapping is covered by ValidateOnStart rather than discovered
+// later, and stage 3 becomes wiring rather than new code.
+builder.Services.AddSingleton<RiskPolicy>(sp =>
+    sp.GetRequiredService<IOptions<RiskPolicyOptions>>().Value.ToRiskPolicy());
+builder.Services.AddSingleton<PositionSizer>();
 
 builder.Services.AddAgentClient();
 

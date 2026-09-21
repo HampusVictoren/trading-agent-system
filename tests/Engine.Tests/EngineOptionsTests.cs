@@ -15,6 +15,7 @@ public class EngineOptionsTests
         ["AgentService:RequestTimeoutSeconds"] = "30",
         ["AgentService:ApiKey"] = "a-test-key",
         ["RiskPolicy:MaxPositionPercentage"] = "0.05",
+        ["RiskPolicy:CashBufferPct"] = "0.10",
         ["Trading:Tickers:0"] = "AAPL",
         ["Trading:CycleIntervalSeconds"] = "15",
     };
@@ -50,6 +51,36 @@ public class EngineOptionsTests
         Resolve<RiskPolicyOptions>().MaxPositionPercentage.ShouldBe(0.05m);
         Resolve<TradingOptions>().Tickers.ShouldBe(["AAPL"]);
         Resolve<TradingOptions>().CycleInterval.ShouldBe(TimeSpan.FromSeconds(15));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("1.0")]
+    [InlineData("-0.1")]
+    public void A_cash_buffer_that_is_not_a_share_is_rejected(string? value)
+    {
+        // A buffer of 1 reserves the whole portfolio and nothing could ever be bought. The
+        // null case is why the setting is nullable: zero is a legitimate buffer, so a missing
+        // value would otherwise bind to zero and look deliberate.
+        Should.Throw<OptionsValidationException>(
+            () => Resolve<RiskPolicyOptions>(("RiskPolicy:CashBufferPct", value)));
+    }
+
+    [Fact]
+    public void The_risk_limits_map_onto_the_domains_own_policy()
+    {
+        // Stage 3 resolves this from the container; the mapping should not be where it breaks.
+        var policy = Resolve<RiskPolicyOptions>().ToRiskPolicy();
+
+        policy.MaxPositionPct.ShouldBe(0.05m);
+        policy.CashBufferPct.ShouldBe(0.10m);
+    }
+
+    [Fact]
+    public void A_cash_buffer_of_zero_is_a_deliberate_choice_and_is_accepted()
+    {
+        Resolve<RiskPolicyOptions>(("RiskPolicy:CashBufferPct", "0")).ToRiskPolicy()
+            .CashBufferPct.ShouldBe(0m);
     }
 
     [Fact]
