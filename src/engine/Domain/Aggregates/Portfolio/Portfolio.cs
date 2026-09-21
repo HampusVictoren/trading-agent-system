@@ -14,6 +14,38 @@ public class Portfolio
         CashBalance = initialBalance;
     }
 
+    /// <summary>
+    /// Cash plus the market value of every holding, or which holding stopped it being
+    /// worked out. Sizing is measured against this rather than against cash: a portfolio
+    /// that is fully invested still has a position limit.
+    /// </summary>
+    public PortfolioValuation Value(PriceSnapshot prices)
+    {
+        var total = CashBalance;
+
+        foreach (var position in _positions)
+        {
+            if (!prices.TryGet(position.Ticker, out var price))
+                return new PortfolioValuation.PriceMissing(position.Ticker);
+
+            // A price in another currency is a bug, not an outcome, so it throws.
+            total = total.Add(price.Multiply(position.Quantity));
+        }
+
+        return new PortfolioValuation.Valued(total);
+    }
+
+    /// <summary>
+    /// What is already held of one instrument, at the given price. Zero when nothing is
+    /// held, so a first buy gets the whole position cap rather than a special case.
+    /// </summary>
+    public Money MarketValueOf(Ticker ticker, Money price)
+    {
+        var position = _positions.FirstOrDefault(held => held.Ticker == ticker);
+
+        return position is null ? Money.Zero(price.Currency) : price.Multiply(position.Quantity);
+    }
+
     public void ExecuteBuy(Ticker ticker, decimal quantity, Money price)
     {
         var totalCost = price.Amount * quantity;

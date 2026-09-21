@@ -1,4 +1,5 @@
 using Engine.Domain.Aggregates.Portfolio;
+using Engine.Domain.Exceptions;
 using Engine.Domain.ValueObjects;
 using Shouldly;
 
@@ -44,14 +45,15 @@ public class PositionTests
     }
 
     [Fact]
-    public void AddQuantity_adopts_the_currency_of_the_incoming_price()
+    public void AddQuantity_refuses_a_price_in_another_currency()
     {
-        // Documents a real gap: a EUR price silently redenominates a USD position.
-        // Stage 2 gives Money a currency guard; until then this is the behaviour.
+        // Was a real gap: a EUR price silently redenominated a USD position, and the
+        // average became a number with no meaning.
         var position = AaplAt(1m, 100m);
 
-        position.AddQuantity(1m, new Money(200m, "EUR"));
+        Should.Throw<CurrencyMismatchException>(() => position.AddQuantity(1m, new Money(200m, "EUR")));
 
-        position.AveragePurchasePrice.Currency.ShouldBe("EUR");
+        position.Quantity.ShouldBe(1m);
+        position.AveragePurchasePrice.ShouldBe(new Money(100m, "USD"));
     }
 }
