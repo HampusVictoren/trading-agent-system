@@ -7,7 +7,7 @@ A running record of what has been done, what was learned along the way, and what
 
 This file answers "where are we, how did we get here, and what is next". When resuming, read *Current state* and *Next steps* first, then the roadmap section for the next stage.
 
-**Last updated:** 2026-09-20, after PR #18. **Stage 1 is done.**
+**Last updated:** 2026-09-21, after PR #20. **Stage 1 is done**, and finding C with it.
 
 ## Resuming checklist
 
@@ -42,7 +42,7 @@ Two things that are easy to misread as broken:
 
 - **Stage 0 is done** (2026-09-19), and the CI gate is verified in both directions.
 - **Stage 1 is done** (2026-09-20), in five pull requests: #13, #14, #16, #17 and #18. (#12 was the dependency pinning that preceded it, #15 this file.) Stages 2-8 exist only as plan.
-- **`master` is at `b421b1b`** (PR #18). Nothing reaches it without the three required checks passing, so what is there is green by construction.
+- **`master` is at PR #20.** Nothing reaches it without the three required checks passing, so what is there is green by construction.
 - **No open pull requests. Branches:** `master` only, locally and on GitHub.
 - **The lie is gone.** A failed analysis used to answer HTTP 200 with a HOLD, which the engine could not tell apart from a real decision. It now answers 401, 422, 502, 503 or 504 with `{error_code, correlation_id}`, and the engine reports the outcome rather than guessing at it.
 - **What the system does today** is otherwise unchanged: every `Trading:CycleIntervalSeconds`, for each ticker in `Trading:Tickers`, three AG2 agents reason over one yfinance quote and answer with the old `InvestmentProposal` contract. The engine sizes nothing - it buys quantity 1 at the proposed amount, and `RiskEngine` rejects most of those. Stage 2 changes the contract and gives the engine real sizing.
@@ -59,10 +59,9 @@ with 0 entries at error level, 0 stack traces, and 3 HTTP requests for 3 cycles.
 
 ## Next steps
 
-In order. Each is one branch, one commit and one PR.
+In order.
 
-1. **Finding C - make the proposal DTO strict.** *Start here.* It is small, and it has to land **before the contract changes in stage 3**, or the migration happens blind. `InvestmentProposalDto` currently deserialises a body that honours none of the contract, filling non-nullable members with `null`, so a contract break goes silent instead of loud. The fix is `required` members; the plumbing already exists, because System.Text.Json throws `JsonException` for a missing required member, `PythonAgentClient` already translates that into `AgentResponseInvalidException`, and the worker already logs it as a warning. `JsonUnmappedMemberHandling.Disallow` is a separate decision: it also catches unexpected extra fields, but it couples the two services' release order.
-2. **Stage 2 - the contract and the engine's sizing, test-first** (roadmap estimate: 2-3 days). Read `docs/arkitektur-roadmap.md` before starting. Findings B and D belong in it: the ticker format rule plus escaping, and the currency guard on `Money` together with the missing `default` in `TradingWorker.LogOutcome`.
+1. **Stage 2 - the contract and the engine's sizing, test-first** (roadmap estimate: 2-3 days). Read `docs/arkitektur-roadmap.md` before starting. It is the largest stage so far and the only one that touches money, so agree the split into pull requests first. Findings B and D belong in it: the ticker format rule plus escaping, and the currency guard on `Money` together with the missing `default` in `TradingWorker.LogOutcome`.
 
 Before stage 4, decide the cost model in the outcome function (finding F). Before stage 5, decide whether a trading calendar is a domain concept (finding E).
 
@@ -76,7 +75,7 @@ roadmap on purpose: the plan should change when a stage starts, not every time a
 |---|---|---|
 | A | A failed analysis is sent twice | **Fixed** in PR #17 |
 | B | A ticker is interpolated into the URL without escaping | Open - stage 2 |
-| C | The proposal DTO accepts an answer that is not the contract | Open - **do this next**, before stage 3 |
+| C | The proposal DTO accepts an answer that is not the contract | **Fixed** in PR #20 |
 | D | A currency mix is reported as a bug, not as an outcome | Open - stage 2 |
 | E | There is no trading calendar anywhere in the plan | Open - decide before stage 5 |
 | F | Outcome measurement ignores transaction costs | Open - decide before stage 4 |
@@ -128,7 +127,24 @@ at the call site. The roadmap mentions only the first.
 `"AAPL/../../admin"` to `http://127.0.0.1:8000/ADMIN`, and `"AAPL?x=1"` to
 `http://127.0.0.1:8000/analyze/AAPL?X=1`. `Ticker.TryCreate` accepted all three.
 
-### C — the proposal DTO accepts an answer that is not the contract (do this next)
+### C — the proposal DTO accepts an answer that is not the contract (fixed, PR #20)
+
+**Resolved on 2026-09-21.** Every member of `InvestmentProposalDto` is `required`, and unknown
+members are refused with `JsonUnmappedMemberHandling.Disallow` — a deliberate choice rather than
+the minimum: both services live in one repository and merge together, so a field the engine does
+not know about is a mistake, not a version skew. The properties became init-only, because
+`required` cannot go on a positional record's parameters without `[SetsRequiredMembers]`, which
+would defeat the point.
+
+No new plumbing was needed. Verified through the engine against a stub: a recorded real answer
+bought, while a missing field, an extra field and the stage 3 shape were each discarded with a
+warning. The two halves of the contract were also compared by hand — the pydantic model and the
+DTO carry the same five fields, all required on both sides — so `Disallow` cannot reject what the
+service actually sends. Stage 2 automates that comparison as a two-way contract test.
+
+The original finding, for context:
+
+### C — the proposal DTO accepts an answer that is not the contract
 
 `InvestmentProposalDto` is a positional record with non-nullable `string` properties, but
 System.Text.Json fills a missing member with `null` without complaining. A body that honours none
@@ -212,8 +228,9 @@ function and therefore an ideal test-first target.
 
 How the owner wants the work done. Apart from the language rule, none of this is in CLAUDE.md.
 
-- **One commit per branch and pull request**, against `master`, so that each diff is small enough to review. Only `master` and the current working branch exist; a branch is deleted on both sides after its PR merges.
-- **Present the next step and ask before starting.** Motivate every change: what it does and why it matters, not just which files changed.
+- **A decision checkpoint before any code.** List the concrete choices that could go either way, with a recommendation for each, and wait for a yes. Agreed 2026-09-21: the owner wants to see a decision before it becomes code, not read about it afterwards.
+- **Two to four commits per pull request**, against `master`, grouped so the diff stays readable in a few minutes. Claude chooses the grouping. This replaced the earlier one-commit-per-PR rule on 2026-09-21, which produced too many merge rounds. Only `master` and the current working branch exist; a branch is deleted on both sides after its PR merges.
+- **Motivate every change** and keep the hand-over short: what it does and why it matters, details on request. Stage 1's PR #17 was the counter-example - 21 files and +662 lines, with several design decisions explained only afterwards.
 - **Build and test before every push:** every CI step, locally.
 - **Language:** replies to the owner are in Swedish. Everything in the repo is English, except the agent prompts and the roadmap.
 - **No `gh` CLI or token in WSL.** Pull requests are opened from pre-filled compare links: `https://github.com/HampusVictoren/trading-agent-system/compare/master...<branch>?expand=1&title=...&body=...`.
