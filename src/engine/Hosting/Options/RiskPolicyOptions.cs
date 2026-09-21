@@ -29,6 +29,15 @@ public sealed class RiskPolicyOptions
     [Range(typeof(decimal), "0.0", "0.9999", ParseLimitsInInvariantCulture = true, ConvertValueInInvariantCulture = true)]
     public decimal? CashBufferPct { get; init; }
 
+    /// <summary>
+    /// How stale the quote a signal was formed on may be when the engine acts on it. Five
+    /// minutes is generous against a cycle of seconds: it catches a hung service or a cached
+    /// quote rather than ordinary delay. Stage 4 measures real quote ages and can tighten it.
+    /// </summary>
+    [Range(1, 3600)]
+    public int MaxQuoteAgeSeconds { get; init; }
+
     /// <summary>The same limits in the domain's own terms, which guards them a second time.</summary>
-    public RiskPolicy ToRiskPolicy() => new(MaxPositionPercentage, CashBufferPct!.Value);
+    public RiskPolicy ToRiskPolicy() =>
+        new(MaxPositionPercentage, CashBufferPct!.Value, TimeSpan.FromSeconds(MaxQuoteAgeSeconds));
 }

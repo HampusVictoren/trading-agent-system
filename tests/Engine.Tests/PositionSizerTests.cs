@@ -18,7 +18,7 @@ public class PositionSizerTests
 {
     private static readonly Ticker Aapl = new("AAPL");
     private static readonly Ticker Msft = new("MSFT");
-    private static readonly RiskPolicy Policy = new(maxPositionPct: 0.05m, cashBufferPct: 0.10m);
+    private static readonly RiskPolicy Policy = new(maxPositionPct: 0.05m, cashBufferPct: 0.10m, maxQuoteAge: TimeSpan.FromMinutes(5));
     private static readonly PositionSizer Sizer = new();
 
     private static Portfolio WithCash(decimal cash = 10_000m) => new(new Money(cash, "USD"));

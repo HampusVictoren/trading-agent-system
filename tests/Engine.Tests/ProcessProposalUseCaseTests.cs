@@ -3,7 +3,7 @@ using Engine.Application.Dtos;
 using Engine.Application.Interfaces;
 using Engine.Application.UseCases;
 using Engine.Domain.Aggregates.Portfolio;
-using Engine.Domain.Services;
+using Engine.Domain.Risk;
 using Engine.Domain.ValueObjects;
 using NSubstitute;
 using NSubstitute.ExceptionExtensions;

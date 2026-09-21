@@ -4,7 +4,7 @@ using Engine.Application.Dtos;
 using Engine.Application.Interfaces;
 using Engine.Domain.Aggregates.Portfolio;
 using Engine.Domain.Exceptions;
-using Engine.Domain.Services;
+using Engine.Domain.Risk;
 using Engine.Domain.ValueObjects;
 
 public class ProcessProposalUseCase

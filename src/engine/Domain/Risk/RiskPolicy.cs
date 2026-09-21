@@ -16,7 +16,14 @@ public sealed record RiskPolicy
     /// </summary>
     public decimal CashBufferPct { get; }
 
-    public RiskPolicy(decimal maxPositionPct, decimal cashBufferPct)
+    /// <summary>
+    /// How stale the quote a signal was formed on may be when the engine acts on it. The
+    /// agents fetch a price, spend twelve to fifteen seconds reasoning, and the engine acts
+    /// after that - so some age is normal. This bounds it.
+    /// </summary>
+    public TimeSpan MaxQuoteAge { get; }
+
+    public RiskPolicy(decimal maxPositionPct, decimal cashBufferPct, TimeSpan maxQuoteAge)
     {
         if (maxPositionPct <= 0m || maxPositionPct > 1m)
         {
@@ -30,7 +37,14 @@ public sealed record RiskPolicy
                 nameof(cashBufferPct), cashBufferPct, "A cash buffer must be a share from 0 up to but not including 1.");
         }
 
+        if (maxQuoteAge <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(maxQuoteAge), maxQuoteAge, "A quote age limit must be a positive period.");
+        }
+
         MaxPositionPct = maxPositionPct;
         CashBufferPct = cashBufferPct;
+        MaxQuoteAge = maxQuoteAge;
     }
 }
