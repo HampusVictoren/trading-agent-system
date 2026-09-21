@@ -33,6 +33,18 @@ public class PythonAgentClientTests
         new(new HttpClient(handler) { BaseAddress = new Uri("http://127.0.0.1:8000") });
 
     [Fact]
+    public async Task Translates_an_answer_that_is_missing_a_contract_field()
+    {
+        // The DTO refuses it, and the client turns the JsonException into the port's own
+        // exception, so the worker reports a broken contract instead of a quiet "No action".
+        var client = ClientWith(new StubHandler(
+            HttpStatusCode.OK, """{"ticker":"AAPL","confidence":0.8}"""));
+
+        await Should.ThrowAsync<AgentResponseInvalidException>(
+            () => client.AnalyzeTickerAsync("AAPL", TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
     public async Task Returns_the_proposal_when_the_service_honours_the_contract()
     {
         var client = ClientWith(new StubHandler(HttpStatusCode.OK, ValidBody));
