@@ -27,8 +27,15 @@ public static class TradeSignalMapper
     {
         var instrument = ToInstrument(dto.Instrument);
 
-        if (!Enum.TryParse<Stance>(dto.Stance, ignoreCase: false, out var stance))
-            throw Invalid($"the stance '{dto.Stance}' is not one of BUY, SELL or HOLD");
+        // Spelled out rather than Enum.TryParse: the contract says BUY, not Buy or buy, and
+        // a case-insensitive parse would quietly accept a spelling the schema forbids.
+        var stance = dto.Stance switch
+        {
+            "BUY" => Stance.Buy,
+            "SELL" => Stance.Sell,
+            "HOLD" => Stance.Hold,
+            _ => throw Invalid($"the stance '{dto.Stance}' is not one of BUY, SELL or HOLD")
+        };
 
         if (!Conviction.TryCreate(dto.Conviction, out var conviction))
             throw Invalid($"the conviction {dto.Conviction} is not between 0 and 1");
