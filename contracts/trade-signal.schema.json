@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/HampusVictoren/trading-agent-system/contracts/trade-signal.schema.json",
+  "title": "Trade signal",
+  "description": "What the agent service answers when the engine asks about one instrument. The agents give a view; they never give an amount. Sizing is the engine's job, which is what keeps a prompt injection from becoming a large order. See decision 1 in docs/arkitektur-roadmap.md.",
+  "type": "object",
+  "unevaluatedProperties": false,
+  "required": [
+    "instrument",
+    "stance",
+    "conviction",
+    "thesis",
+    "key_risks",
+    "horizon_days",
+    "reference_price",
+    "quote_as_of",
+    "run"
+  ],
+  "properties": {
+    "instrument": { "$ref": "#/$defs/instrument" },
+    "stance": {
+      "description": "The direction the agents argue for. The engine decides whether anything is actually traded.",
+      "enum": ["BUY", "SELL", "HOLD"]
+    },
+    "conviction": {
+      "description": "How strongly the agents hold the view. It is not calibrated, so the engine maps it to discrete tiers rather than scaling an amount by it.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "thesis": {
+      "description": "Why, in the agents' own words. Stored, never parsed.",
+      "type": "string",
+      "minLength": 1
+    },
+    "key_risks": {
+      "description": "What would make the thesis wrong.",
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "horizon_days": {
+      "description": "The period the view is meant to play out over. Stage 4 measures the outcome at this horizon and at fixed ones, so that two team versions can be compared.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 365
+    },
+    "reference_price": {
+      "description": "The quote the view was formed on. The engine sizes the order from this, so the agent service returns it rather than the engine fetching market data of its own.",
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "quote_as_of": {
+      "description": "When that quote was taken. The engine refuses a signal formed on a stale quote.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "run": { "$ref": "#/$defs/run" }
+  },
+  "$defs": {
+    "instrument": {
+      "description": "A discriminated union on 'type'. Only equity exists today; a derivative becomes a new variant rather than a breaking change. The engine refuses a type it does not know.",
+      "oneOf": [{ "$ref": "#/$defs/equity" }]
+    },
+    "equity": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": ["type", "symbol"],
+      "properties": {
+        "type": { "const": "equity" },
+        "symbol": {
+          "description": "Uppercase, as the engine's Ticker normalises it.",
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9.-]{0,9}$"
+        }
+      }
+    },
+    "run": {
+      "description": "How the answer was produced. The engine does not decide on any of it, but it stores it, so that stage 4 can compare outcomes per team setup.",
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": ["team_id", "team_version", "revisions"],
+      "properties": {
+        "team_id": { "type": "string", "minLength": 1 },
+        "team_version": {
+          "description": "A hash of the team's specification and its prompt files. A changed prompt is a new version, or two different teams end up in the same statistics.",
+          "type": "string",
+          "minLength": 1
+        },
+        "revisions": {
+          "description": "How many review rounds the run took. Always 0 until review rounds exist; the field is here from the start, because adding one later would be a contract change.",
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "existing_position": {
+      "description": "What the portfolio already holds of this instrument, or null. The engine knows this; it is sent so that the agents stop proposing amounts the risk rules will reject.",
+      "type": ["object", "null"],
+      "unevaluatedProperties": false,
+      "required": ["quantity", "average_price"],
+      "properties": {
+        "quantity": { "type": "number", "exclusiveMinimum": 0 },
+        "average_price": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "request": {
+      "description": "What the engine asks. It carries the limits, so that the agents reason inside them rather than against them.",
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": [
+        "instrument",
+        "team_id",
+        "as_of",
+        "existing_position",
+        "available_risk_budget_usd",
+        "max_position_pct",
+        "correlation_id"
+      ],
+      "properties": {
+        "instrument": { "$ref": "#/$defs/instrument" },
+        "team_id": {
+          "description": "Which team setup to run. The engine sends 'default' until stage 3 makes teams selectable.",
+          "type": "string",
+          "minLength": 1
+        },
+        "as_of": { "type": "string", "format": "date-time" },
+        "existing_position": { "$ref": "#/$defs/existing_position" },
+        "available_risk_budget_usd": {
+          "description": "What the engine is willing to spend on this instrument right now, after its own rules.",
+          "type": "number",
+          "minimum": 0
+        },
+        "max_position_pct": {
+          "description": "The largest share of net asset value one position may take.",
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "correlation_id": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

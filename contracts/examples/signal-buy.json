@@ -1,0 +1,14 @@
+{
+  "instrument": { "type": "equity", "symbol": "AAPL" },
+  "stance": "BUY",
+  "conviction": 0.78,
+  "thesis": "Stark tjänsteintäkt och fortsatt marginalexpansion, medan värderingen ligger nära femårssnittet.",
+  "key_risks": [
+    "P/E över sektorsnittet lämnar lite utrymme vid en besvikelse",
+    "Efterfrågan på hårdvara kan mattas av i Kina"
+  ],
+  "horizon_days": 5,
+  "reference_price": 233.12,
+  "quote_as_of": "2026-09-21T14:03:00Z",
+  "run": { "team_id": "default", "team_version": "8f3a1c9e", "revisions": 0 }
+}
