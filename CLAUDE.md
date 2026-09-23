@@ -57,7 +57,8 @@ async def main():
     s = get_settings()
     async with httpx2.AsyncClient(trust_env=False) as http, asyncpg.create_pool(
             dsn=s.database_url.get_secret_value(), init=register_vector) as pool:
-        store = MemoryStore(pool, AsyncOpenAI(base_url=str(s.ollama_base_url), api_key='ollama', http_client=http))
+        store = MemoryStore(pool, AsyncOpenAI(base_url=str(s.embeddings_base_url),
+            api_key=s.embeddings_api_key.get_secret_value(), http_client=http))
         await store.save('TEST','HOLD','Röktest'); print(await store.search('TEST','röktest'))
 asyncio.run(main())"
 
@@ -70,11 +71,12 @@ The working directory must be `src/agents` for the `app.*` imports to resolve.
 
 **Configuration:** `src/agents/app/settings.py` defines every setting as a typed, **required** field and reads `src/agents/.env` itself, so it applies to uvicorn, scripts and `python -c`. Variables already set in the shell take precedence. Nothing has a default: an incomplete environment stops the service at startup rather than falling back to OpenAI's cloud API or the wrong database role. Read them with `get_settings()`, never `os.getenv`. See `.env.example` for the keys:
 - `DATABASE_URL` (`SecretStr` - it carries the `agent_svc` password)
-- `OLLAMA_BASE_URL` (embeddings)
-- `LLM_BASE_URL` and `LLM_MODEL` (AG2 through `OpenAIConfig` against Ollama's OpenAI-compatible `/v1`)
-- `OPENAI_API_KEY` (`SecretStr`)
-- `AGENT_API_KEY` (`SecretStr`) - what a caller must present as `X-Api-Key` to start an analysis
-- `LLM_TIMEOUT_SECONDS` - caps one LLM call. Without it the openai client waits 600 s to read a response, which makes a 504 unreachable in practice.
+- `TAS_EMBEDDINGS_BASE_URL` and `TAS_EMBEDDINGS_API_KEY` (`SecretStr`). The embedding *model* is pinned in `memory.py`, because nomic-embed-text's 768 dimensions are the column width.
+- `TAS_AGENT_API_KEY` (`SecretStr`) - what a caller must present as `X-Api-Key` to start an analysis
+- `TAS_LLM__DEFAULT__*` - one `ModelSpec`: `PROVIDER`, `MODEL`, `BASE_URL`, `API_KEY`, `TEMPERATURE`, `TIMEOUT_S`, and optionally `SEED`. `TIMEOUT_S` caps one LLM call; without it the openai client waits 600 s to read a response, which makes a 504 unreachable in practice.
+- `TAS_LLM__ROLES__<ROLE>__*` - the same fields, overriding one step's model. Startup refuses a role no step uses, so a typo cannot fall back to the default.
+
+**Everything is prefixed `TAS_`** because `OPENAI_API_KEY` is what openai's own SDK reads, and a shell value beats `.env` - without the prefix, a real cloud key in your shell would quietly become this service's.
 
 **Shared resources are built once**, in the FastAPI `lifespan` in `app/main.py`: the `httpx2` client, the `AsyncOpenAI` embeddings client, the AG2 model configuration and an `asyncpg` pool. They reach a route as `Resources` through `app/dependencies.py`. Nothing creates a client at import time, so no client is bound to the wrong event loop. The pool opens a connection at startup, which means **`docker compose up -d` has to have run before `uvicorn`**.
 
@@ -87,7 +89,7 @@ The engine reads `AgentService:BaseUrl`, `RequestTimeoutSeconds`, `RiskPolicy` a
 ```bash
 # Both sides need the same value. Generate one, then give it to each:
 python -c "import secrets; print(secrets.token_urlsafe(32))"
-# -> AGENT_API_KEY=<key> in src/agents/.env
+# -> TAS_AGENT_API_KEY=<key> in src/agents/.env
 dotnet user-secrets set "AgentService:ApiKey" "<key>" --project src/engine
 ```
 
@@ -135,7 +137,7 @@ Each role owns its schema, so its migration tool can create tables there, and ha
    | Model never matched the schema, after AG2's retries | 502 | `agent_response_invalid` |
    | A step failed for a reason of AG2's own | 502 | `agent_chain_failed` |
    | LLM backend unreachable | 503 | `llm_unreachable` |
-   | LLM did not answer within `LLM_TIMEOUT_SECONDS` | 504 | `llm_timeout` |
+   | LLM did not answer within `TAS_LLM__DEFAULT__TIMEOUT_S` | 504 | `llm_timeout` |
 
 5. Back in the engine, a non-2xx becomes `AgentUnavailable` with the status code in the message; anything that isn't `BUY` is ignored. `RiskEngine.ValidateTrade` enforces a 5% max position size and a cash check (and throws `RiskViolationException`), then `Portfolio.ExecuteBuy` runs with `quantity: 1` and the proposed amount as the price.
 
@@ -153,10 +155,10 @@ Both services follow a Clean Architecture / DDD layout: `Domain` → `Applicatio
 
 - **MCP calls:** the design has agents calling tools over the MCP protocol. `team.py` actually imports `get_stock_quote` from the MCP server module and calls it in-process.
 - **Memory:** `MemoryStore` works, including writes and search against `trading-db`, and the lifespan builds one - but no route uses it yet. The plan is a `search_history_tool` on `RiskManager` and a `save` call after each analysis cycle.
-- **LLM provider:** switching providers through an env var is planned but not built. AG2 1.0.5 ships `AnthropicConfig` (needs `ag2[anthropic]`) and `XAIConfig` (needs `xai_sdk`). Grok also works through `OpenAIConfig` with `base_url=https://api.x.ai/v1`. `ag2/config.py` currently always builds an `OpenAIConfig`.
+- **LLM provider:** switching providers *is* an environment variable now. `app/infrastructure/llm/provider.py` maps a `ModelSpec` to AG2's `ModelConfig` across five providers. Only the OpenAI family has actually been run: AG2 exports a placeholder for every extra that is not installed, and constructing one raises `ImportError: ... Install with "ag2[anthropic]"` - a startup failure with an install hint, since configurations are built in the lifespan. Two arguments do not survive every branch: `AnthropicConfig` has no `seed` (the settings refuse one), and `OllamaConfig` has no `timeout` (the factory warns at startup, and `openai_compatible` against Ollama's `/v1` is the route that keeps it).
 - **Model quality:** `llama3.2` (3B) often gives weak or contradictory reasoning, even though the JSON is valid. A larger local model or Claude/Grok would do better.
 - **Risk limit:** `PortfolioManager` isn't told the portfolio's cash or the engine's 5% limit. It often proposes amounts far above the limit (1,000–100,000 USD), and `RiskEngine` rejects them. The rejection is logged as `fail` with a stack trace, even though it's an expected business outcome.
 - **Timing:** one analysis cycle takes about 12–15 s with `llama3.2`. The engine's `HttpClient` uses the default 100 s timeout.
-- **Empty packages:** `app/infrastructure/llm/` and `app/infrastructure/market_data/` contain only `__init__.py`; the placeholder files in them were deleted in stage 0. The roadmap puts the provider factory in `llm/provider.py` in stage 3.
+- **Empty packages:** none left. `app/infrastructure/llm/provider.py` and `app/infrastructure/market_data/` were filled in stage 3.
 - **Engine database access:** the `engine_svc` role and the `trading` schema exist, but the engine has no DB access code until stage 4.
 - **AG2 API version:** AG2 is used through its v1.0+ API (`from ag2 import Agent, tool`, `ag2.config.OpenAIConfig`, `await agent.ask(...)`). The pre-1.0 `autogen`/`ConversableAgent` API is not used here.

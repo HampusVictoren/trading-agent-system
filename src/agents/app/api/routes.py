@@ -21,4 +21,4 @@ async def analyze_ticker(
     ticker: Annotated[str, Path(pattern=TICKER_PATTERN)],
     resources: Annotated[Resources, Depends(get_resources)],
 ) -> InvestmentProposal:
-    return await run_agent_analysis(ticker, resources.llm_config)
+    return await run_agent_analysis(ticker, resources.models)

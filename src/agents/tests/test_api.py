@@ -42,7 +42,7 @@ def client(monkeypatch):
     """A client whose analysis step does whatever the test says, with no LLM behind it."""
 
     def build(analysis):
-        async def run(ticker, llm_config):
+        async def run(ticker, models):
             return analysis(ticker)
 
         monkeypatch.setattr("app.api.routes.run_agent_analysis", run)
@@ -50,7 +50,7 @@ def client(monkeypatch):
             agent_api_key=SecretStr(API_KEY)
         )
         app.dependency_overrides[get_resources] = lambda: SimpleNamespace(
-            llm_config=None,
+            models=None,
             memory=SimpleNamespace(ping=AsyncMock(side_effect=OSError("no database"))),
             http_client=SimpleNamespace(get=AsyncMock(side_effect=OSError("no llm"))),
             llm_base_url="http://127.0.0.1:11434/v1",
