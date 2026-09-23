@@ -4,14 +4,36 @@ using Engine.Domain.ValueObjects;
 
 public class Portfolio
 {
-    public Guid Id { get; } = Guid.NewGuid();
+    // Version 7 rather than 4: the value is time-ordered, so rows arrive at the end of the
+    // primary key's index instead of scattering across it.
+    public Guid Id { get; } = Guid.CreateVersion7();
     public Money CashBalance { get; private set; }
     private readonly List<Position> _positions = new();
     public IReadOnlyCollection<Position> Positions => _positions.AsReadOnly();
 
+    private readonly List<Order> _newOrders = new();
+
+    /// <summary>
+    /// The orders this instance has placed since it was loaded - not the ledger. The
+    /// repository deliberately does not read the existing orders back: nothing in the domain
+    /// needs them, and loading every order ever placed in order to append one more would grow
+    /// with the account's history. The ledger is <c>trading.orders</c>, and it is queried.
+    /// </summary>
+    public IReadOnlyCollection<Order> NewOrders => _newOrders.AsReadOnly();
+
     public Portfolio(Money initialBalance)
     {
         CashBalance = initialBalance;
+    }
+
+    /// <summary>
+    /// For the ORM only: EF Core rebuilds a stored portfolio through this and writes the
+    /// identity, the balance and the positions straight to the backing fields. Domain code
+    /// uses the public constructor, so a portfolio that code creates always has a balance.
+    /// </summary>
+    private Portfolio()
+    {
+        CashBalance = Money.Zero();
     }
 
     /// <summary>
@@ -46,7 +68,13 @@ public class Portfolio
         return position is null ? Money.Zero(price.Currency) : price.Multiply(position.Quantity);
     }
 
-    public void ExecuteBuy(Ticker ticker, decimal quantity, Money price)
+    /// <summary>
+    /// Moves the cash, opens or grows the position, and returns the ledger line for it.
+    /// The order is built here rather than by the caller so that the money moving and the
+    /// record of it cannot come apart - and it is appended only once the balance has been
+    /// checked, so a refused buy leaves nothing behind.
+    /// </summary>
+    public Order ExecuteBuy(Ticker ticker, decimal quantity, Money price)
     {
         var totalCost = price.Amount * quantity;
         if (CashBalance.Amount < totalCost)
@@ -63,5 +91,9 @@ public class Portfolio
         {
             _positions.Add(new Position(ticker, quantity, price));
         }
+
+        var order = new Order(Guid.CreateVersion7(), Id, ticker, OrderSide.Buy, quantity, price);
+        _newOrders.Add(order);
+        return order;
     }
 }

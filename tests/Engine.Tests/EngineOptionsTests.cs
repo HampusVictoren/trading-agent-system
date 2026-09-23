@@ -20,6 +20,7 @@ public class EngineOptionsTests
         ["Trading:Tickers:0"] = "AAPL",
         ["Trading:CycleIntervalSeconds"] = "15",
         ["Trading:TeamId"] = "default",
+        ["Database:ConnectionString"] = "Host=127.0.0.1;Database=tradingdb;Username=engine_svc",
     };
 
     /// <summary>Resolves an options instance from valid settings, with the given keys changed or removed.</summary>
@@ -113,6 +114,17 @@ public class EngineOptionsTests
         // buys a cycle of 401s. It is a secret, so it comes from user secrets or the
         // environment rather than appsettings.json - which is exactly why it can be absent.
         Should.Throw<OptionsValidationException>(() => Resolve<AgentServiceOptions>(("AgentService:ApiKey", null)));
+    }
+
+    [Fact]
+    public void A_missing_connection_string_is_rejected()
+    {
+        // From stage 4 a cycle that cannot be stored is a cycle whose evidence is lost, and
+        // losing evidence quietly is worse than not running. Like the agent service's key it
+        // is a secret, so it comes from user secrets or the environment - which is exactly
+        // why it can be absent, and why its absence has to stop the service.
+        Should.Throw<OptionsValidationException>(
+            () => Resolve<DatabaseOptions>(("Database:ConnectionString", null)));
     }
 
     [Fact]
