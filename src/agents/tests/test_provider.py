@@ -11,13 +11,17 @@ import logging
 import pytest
 from ag2.config import ModelProvider, OpenAIConfig
 
-from app.infrastructure.ag2.team import ROLES as KNOWN_ROLES
+from app.application.teams import TEAMS, all_roles
 from app.infrastructure.llm.provider import (
     CLIENT_RETRIES,
     build_model_config,
     build_model_configs,
 )
 from app.settings import LlmSettings, ModelSpec, Provider
+
+# The roles that exist, now that teams are data. build_model_configs takes them as an
+# argument, so this swap needed no change in provider.py.
+KNOWN_ROLES = all_roles(TEAMS.values())
 
 # Installed here. Everything else in Provider is a placeholder until its extra is added.
 RUNNABLE = {Provider.OPENAI_COMPATIBLE, Provider.OPENAI}
@@ -151,7 +155,7 @@ class TestRoleOverridesAreCheckedAgainstRealRoles:
             )
 
     def test_the_teams_roles_are_what_gets_checked(self):
-        # ROLES is passed in rather than imported by the factory, so the rule does not
-        # depend on where roles come from. Today it is the team module; once teams are
-        # data it is TeamSpec, and nothing in provider.py changes.
+        # The roles are passed in rather than imported by the factory, so the rule does
+        # not depend on where they come from. They now come from TeamSpec, and making that
+        # swap needed no change in provider.py at all.
         assert set(KNOWN_ROLES) == {"market_analyst", "risk_manager", "portfolio_manager"}

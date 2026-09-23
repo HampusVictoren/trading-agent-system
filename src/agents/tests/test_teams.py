@@ -70,6 +70,16 @@ class TestATeamThatCouldNotWork:
         with pytest.raises(ValueError, match="TradeView"):
             team(step("a", MarketRead), step("b", RiskAssessment, reads=(MarketRead,)))
 
+    def test_even_a_subclass_of_the_view_is_refused_as_the_last_step(self):
+        # Identity, not isinstance. A subclass would serialise fields the engine's
+        # TradeSignalDto forbids, and the answer would be refused on arrival instead of
+        # here, where the reason is visible.
+        class WiderView(TradeView):
+            note: str = ""
+
+        with pytest.raises(ValueError, match="TradeView"):
+            team(step("a", WiderView))
+
     def test_two_steps_producing_the_same_schema_are_refused(self):
         # Results are indexed by schema type, so the second would overwrite the first and
         # win for no stated reason.
