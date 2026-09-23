@@ -153,6 +153,34 @@ DEFAULT_TEAM = TeamSpec(
 TEAMS: dict[str, TeamSpec] = {DEFAULT_TEAM.id: DEFAULT_TEAM}
 
 
+def load_prompts(spec: TeamSpec) -> dict[str, str]:
+    """Every step's instructions, read once at startup.
+
+    This is where a missing prompt file is caught. It is not part of TeamSpec's own
+    validation, because whether a file is on disk is a fact about the filesystem rather
+    than about the specification - and the specification has to stay constructible in a
+    test without touching one.
+    """
+    prompts: dict[str, str] = {}
+
+    for step in spec.steps:
+        try:
+            text = step.prompt_file.read_text(encoding="utf-8")
+        except OSError as e:
+            raise ValueError(
+                f"team '{spec.id}' step '{step.role}': cannot read {step.prompt_file}"
+            ) from e
+
+        if not text.strip():
+            # An empty file would leave the role with no instructions at all, and the
+            # model would answer from the schema alone.
+            raise ValueError(f"team '{spec.id}' step '{step.role}': {step.prompt_file} is empty")
+
+        prompts[step.role] = text
+
+    return prompts
+
+
 def all_roles(teams: Collection[TeamSpec]) -> frozenset[str]:
     """Every role any team uses. This is what a per-role model override is checked against."""
     return frozenset(role for team in teams for role in team.roles)
