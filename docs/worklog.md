@@ -7,7 +7,7 @@ A running record of what has been done, what was learned along the way, and what
 
 This file answers "where are we, how did we get here, and what is next". When resuming, read *Current state* and *Next steps* first, then the roadmap section for the next stage.
 
-**Last updated:** 2026-09-21, after stage 3's second pull request. **Stage 3 is in progress: two of five are in.**
+**Last updated:** 2026-09-23, after stage 3's third pull request. **Stage 3 is in progress: three of five are in.**
 
 ## Resuming checklist
 
@@ -26,7 +26,7 @@ Then run the CI checks listed in CLAUDE.md before changing anything, so that a f
 
 | Needed | Where it lives | Set on this machine |
 |---|---|---|
-| `AGENT_API_KEY`, `LLM_TIMEOUT_SECONDS` and the rest | `src/agents/.env`, gitignored - see `.env.example` | yes, 2026-09-20 |
+| `TAS_AGENT_API_KEY`, `TAS_LLM__DEFAULT__*` and the rest | `src/agents/.env`, gitignored - see `.env.example` | yes; **every name changed 2026-09-23** |
 | `AgentService:ApiKey`, the same value | .NET user secrets, `~/.microsoft/usersecrets`, outside the repo | yes, 2026-09-20 |
 
 `dotnet user-secrets list --project src/engine` shows whether the engine has its key, and prints the value, so do not run it where anyone can see the screen. Both sides must hold the *same* key or every cycle ends in 401.
@@ -40,9 +40,10 @@ Two things that are easy to misread as broken:
 
 ## Current state
 
-- **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21. **Stage 3 started** 2026-09-21 and is two pull requests in, of five. Stages 4-8 exist only as plan.
-- **`master` is at PR #26**, stage 3's first. Nothing reaches it without the three required checks passing, so what is there is green by construction.
-- **Branches:** `master` plus `stage-3-fact-sheet`, which is stage 3's second pull request.
+- **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21. **Stage 3 started** 2026-09-21 and is three pull requests in, of five. Stages 4-8 exist only as plan.
+- **`master` is at PR #27**, stage 3's second. Nothing reaches it without the three required checks passing, so what is there is green by construction.
+- **Branches:** `master` plus `stage-3-provider-factory`, which is stage 3's third pull request.
+- **Every environment variable was renamed on 2026-09-23.** The local `src/agents/.env` was renamed in place and still works; a fresh clone follows `.env.example`. Nothing outside this repo reads them.
 - **Nothing you can see when you run it has changed since stage 1**, and that holds until stage 3's fifth pull request. Everything built in stage 2 and so far in stage 3 sits behind the seam and is exercised only by tests. Running the engine today still gives the stage 1 behaviour: three agents on the old `InvestmentProposal` contract, `quantity: 1` at the proposed amount, and `RiskEngine.ValidateTrade` rejecting most of it.
 - **What is now impossible** rather than merely unlikely: the agents cannot name an amount (the contract has no `amount_usd`, and a test refuses one that reappears); an answer that is not the contract cannot deserialise into nulls; a position cannot be sized against cash instead of net asset value; and an order cannot be placed on a quote that is stale or dated in the future.
 
@@ -57,14 +58,13 @@ The work was split into five pull requests. The order differs from the roadmap's
 | # | Branch | What it does | State |
 |---|---|---|---|
 | 1 | `stage-3-contract-models` | The wire contract in Python, and the `TradeView` split | merged, PR #26 |
-| 2 | `stage-3-fact-sheet` | `FactSheet`, the market-data port, the step schemas | open |
-| 3 | - | Provider factory: `ModelSpec`/`LlmSettings`, lazy import per branch, `TAS_`-prefixed nested settings | not started |
+| 2 | `stage-3-fact-sheet` | `FactSheet`, the market-data port, the step schemas | merged, PR #27 |
+| 3 | `stage-3-provider-factory` | `ModelSpec`/`LlmSettings`, the provider branches, `TAS_`-prefixed nested settings | open |
 | 4 | - | `TeamSpec`, the pipeline, prompt files, `team_version` | not started |
 | 5 | - | The switch-over | not started |
 
 **What remains, in detail:**
 
-3. **Provider factory** in `app/infrastructure/llm/provider.py`, returning AG2's own `ModelConfig` (verified present as a `Protocol` in 1.0.5), with a lazy import per branch so a missing extra gives a legible error. Settings move to a nested `TAS_LLM__DEFAULT__*` block with per-role overrides; startup refuses a role name no team uses, so a typo cannot fall back to the default. **Every environment variable is renamed** in this PR - `.env.example`, `CLAUDE.md` and the local `src/agents/.env` all change. The concrete reason for the prefix: `OPENAI_API_KEY` is what openai's own SDK reads, a shell value wins over `.env`, and a real cloud key in a developer's shell would silently become this service's key.
 4. **`TeamSpec` and typed handoffs** - a step reads named earlier results rather than a shared transcript, validated at startup: the last step must produce `TradeView`, a step may not read a later step's schema, and two steps may not share an `output_schema`. Prompts move to `app/teams/default/prompts/` as files and are hashed into `team_version` together with the spec, so a changed prompt is a new version. Tests use `ag2.testing.TestConfig` and `TrackingConfig`, both verified present. **The largest of the five, and the one that does not split usefully**: validation with no pipeline is code nobody runs, and a pipeline with no version produces statistics stage 4 cannot read. This PR also updates CLAUDE.md's language rule, which still points at `app/infrastructure/ag2/`.
 5. **The switch-over**: `POST /v1/signals`, the engine calls the new endpoint, and the old path plus `InvestmentProposal`, `InvestmentProposalDto`, `RiskViolationException` and `ValidateTrade` are deleted. Finding B goes with them. This is where `PositionSizer` and `RiskEngine.Evaluate` - built and tested in stage 2, called by nobody - are finally wired in, and the only stage 3 PR that changes what the system does. It also adds the length guard to `TradeSignalMapper`: the caps are in the JSON schema, but System.Text.Json does not read JSON Schema, so the engine does not enforce them yet.
 
@@ -401,12 +401,19 @@ sheet, the run's identity from the team. Three tests exist only to guard that li
   - `MarketDataProvider` in `app/application/ports.py`, implemented as `CachingMarketData` (TTL, timeout, `asyncio.to_thread`, error translation - all of it tested against a fake) over `yfinance_source` (the only file that imports yfinance, and the only place its payload is whitelisted). It **raises** rather than returning `{"error": ...}`. An unknown symbol is 422 `instrument_not_found`; a source that is down is 503 `market_data_unavailable`, because a typo and an outage call for different fixes.
   - `MarketRead` and `RiskAssessment` as the typed handovers, categories rather than scores: a model choosing between three labels is more reliable than the same model producing a calibrated number. Neither repeats a figure from the fact sheet, because copying a number through a model is how it gets changed on the way.
 
+- **`stage-3-provider-factory`** (open): four commits. Switching to Claude or Grok is now an environment variable. `ModelSpec` and `LlmSettings` describe a model; `app/infrastructure/llm/provider.py` turns one into AG2's own `ModelConfig`, with no wrapper type of this project's own.
+  - **The lazy import the roadmap asked for turned out to be AG2's.** `ag2.config` exports a `Mock` placeholder for every provider whose extra is missing, and constructing one raises `ImportError: ... Install with "ag2[anthropic]"`. Because configurations are built in the lifespan, that is a startup failure carrying an install hint. mypy still reads the real dataclass signature behind the placeholder, so the calls are type-checked even though nothing can run them.
+  - **The four configurations do not take the same arguments**, which is why the factory is more than a lookup, and it changed two decisions. `AnthropicConfig` has no `seed` field, so the settings refuse a seed for that provider rather than dropping it - a dropped seed looks like reproducibility. `OllamaConfig` has neither `api_key` nor `timeout`, and the timeout is what makes a 504 reachable at all, so that branch warns at startup and points at `openai_compatible` against Ollama's `/v1`, which is the route this project already takes.
+  - **`ModelSpec` has no defaults**, against the roadmap's sketch of it, which had several. The rule is settings.py's and the reason is the same one level down: with per-role overrides a mistyped role name falls back to the default, and a default model means the service then runs a model nobody chose.
+  - **The role check is the thing that makes an override safe.** `LlmSettings.for_role` cannot know which roles exist, so `TAS_LLM__ROLES__PORTFILIO_MANAGER__MODEL` would start the service, run the default, and show no symptom but a wrong answer. `build_model_configs` takes the roles that exist and refuses anything else. It takes them as an argument rather than importing them, so PR 4 swaps the source from the current team's three names to `TeamSpec` without touching the file.
+  - Verified live, not only in tests: the service starts on the renamed variables and answers `POST /analyze/AAPL` with BUY in 18 s; a mistyped role stops startup naming both the typo and the real spellings; an override reaches only its own role.
+
 **The generic test is the one to copy elsewhere.** Rather than asserting a cap per field, it walks
 every schema an agent fills, resolves pydantic's `$defs`, and asserts that no string anywhere in it
 lacks a `maxLength`. A field added later is covered without anyone remembering. A second test feeds
 the walk a deliberately leaky model, so a bug in the walk cannot make the first one vacuous.
 
-**Counts:** 137 Python tests, from 52 when the stage started. 154 .NET, unchanged - the engine has
+**Counts:** 172 Python tests, from 52 when the stage started. 154 .NET, unchanged - the engine has
 not been touched in this stage yet.
 
 **Mutation counts**, continuing the habit from stage 2: asking the view for the price 3 red,
@@ -414,7 +421,10 @@ dropping `extra="forbid"` 1, changing a cap in the schema file 2, allowing a nai
 off-by-one in the volatility window 1, counting rows instead of calendar days 1, dropping the
 rounding 1, leaving the live price out of the 52-week high 1, population instead of sample
 deviation 1, removing the oldest-first guard 1; caching for ever 1, dropping the cache prune 1,
-folding an unknown symbol into an outage 1, calling the source without `to_thread` 1.
+folding an unknown symbol into an outage 1, calling the source without `to_thread` 1; dropping
+the unknown-role check 2, not building the overrides at startup 2, turning the client's own
+retries back on 1, allowing a seed for Anthropic 1, allowing `openai_compatible` with no
+`base_url` 2, removing the `TAS_` prefix 10.
 
 ---
 
@@ -457,6 +467,10 @@ Things that cost time or were not obvious. Most are also recorded where they app
 - `@runtime_checkable` makes `isinstance` work against a `Protocol` by method name, which is enough to assert that an implementation still fits its port.
 - yfinance's `period="1y"` ends **364** days back, so a twelve-month return is impossible to compute from it. `"2y"` is the smallest period that works.
 - yfinance returns `NaN` as readily as `None` for a figure it does not have, and `NaN` reaches a prompt as the word `nan`, which a model is free to read as a number.
+- `ag2.config` exports a `unittest.mock.Mock` for every provider whose extra is not installed. It imports fine and raises `ImportError` with an install hint on construction - so the "lazy import per branch" a design might ask for is already the library's. mypy still resolves the real dataclass behind it, so keyword arguments are checked even when nothing can run them.
+- AG2's four provider configurations differ more than they look: `AnthropicConfig` has no `seed`, `OllamaConfig` has neither `api_key` nor `timeout`, and the endpoint argument is `base_url`, `api_host` (a bare host) or `host` depending on which one.
+- Passing conditional keyword arguments as `**({"k": v} if cond else {})` defeats mypy, which then checks the dict against every parameter. Build the object and apply the optional argument through `ModelConfig.copy()` instead.
+- pydantic-settings lowercases the segments of a nested environment variable, so `TAS_LLM__ROLES__PORTFOLIO_MANAGER__MODEL` lands under the key `portfolio_manager`.
 
 **CI and GitHub**
 - A Dependabot PR title names only the packages whose requirement changed. Read the `uv.lock` diff: a dependency without an upper bound can move a major version silently, as fastmcp did in PR #5.
@@ -470,6 +484,6 @@ Things that cost time or were not obvious. Most are also recorded where they app
 - `pgvector.asyncpg.register_vector` looks for the extension in `public`, so `vector` stays there.
 - The psql variables `:'x'` and `:"x"` quote a literal and an identifier safely, so the shell never splices a password into SQL.
 - Docker Desktop's WSL integration must be enabled for Ubuntu-24.04, or `docker` fails even though the binary exists. The container can still be running and reachable on `127.0.0.1` through mirrored networking, so a failing `docker` command does not mean the database is down.
-- `pkill -f "[p]attern"` still kills the shell that runs it if the literal text appears **later on the same command line**, for example when the same command restarts the process it just stopped. Stopping and starting belong in separate commands.
+- `pkill -f` matches the running shell's own command line, so a plain `pkill -f 'uvicorn app.main:app'` kills the shell that issued it - exit 144 - even when it is the only thing in the command. Always write the pattern as `'[u]vicorn app.main:app'`, and keep stopping and starting in separate commands so the start does not put the pattern back on the line.
 - Ollama runs on Windows, and WSL reaches it at `127.0.0.1` only in mirrored networking mode. Use `127.0.0.1`, never `localhost`.
 - Searching for `[åäö]` misses Swedish words without those letters. Two exception messages survived PR #2 that way.
