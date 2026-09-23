@@ -50,37 +50,56 @@ Two things that are easy to misread as broken:
 
 ## Next steps
 
-**Stage 4 - persistence and outcome measurement** (roadmap estimate: 3-4 days). Read
-`docs/arkitektur-roadmap.md` first.
+**Stage 4 - persistence and outcome measurement** (roadmap estimate: 4 days, the longest so
+far). Read the stage in `docs/arkitektur-roadmap.md` before starting; it carries several
+decisions that are easy to miss.
 
-This is the stage the project exists for. Everything so far produces decisions that vanish on
-restart; stage 4 stores them and measures what came of them, which is what turns *"are the
-agents any good?"* from an opinion into a number - per `team_version`, which stage 3 built
-precisely so that this comparison would be possible.
+**This is the stage the project exists for.** Everything built so far produces decisions that
+vanish on restart. Stage 4 stores them and measures what came of them, which is what turns
+*"are the agents any good?"* from an opinion into a number - grouped by `team_version`, which
+stage 3 built precisely so that this comparison would be possible.
 
-Two things to decide **before** writing code, both recorded as findings:
+> **Backtesting proves nothing here.** The model may already know from its training data how
+> AAPL went in 2024, so a backtest flatters itself. The only honest measure is decisions logged
+> *forward* in time and compared against what happened. That is why measurement starts now and
+> not in stage 8.
 
-- **Finding F - the cost model.** An outcome function that ignores commission and spread will
-  say a strategy works when it does not. Decide what a trade costs and how attribution works.
-- **Quote history.** `GET /v1/quotes/{symbol}` is what measures an outcome at a horizon, and it
-  is also what closes the engine's blind spot: `PositionSizer` is handed `PriceSnapshot.Empty`
-  today, so a portfolio holding more than the instrument being analysed cannot be valued.
+### Decide before writing code
 
-Roughly:
+Five choices, and four of them are hard to change once rows exist:
 
-1. **EF Core against the `trading` schema** as `engine_svc`, with migrations. `Portfolio`,
-   orders and `decisions` - every `TradeDecisionResult`, including `NotSized` and
-   `RejectedByRisk`, with the `run` block the signal carried.
-2. **`GET /v1/quotes/{symbol}`** on the agent service, from the same `MarketDataProvider` the
-   fact sheet uses.
-3. **`trading.signal_outcomes`** - the return at the signal's own `horizon_days` and at fixed
-   horizons, written when each has passed. Also for HOLD, or the comparison only sees the
-   trades that were taken.
-4. **The comparison itself**: outcomes grouped by `team_version`, which is what makes changing
-   the team an experiment rather than a guess.
+1. **What a `decisions` row holds.** The roadmap flags attribution explicitly: comparing
+   `team_version` in bulk says team B beat team A, not *that the news agent was the reason*.
+   Attribution need not be solved now, but the table's shape decides whether it can be
+   answered later.
+2. **The cost model** (finding F). An outcome function that ignores commission and spread will
+   say a strategy works when it does not.
+3. **The trading calendar** (finding E). A five-trading-day horizon that lands on a holiday has
+   to resolve to something, and "is a calendar a domain concept?" is the question behind it.
+4. **The hit definition.** The roadmap's proposal: BUY hits if the instrument beats the index,
+   SELL if it does worse, HOLD if the deviation stays inside a band. The band's width and the
+   benchmark index are both choices, and the definition should be a pure function written
+   test-first.
+5. **`xmin` as a row version** for optimistic concurrency, versus an explicit column.
 
-Before stage 5, decide whether a trading calendar is a domain concept (finding E), and turn
-finding D's currency mismatch into an outcome rather than a throw.
+### The work, as six pull requests
+
+| # | What | Why it is its own |
+|---|---|---|
+| 1 | `trading` schema through EF Core: `portfolios`, `positions`, `orders` (append-only), `decisions`. `IPortfolioRepository`/`IUnitOfWork`, a reconstitution constructor on `Portfolio`. Testcontainers, and the migration tested **both ways**. | The shape is the decision. Everything after it writes rows in this form. |
+| 2 | `TradingWorker` loads the portfolio per cycle and saves the decision. | This is where restart-survival becomes visible - and **the thread-safety problem disappears structurally** rather than being guarded against. |
+| 3 | `GET /v1/quotes/{symbol}` on the agent service, deterministic and with no LLM, plus the engine's client for it. | It is what an outcome is measured against, and it also closes the gap left in stage 3: `PositionSizer` gets `PriceSnapshot.Empty` today, so a portfolio holding more than one instrument cannot be valued. |
+| 4 | The outcome function: return over a horizon, comparison against an index, hit per stance, a horizon landing on a non-trading day. Pure functions, TDD. | Findings E and F land here. Indata and expected figure are the specification, which is exactly where writing the test first pays. |
+| 5 | The scheduled job and `trading.signal_outcomes`: the fixed horizons (1, 5, 20 trading days) and the model's own, **for every signal** - including HOLD, risk rejections and everything that was never bought. A SQL view for the minimum report. | Measuring only the trades that went through measures the wrong population. |
+| 6 | Python's side: Alembic for the `agent` schema, the pool leak in `memory.py`, memory wired into the pipeline, each signal's `FactSheet` stored, and `POST /v1/outcomes` so the engine can tell Python what happened. | **The database is never the integration point** - that is what separates "two schemas" from the shared-database anti-pattern. |
+
+**After PR 5, the baseline is a deliverable, not a by-product.** The thin three-step team has to
+run long enough to produce measured outcomes at the fixed horizons before anything is added to
+it. Without that, nobody can say whether a news agent helped or only cost tokens - the same
+reasoning that made the review rounds conditional in PR #11. A `team_version` with outcomes at
+the fixed horizons is part of the stage's definition of done.
+
+Before stage 5, turn finding D's currency mismatch into an outcome rather than a throw.
 
 ## Open findings
 
