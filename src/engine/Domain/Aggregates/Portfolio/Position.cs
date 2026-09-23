@@ -16,6 +16,14 @@ public class Position
         AveragePurchasePrice = averagePurchasePrice;
     }
 
+    /// <summary>For the ORM only. EF Core writes every value through the backing fields
+    /// immediately after this runs, so the placeholders below are never observed.</summary>
+    private Position()
+    {
+        Ticker = default!;
+        AveragePurchasePrice = Money.Zero();
+    }
+
     public void AddQuantity(decimal addedQuantity, Money price)
     {
         // Without this a EUR price silently redenominated a USD position, and the average
