@@ -13,7 +13,7 @@ A hybrid, modular automated trading agent that runs entirely locally:
 
 Everything in this repo is written in **English** — code, comments, log messages, exception messages, commit messages and documentation. There are exactly two exceptions:
 
-- **Agent prompts** in `src/agents/app/infrastructure/ag2/` stay in Swedish, so the agents' `reasoning` comes back in Swedish.
+- **Anything an agent reads** stays in Swedish, so the agents' own text comes back in Swedish. That is the prompt files in `src/agents/app/teams/<team>/prompts/`, and the handful of labels the pipeline puts in a message (`Instrument:`, `Nuvarande innehav:`) in `app/application/pipeline.py`. The rule is about the audience, not the directory: if a model reads it, it is Swedish.
 - **`docs/arkitektur-roadmap.md`** is written in Swedish. It holds the architecture assessment and the staged plan — read it before starting work on a new stage.
 
 ## Commands
@@ -74,11 +74,12 @@ The working directory must be `src/agents` for the `app.*` imports to resolve.
 - `TAS_EMBEDDINGS_BASE_URL` and `TAS_EMBEDDINGS_API_KEY` (`SecretStr`). The embedding *model* is pinned in `memory.py`, because nomic-embed-text's 768 dimensions are the column width.
 - `TAS_AGENT_API_KEY` (`SecretStr`) - what a caller must present as `X-Api-Key` to start an analysis
 - `TAS_LLM__DEFAULT__*` - one `ModelSpec`: `PROVIDER`, `MODEL`, `BASE_URL`, `API_KEY`, `TEMPERATURE`, `TIMEOUT_S`, and optionally `SEED`. `TIMEOUT_S` caps one LLM call; without it the openai client waits 600 s to read a response, which makes a 504 unreachable in practice.
-- `TAS_LLM__ROLES__<ROLE>__*` - the same fields, overriding one step's model. Startup refuses a role no step uses, so a typo cannot fall back to the default.
+- `TAS_LLM__ROLES__<ROLE>__*` - the same fields, overriding one step's model. The roles are the steps of a team (`market_analyst`, `risk_manager`, `portfolio_manager`), and startup refuses a name no step uses, so a typo cannot fall back to the default.
+- `TAS_MARKET_DATA_TIMEOUT_S` and `TAS_MARKET_DATA_TTL_S` - one yfinance call is synchronous network I/O run in a thread; the TTL is how long a quote may be reused.
 
 **Everything is prefixed `TAS_`** because `OPENAI_API_KEY` is what openai's own SDK reads, and a shell value beats `.env` - without the prefix, a real cloud key in your shell would quietly become this service's.
 
-**Shared resources are built once**, in the FastAPI `lifespan` in `app/main.py`: the `httpx2` client, the `AsyncOpenAI` embeddings client, the AG2 model configuration and an `asyncpg` pool. They reach a route as `Resources` through `app/dependencies.py`. Nothing creates a client at import time, so no client is bound to the wrong event loop. The pool opens a connection at startup, which means **`docker compose up -d` has to have run before `uvicorn`**.
+**Shared resources are built once**, in the FastAPI `lifespan` in `app/main.py`: the `httpx2` client, the `AsyncOpenAI` embeddings client, one AG2 model configuration per role, an `asyncpg` pool, and the whole `SignalPipeline` - every team validated, every prompt file read, every `team_version` hashed and every agent constructed. They reach a route as `Resources` through `app/dependencies.py`. Nothing creates a client at import time, so no client is bound to the wrong event loop. The pool opens a connection at startup, which means **`docker compose up -d` has to have run before `uvicorn`**.
 
 **`/analyze` requires `X-Api-Key`**, compared with `hmac.compare_digest` so the comparison takes the same time whichever byte differs first. A missing key and a wrong key both answer 401 `unauthorized`, saying nothing about which it was. `/health` and `/ready` stay open, because a load balancer has to be able to ask whether the service is up.
 
@@ -153,7 +154,9 @@ Both services follow a Clean Architecture / DDD layout: `Domain` → `Applicatio
 
 ### Intended design vs. current code
 
-- **MCP calls:** the design has agents calling tools over the MCP protocol. `team.py` actually imports `get_stock_quote` from the MCP server module and calls it in-process.
+- **Two paths exist side by side until the switch-over.** `POST /analyze/{ticker}` still runs the old three-agent chain in `app/infrastructure/ag2/team.py` on the `InvestmentProposal` contract - that is what the request flow above describes, and it is what running the engine does today. The new `SignalPipeline` is built at startup and reachable from `Resources`, but no route calls it yet; stage 3's last pull request adds `POST /v1/signals`, points the engine at it, and deletes the old path.
+- **The new path in one line:** `SignalPipeline.run(SignalRequest)` computes a `FactSheet` from market data, runs each `StepSpec` of the team with exactly the earlier results its `reads` names, and joins the last step's `TradeView` with the instrument from the request and the price from the fact sheet. `app/application/` holds the pipeline, the teams and the versioning; `app/infrastructure/ag2/runner.py` runs a turn and translates AG2's failures; nothing in `app/domain/` or `app/application/` imports AG2.
+- **MCP calls:** the design has agents calling tools over the MCP protocol. The old `team.py` imports `get_stock_quote` from the MCP server module and calls it in-process. The new team has no tools at all - everything it needs is computed into the `FactSheet` - so the MCP server is unused by the new path.
 - **Memory:** `MemoryStore` works, including writes and search against `trading-db`, and the lifespan builds one - but no route uses it yet. The plan is a `search_history_tool` on `RiskManager` and a `save` call after each analysis cycle.
 - **LLM provider:** switching providers *is* an environment variable now. `app/infrastructure/llm/provider.py` maps a `ModelSpec` to AG2's `ModelConfig` across five providers. Only the OpenAI family has actually been run: AG2 exports a placeholder for every extra that is not installed, and constructing one raises `ImportError: ... Install with "ag2[anthropic]"` - a startup failure with an install hint, since configurations are built in the lifespan. Two arguments do not survive every branch: `AnthropicConfig` has no `seed` (the settings refuse one), and `OllamaConfig` has no `timeout` (the factory warns at startup, and `openai_compatible` against Ollama's `/v1` is the route that keeps it).
 - **Model quality:** `llama3.2` (3B) often gives weak or contradictory reasoning, even though the JSON is valid. A larger local model or Claude/Grok would do better.

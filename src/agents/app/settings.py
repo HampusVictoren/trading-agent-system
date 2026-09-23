@@ -133,6 +133,11 @@ class Settings(BaseSettings):
     embeddings_base_url: HttpUrl
     embeddings_api_key: SecretStr
 
+    # Market data. The timeout bounds one yfinance call, which is synchronous network I/O
+    # run in a thread; the TTL is how long a quote may be reused within a cycle.
+    market_data_timeout_s: Annotated[float, Field(gt=0)]
+    market_data_ttl_s: Annotated[float, Field(ge=0)]
+
     llm: LlmSettings
 
 

@@ -12,10 +12,15 @@ from pgvector.asyncpg import register_vector
 
 from app.api.errors import register_error_handlers
 from app.api.routes import router
+from app.application.pipeline import SignalPipeline, TeamRuntime
+from app.application.teams import TEAMS, all_roles, load_prompts
+from app.application.versioning import compute_team_version
 from app.dependencies import Resources, get_resources
-from app.infrastructure.ag2.team import ROLES
+from app.infrastructure.ag2.runner import Ag2StepRunner, build_agents
 from app.infrastructure.db.memory import MemoryStore
-from app.infrastructure.llm.provider import build_model_configs
+from app.infrastructure.llm.provider import ModelConfigs, build_model_configs
+from app.infrastructure.market_data.caching import CachingMarketData
+from app.infrastructure.market_data.yfinance_source import fetch_from_yfinance
 from app.observability.correlation import CorrelationIdMiddleware
 from app.observability.logging import configure_logging
 from app.settings import Settings, get_settings
@@ -68,6 +73,33 @@ def _probe_url(settings: Settings) -> str | None:
     return None if base_url is None else str(base_url).rstrip("/")
 
 
+def _build_pipeline(settings: Settings, models: ModelConfigs) -> SignalPipeline:
+    """Every team, validated and ready, before the service reports itself up.
+
+    Reading the prompts, hashing the versions and constructing the agents all happen here
+    rather than on the first request, so a missing prompt file or a provider whose extra
+    is not installed stops startup instead of failing an analysis an hour later.
+    """
+    teams: dict[str, TeamRuntime] = {}
+
+    for team_id, spec in TEAMS.items():
+        prompts = load_prompts(spec)
+        version = compute_team_version(spec, prompts, settings.llm)
+        teams[team_id] = TeamRuntime(
+            spec=spec,
+            version=version,
+            runner=Ag2StepRunner(build_agents(spec, prompts, models)),
+        )
+        logger.info("Team '%s' is version %s with steps %s", team_id, version, spec.roles)
+
+    market = CachingMarketData(
+        fetch_from_yfinance,
+        timeout_s=settings.market_data_timeout_s,
+        ttl_s=settings.market_data_ttl_s,
+    )
+    return SignalPipeline(teams, market)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Builds every shared resource once, on the loop that will use it, and closes it again.
@@ -88,8 +120,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
 
         async with _database_pool(settings) as pool:
+            models = build_model_configs(settings.llm, all_roles(TEAMS.values()))
             app.state.resources = Resources(
-                models=build_model_configs(settings.llm, ROLES),
+                models=models,
+                pipeline=_build_pipeline(settings, models),
                 memory=MemoryStore(pool, embeddings),
                 http_client=http_client,
                 llm_base_url=_probe_url(settings),

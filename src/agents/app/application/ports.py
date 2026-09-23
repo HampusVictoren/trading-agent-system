@@ -8,6 +8,8 @@ shape, not because it inherits from anything.
 
 from typing import Protocol, runtime_checkable
 
+from pydantic import BaseModel
+
 from app.domain.facts import MarketSnapshot
 
 
@@ -21,3 +23,16 @@ class MarketDataProvider(Protocol):
     """
 
     async def snapshot(self, symbol: str) -> MarketSnapshot: ...
+
+
+@runtime_checkable
+class StepRunner(Protocol):
+    """Runs one agent turn and returns the result already validated against its schema.
+
+    The seam that keeps AG2 out of the application layer. The pipeline decides *what* to
+    ask and in which order; this decides *how*, which is where an openai timeout or an AG2
+    failure lives. An implementation is therefore responsible for translating those into
+    the AnalysisError vocabulary, so nothing above it ever catches an openai exception.
+    """
+
+    async def run_step[T: BaseModel](self, role: str, message: str, schema: type[T]) -> T: ...

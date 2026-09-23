@@ -51,6 +51,7 @@ def client(monkeypatch):
         )
         app.dependency_overrides[get_resources] = lambda: SimpleNamespace(
             models=None,
+            pipeline=None,
             memory=SimpleNamespace(ping=AsyncMock(side_effect=OSError("no database"))),
             http_client=SimpleNamespace(get=AsyncMock(side_effect=OSError("no llm"))),
             llm_base_url="http://127.0.0.1:11434/v1",
