@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using Engine.Application.Contracts;
 using Engine.Application.Interfaces;
 using Engine.Hosting;
 using Microsoft.Extensions.Configuration;
@@ -15,6 +16,17 @@ namespace Engine.Tests.Hosting;
 /// </summary>
 public class AgentClientResilienceTests
 {
+    private static readonly TradeSignalRequestDto ARequest = new()
+    {
+        Instrument = new EquityInstrumentDto { Symbol = "AAPL" },
+        TeamId = "default",
+        AsOf = new DateTimeOffset(2026, 9, 23, 14, 0, 0, TimeSpan.Zero),
+        ExistingPosition = null,
+        AvailableRiskBudgetUsd = 10_000m,
+        MaxPositionPct = 0.05m,
+        CorrelationId = "cycle-1"
+    };
+
     private sealed class CountingHandler : HttpMessageHandler
     {
         private readonly Func<HttpResponseMessage> _respond;
@@ -29,7 +41,12 @@ public class AgentClientResilienceTests
             {
                 Content = new StringContent(
                     status == HttpStatusCode.OK
-                        ? """{"ticker":"AAPL","action":"HOLD","amount_usd":0,"confidence":0.5,"reasoning":"n/a"}"""
+                        ? """
+                          {"instrument":{"type":"equity","symbol":"AAPL"},"stance":"HOLD",
+                           "conviction":0.5,"thesis":"t","key_risks":[],"horizon_days":5,
+                           "reference_price":100,"quote_as_of":"2026-09-23T14:03:00Z",
+                           "run":{"team_id":"default","team_version":"abc","revisions":0}}
+                          """
                         : """{"error_code":"llm_failed","correlation_id":"x"}""",
                     Encoding.UTF8,
                     "application/json")
@@ -78,7 +95,7 @@ public class AgentClientResilienceTests
         using var _ = provider;
 
         await Should.ThrowAsync<AgentServiceUnavailableException>(
-            () => client.AnalyzeTickerAsync("AAPL", TestContext.Current.CancellationToken));
+            () => client.GetSignalAsync(ARequest, TestContext.Current.CancellationToken));
 
         handler.Attempts.ShouldBe(1);
     }
@@ -91,7 +108,7 @@ public class AgentClientResilienceTests
         using var _ = provider;
 
         var exception = await Should.ThrowAsync<AgentServiceUnavailableException>(
-            () => client.AnalyzeTickerAsync("AAPL", TestContext.Current.CancellationToken));
+            () => client.GetSignalAsync(ARequest, TestContext.Current.CancellationToken));
 
         exception.Message.ShouldContain("504");
     }
@@ -104,7 +121,7 @@ public class AgentClientResilienceTests
         var (client, provider) = Build(handler);
         using var _ = provider;
 
-        await client.AnalyzeTickerAsync("AAPL", TestContext.Current.CancellationToken);
+        await client.GetSignalAsync(ARequest, TestContext.Current.CancellationToken);
 
         handler.LastRequest!.Headers.GetValues(AgentClientExtensions.ApiKeyHeader)
             .ShouldBe(["a-test-key"]);
@@ -119,7 +136,7 @@ public class AgentClientResilienceTests
         using var _ = provider;
 
         await Should.ThrowAsync<AgentServiceUnavailableException>(
-            () => client.AnalyzeTickerAsync("AAPL", TestContext.Current.CancellationToken));
+            () => client.GetSignalAsync(ARequest, TestContext.Current.CancellationToken));
 
         handler.Attempts.ShouldBe(2);
     }

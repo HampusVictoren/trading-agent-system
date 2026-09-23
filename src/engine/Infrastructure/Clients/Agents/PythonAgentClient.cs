@@ -2,18 +2,18 @@ namespace Engine.Infrastructure.Clients.Agents;
 
 using System.Net.Http.Json;
 using System.Text.Json;
-using Engine.Application.Dtos;
+using Engine.Application.Contracts;
 using Engine.Application.Interfaces;
 using Polly.Timeout;
 
 public class PythonAgentClient : IAgentClient
 {
+    /// <summary>The agent service echoes this and puts it in every log line it writes.</summary>
+    public const string CorrelationIdHeader = "X-Correlation-Id";
+
+    private const string SignalsPath = "v1/signals";
+
     private readonly HttpClient _httpClient;
-    private static readonly JsonSerializerOptions Options = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
-        PropertyNameCaseInsensitive = true
-    };
 
     public PythonAgentClient(HttpClient httpClient)
     {
@@ -21,26 +21,40 @@ public class PythonAgentClient : IAgentClient
     }
 
     /// <summary>
-    /// Asks the agent service about one ticker. Transport failures are translated into the two
-    /// exceptions the port declares, so that neither Polly nor HttpClient leaks into the
-    /// application layer - and so that a timeout does not reach the worker as an unknown bug.
+    /// Transport failures are translated into the two exceptions the port declares, so that
+    /// neither Polly nor HttpClient leaks into the application layer - and so that a timeout
+    /// does not reach the worker as an unknown bug.
     /// </summary>
-    public async Task<InvestmentProposalDto?> AnalyzeTickerAsync(string ticker, CancellationToken cancellationToken = default)
+    public async Task<TradeSignalDto?> GetSignalAsync(
+        TradeSignalRequestDto request, CancellationToken cancellationToken = default)
     {
         try
         {
-            var response = await _httpClient.PostAsync($"analyze/{ticker}", null, cancellationToken);
+            using var message = new HttpRequestMessage(HttpMethod.Post, SignalsPath)
+            {
+                // The same options object the contract test reads the examples with, so what
+                // goes out on the wire is what that test proves the contract accepts.
+                Content = JsonContent.Create(request, options: ContractSerialization.Options)
+            };
+
+            // Set from the request rather than passed separately, so no call path can send a
+            // body with one id and a header with another - or forget the header entirely.
+            message.Headers.Add(CorrelationIdHeader, request.CorrelationId);
+
+            var response = await _httpClient.SendAsync(message, cancellationToken);
 
             if (!response.IsSuccessStatusCode)
             {
-                // Since stage 1 the agent service answers honestly: 502 and 504 mean the agents
-                // failed, 503 that a backend is down. The engine treats them alike - no decision
-                // this cycle - but the status code goes in the log, so the reason is not lost.
+                // The agent service answers honestly: 422 means the request was wrong, 502
+                // and 504 that the agents failed, 503 that a backend is down. The engine
+                // treats them alike - no decision this cycle - but the status goes in the
+                // log, so the reason is not lost.
                 throw new AgentServiceUnavailableException(
-                    $"The agent service answered {(int)response.StatusCode} for {ticker}.");
+                    $"The agent service answered {(int)response.StatusCode} for {Describe(request)}.");
             }
 
-            return await response.Content.ReadFromJsonAsync<InvestmentProposalDto>(Options, cancellationToken);
+            return await response.Content.ReadFromJsonAsync<TradeSignalDto>(
+                ContractSerialization.Options, cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -50,12 +64,16 @@ public class PythonAgentClient : IAgentClient
         {
             // TimeoutRejectedException comes from the resilience pipeline and
             // TaskCanceledException from HttpClient itself; both mean "no answer in time".
-            throw new AgentServiceUnavailableException($"The agent service did not answer for {ticker}.", ex);
+            throw new AgentServiceUnavailableException(
+                $"The agent service did not answer for {Describe(request)}.", ex);
         }
         catch (Exception ex) when (ex is JsonException or NotSupportedException)
         {
             throw new AgentResponseInvalidException(
-                $"The agent service answered for {ticker} with something other than the agreed JSON.", ex);
+                $"The agent service answered for {Describe(request)} with something other than the agreed JSON.", ex);
         }
     }
+
+    private static string Describe(TradeSignalRequestDto request) =>
+        request.Instrument is EquityInstrumentDto equity ? equity.Symbol : request.Instrument.GetType().Name;
 }

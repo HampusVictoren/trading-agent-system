@@ -23,6 +23,13 @@ public static class TradeSignalMapper
 {
     private const string ContractCurrency = "USD";
 
+    // The caps in contracts/trade-signal.schema.json. System.Text.Json does not read JSON
+    // Schema, so the engine has to enforce them itself - and it has to, because from stage 4
+    // every thesis is stored and every one of them is read back into a prompt.
+    private const int MaxThesisLength = 2000;
+    private const int MaxRiskLength = 300;
+    private const int MaxRisks = 5;
+
     public static TradeSignal ToDomain(TradeSignalDto dto)
     {
         var instrument = ToInstrument(dto.Instrument);
@@ -42,6 +49,15 @@ public static class TradeSignalMapper
 
         if (string.IsNullOrWhiteSpace(dto.Thesis))
             throw Invalid("the thesis is empty");
+
+        if (dto.Thesis.Length > MaxThesisLength)
+            throw Invalid($"the thesis is {dto.Thesis.Length} characters, past the {MaxThesisLength} limit");
+
+        if (dto.KeyRisks.Count > MaxRisks)
+            throw Invalid($"there are {dto.KeyRisks.Count} key risks, past the {MaxRisks} limit");
+
+        if (dto.KeyRisks.Any(risk => risk.Length > MaxRiskLength))
+            throw Invalid($"a key risk is longer than the {MaxRiskLength} character limit");
 
         if (dto.HorizonDays < 1)
             throw Invalid($"the horizon of {dto.HorizonDays} days is not a period");

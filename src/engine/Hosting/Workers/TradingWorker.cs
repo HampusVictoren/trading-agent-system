@@ -33,10 +33,16 @@ public class TradingWorker : BackgroundService
                 using var scope = _scopeFactory.CreateScope();
                 var useCase = scope.ServiceProvider.GetRequiredService<ProcessProposalUseCase>();
 
+                // One id per cycle, generated here and logged before the call, so a line in
+                // this log can be found in the agent service's - it echoes the id and puts
+                // it in every line it writes while handling the request.
+                var correlationId = Guid.NewGuid().ToString();
+
                 try
                 {
-                    _logger.LogInformation("Requesting analysis for {Ticker}...", tickerSymbol);
-                    var result = await useCase.ExecuteAsync(portfolio, tickerSymbol, stoppingToken);
+                    _logger.LogInformation(
+                        "Requesting analysis for {Ticker} as {CorrelationId}...", tickerSymbol, correlationId);
+                    var result = await useCase.ExecuteAsync(portfolio, tickerSymbol, correlationId, stoppingToken);
                     LogOutcome(result, portfolio);
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -75,13 +81,17 @@ public class TradingWorker : BackgroundService
                     executed.Quantity, executed.Ticker.Value, executed.Price.Amount, portfolio.CashBalance.Amount);
                 break;
 
+            case TradeDecisionResult.NotSized notSized:
+                _logger.LogInformation("No order for {Ticker}: {Reason}", notSized.Ticker.Value, notSized.Reason);
+                break;
+
             case TradeDecisionResult.RejectedByRisk rejected:
                 _logger.LogInformation("Risk rules rejected {Ticker}: {Reason}", rejected.Ticker.Value, rejected.Reason);
                 break;
 
             case TradeDecisionResult.NoAction noAction:
                 _logger.LogInformation(
-                    "No action for {Ticker}: the agents answered {Action}.", noAction.Ticker.Value, noAction.Action);
+                    "No action for {Ticker}: the agents answered {Stance}.", noAction.Ticker.Value, noAction.Action);
                 break;
 
             case TradeDecisionResult.InvalidResponse invalid:

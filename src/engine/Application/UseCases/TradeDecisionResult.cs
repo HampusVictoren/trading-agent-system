@@ -15,7 +15,15 @@ public abstract record TradeDecisionResult
     /// <summary>A buy was executed against the portfolio.</summary>
     public sealed record Executed(Ticker Ticker, decimal Quantity, Money Price) : TradeDecisionResult;
 
-    /// <summary>The proposal broke a risk rule. An expected outcome, not an error.</summary>
+    /// <summary>
+    /// Sizing produced no order, and why. Kept apart from <see cref="RejectedByRisk"/>
+    /// because they are different facts: a conviction below the floor says something about
+    /// the team, while a rejected order says something about the portfolio. Stage 4 wants to
+    /// tell them apart, and pooling them would hide which one is happening.
+    /// </summary>
+    public sealed record NotSized(Ticker Ticker, string Reason) : TradeDecisionResult;
+
+    /// <summary>The order broke a risk rule. An expected outcome, not an error.</summary>
     public sealed record RejectedByRisk(Ticker Ticker, string Reason) : TradeDecisionResult;
 
     /// <summary>The agents did not propose a buy. Selling arrives in stage 5.</summary>

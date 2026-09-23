@@ -14,5 +14,14 @@ public sealed class TradingOptions
     [Range(1, 3600)]
     public int CycleIntervalSeconds { get; init; }
 
+    /// <summary>
+    /// Which team setup the agent service should run. Configuration rather than code, because
+    /// that is what makes the experiment cycle an experiment: change the team, let it run, and
+    /// compare outcomes per team_version in stage 4. An id the service does not know is a 422.
+    /// </summary>
+    [Required]
+    [MinLength(1)]
+    public string TeamId { get; init; } = string.Empty;
+
     public TimeSpan CycleInterval => TimeSpan.FromSeconds(CycleIntervalSeconds);
 }

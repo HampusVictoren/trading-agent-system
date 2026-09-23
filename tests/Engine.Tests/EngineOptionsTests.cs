@@ -19,6 +19,7 @@ public class EngineOptionsTests
         ["RiskPolicy:MaxQuoteAgeSeconds"] = "300",
         ["Trading:Tickers:0"] = "AAPL",
         ["Trading:CycleIntervalSeconds"] = "15",
+        ["Trading:TeamId"] = "default",
     };
 
     /// <summary>Resolves an options instance from valid settings, with the given keys changed or removed.</summary>
@@ -52,6 +53,16 @@ public class EngineOptionsTests
         Resolve<RiskPolicyOptions>().MaxPositionPercentage.ShouldBe(0.05m);
         Resolve<TradingOptions>().Tickers.ShouldBe(["AAPL"]);
         Resolve<TradingOptions>().CycleInterval.ShouldBe(TimeSpan.FromSeconds(15));
+        Resolve<TradingOptions>().TeamId.ShouldBe("default");
+    }
+
+    [Fact]
+    public void A_missing_team_is_rejected()
+    {
+        // Which team runs is configuration, and there is no sensible default: a team the
+        // agent service does not know answers 422, and guessing one would silently compare
+        // outcomes from a setup nobody chose.
+        Should.Throw<OptionsValidationException>(() => Resolve<TradingOptions>(("Trading:TeamId", null)));
     }
 
     [Theory]

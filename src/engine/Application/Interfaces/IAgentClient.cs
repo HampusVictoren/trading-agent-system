@@ -1,8 +1,13 @@
 namespace Engine.Application.Interfaces;
 
-using Engine.Application.Dtos;
+using Engine.Application.Contracts;
 
 public interface IAgentClient
 {
-    Task<InvestmentProposalDto?> AnalyzeTickerAsync(string ticker, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// Asks the agent service about one instrument. The instrument travels in the body as a
+    /// typed object, so nothing is interpolated into a path.
+    /// </summary>
+    Task<TradeSignalDto?> GetSignalAsync(
+        TradeSignalRequestDto request, CancellationToken cancellationToken = default);
 }
