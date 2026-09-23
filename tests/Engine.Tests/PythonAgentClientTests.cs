@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using Engine.Application.Contracts;
 using Engine.Application.Interfaces;
 using Engine.Infrastructure.Clients.Agents;
 using Polly.Timeout;
@@ -10,7 +11,23 @@ namespace Engine.Tests.Infrastructure.Clients;
 public class PythonAgentClientTests
 {
     private const string ValidBody =
-        """{"ticker":"AAPL","action":"BUY","amount_usd":400,"confidence":0.8,"reasoning":"because"}""";
+        """
+        {"instrument":{"type":"equity","symbol":"AAPL"},"stance":"BUY","conviction":0.78,
+         "thesis":"t","key_risks":["r"],"horizon_days":5,"reference_price":233.12,
+         "quote_as_of":"2026-09-23T14:03:00Z",
+         "run":{"team_id":"default","team_version":"abc123","revisions":0}}
+        """;
+
+    private static readonly TradeSignalRequestDto ARequest = new()
+    {
+        Instrument = new EquityInstrumentDto { Symbol = "AAPL" },
+        TeamId = "default",
+        AsOf = new DateTimeOffset(2026, 9, 23, 14, 0, 0, TimeSpan.Zero),
+        ExistingPosition = null,
+        AvailableRiskBudgetUsd = 10_000m,
+        MaxPositionPct = 0.05m,
+        CorrelationId = "cycle-1"
+    };
 
     /// <summary>Answers every request with whatever the test decided, without a network.</summary>
     private sealed class StubHandler : HttpMessageHandler
@@ -38,10 +55,10 @@ public class PythonAgentClientTests
         // The DTO refuses it, and the client turns the JsonException into the port's own
         // exception, so the worker reports a broken contract instead of a quiet "No action".
         var client = ClientWith(new StubHandler(
-            HttpStatusCode.OK, """{"ticker":"AAPL","confidence":0.8}"""));
+            HttpStatusCode.OK, """{"stance":"BUY","conviction":0.8}"""));
 
         await Should.ThrowAsync<AgentResponseInvalidException>(
-            () => client.AnalyzeTickerAsync("AAPL", TestContext.Current.CancellationToken));
+            () => client.GetSignalAsync(ARequest, TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -49,11 +66,12 @@ public class PythonAgentClientTests
     {
         var client = ClientWith(new StubHandler(HttpStatusCode.OK, ValidBody));
 
-        var proposal = await client.AnalyzeTickerAsync("AAPL", TestContext.Current.CancellationToken);
+        var signal = await client.GetSignalAsync(ARequest, TestContext.Current.CancellationToken);
 
-        proposal.ShouldNotBeNull();
-        proposal.Action.ShouldBe("BUY");
-        proposal.AmountUsd.ShouldBe(400m);
+        signal.ShouldNotBeNull();
+        signal.Stance.ShouldBe("BUY");
+        signal.ReferencePrice.ShouldBe(233.12m);
+        signal.Instrument.ShouldBeOfType<EquityInstrumentDto>().Symbol.ShouldBe("AAPL");
     }
 
     [Fact]
@@ -62,7 +80,7 @@ public class PythonAgentClientTests
         var client = ClientWith(new StubHandler(HttpStatusCode.InternalServerError, "boom", "text/plain"));
 
         await Should.ThrowAsync<AgentServiceUnavailableException>(
-            async () => await client.AnalyzeTickerAsync("AAPL", TestContext.Current.CancellationToken));
+            async () => await client.GetSignalAsync(ARequest, TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -73,7 +91,7 @@ public class PythonAgentClientTests
         var client = ClientWith(new StubHandler(new TimeoutRejectedException("the pipeline gave up")));
 
         await Should.ThrowAsync<AgentServiceUnavailableException>(
-            async () => await client.AnalyzeTickerAsync("AAPL", TestContext.Current.CancellationToken));
+            async () => await client.GetSignalAsync(ARequest, TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -82,7 +100,7 @@ public class PythonAgentClientTests
         var client = ClientWith(new StubHandler(new HttpRequestException("connection refused")));
 
         await Should.ThrowAsync<AgentServiceUnavailableException>(
-            async () => await client.AnalyzeTickerAsync("AAPL", TestContext.Current.CancellationToken));
+            async () => await client.GetSignalAsync(ARequest, TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -92,7 +110,7 @@ public class PythonAgentClientTests
         var client = ClientWith(new StubHandler(HttpStatusCode.OK, "<html>Gateway</html>", "text/html"));
 
         await Should.ThrowAsync<AgentResponseInvalidException>(
-            async () => await client.AnalyzeTickerAsync("AAPL", TestContext.Current.CancellationToken));
+            async () => await client.GetSignalAsync(ARequest, TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -101,7 +119,7 @@ public class PythonAgentClientTests
         var client = ClientWith(new StubHandler(HttpStatusCode.OK, """{"ticker":"AAPL","""));
 
         await Should.ThrowAsync<AgentResponseInvalidException>(
-            async () => await client.AnalyzeTickerAsync("AAPL", TestContext.Current.CancellationToken));
+            async () => await client.GetSignalAsync(ARequest, TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -112,8 +130,61 @@ public class PythonAgentClientTests
         var client = ClientWith(new StubHandler(HttpStatusCode.OK, ValidBody));
 
         var thrown = await Should.ThrowAsync<OperationCanceledException>(
-            async () => await client.AnalyzeTickerAsync("AAPL", cts.Token));
+            async () => await client.GetSignalAsync(ARequest, cts.Token));
 
         thrown.ShouldNotBeOfType<AgentServiceUnavailableException>();
+    }
+
+    [Fact]
+    public async Task Sends_the_correlation_id_as_a_header_as_well_as_in_the_body()
+    {
+        // The agent service puts it in every log line it writes, so one cycle can be
+        // followed across both services. Set from the request, so the two cannot disagree.
+        var recorder = new RecordingHandler();
+        var client = new PythonAgentClient(
+            new HttpClient(recorder) { BaseAddress = new Uri("http://127.0.0.1:8000") });
+
+        await client.GetSignalAsync(ARequest, TestContext.Current.CancellationToken);
+
+        recorder.Seen.ShouldNotBeNull();
+        recorder.Seen!.RequestUri!.AbsolutePath.ShouldBe("/v1/signals");
+        recorder.Seen.Headers.GetValues(PythonAgentClient.CorrelationIdHeader)
+            .Single().ShouldBe("cycle-1");
+    }
+
+    [Fact]
+    public async Task Sends_the_request_in_the_shape_the_contract_describes()
+    {
+        // The instrument goes in the body as a typed object, discriminator and all. Nothing
+        // is interpolated into the path, which is what closed half of finding B.
+        var recorder = new RecordingHandler();
+        var client = new PythonAgentClient(
+            new HttpClient(recorder) { BaseAddress = new Uri("http://127.0.0.1:8000") });
+
+        await client.GetSignalAsync(ARequest, TestContext.Current.CancellationToken);
+
+        recorder.Body.ShouldContain("\"type\":\"equity\"");
+        recorder.Body.ShouldContain("\"symbol\":\"AAPL\"");
+        recorder.Body.ShouldContain("\"max_position_pct\":0.05");
+        recorder.Body.ShouldContain("\"existing_position\":null");
+    }
+
+    /// <summary>Records the request it was given, then answers with a valid signal.</summary>
+    private sealed class RecordingHandler : HttpMessageHandler
+    {
+        public HttpRequestMessage? Seen { get; private set; }
+        public string Body { get; private set; } = string.Empty;
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Seen = request;
+            Body = request.Content is null ? string.Empty : await request.Content.ReadAsStringAsync(cancellationToken);
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(ValidBody, Encoding.UTF8, "application/json")
+            };
+        }
     }
 }

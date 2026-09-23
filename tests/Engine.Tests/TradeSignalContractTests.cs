@@ -155,4 +155,71 @@ public class TradeSignalContractTests
 
         onTheType.ShouldBe(required);
     }
+
+    [Fact]
+    public void What_the_engine_sends_matches_the_contracts_own_request_example()
+    {
+        // The other direction. Until now the test only proved the engine could *read* the
+        // examples; this proves what it writes is the same shape, field for field.
+        var example = JsonSerializer.Deserialize<JsonElement>(Example("request.json"));
+
+        var request = new TradeSignalRequestDto
+        {
+            Instrument = new EquityInstrumentDto { Symbol = "AAPL" },
+            TeamId = "default",
+            AsOf = DateTimeOffset.Parse("2026-09-21T14:02:55Z"),
+            ExistingPosition = new ExistingPositionDto { Quantity = 3m, AveragePrice = 210.4m },
+            AvailableRiskBudgetUsd = 412.75m,
+            MaxPositionPct = 0.05m,
+            CorrelationId = "8b1f0a4e-6d2c-4a21-9f77-0c3b5e6a1d90"
+        };
+
+        var written = JsonSerializer.SerializeToElement(request, ContractSerialization.Options);
+
+        written.EnumerateObject().Select(p => p.Name).Order()
+            .ShouldBe(example.EnumerateObject().Select(p => p.Name).Order());
+        written.GetProperty("instrument").GetProperty("type").GetString().ShouldBe("equity");
+        written.GetProperty("existing_position").GetProperty("quantity").GetDecimal().ShouldBe(3m);
+    }
+
+    [Fact]
+    public void A_request_with_no_position_writes_null_rather_than_leaving_the_field_out()
+    {
+        // "No position" is something the engine states. Omitting it would make the agent
+        // service reject the request, since the contract lists it as required.
+        var request = new TradeSignalRequestDto
+        {
+            Instrument = new EquityInstrumentDto { Symbol = "NVDA" },
+            TeamId = "default",
+            AsOf = DateTimeOffset.UtcNow,
+            ExistingPosition = null,
+            AvailableRiskBudgetUsd = 500m,
+            MaxPositionPct = 0.05m,
+            CorrelationId = "c-1"
+        };
+
+        var written = JsonSerializer.SerializeToElement(request, ContractSerialization.Options);
+
+        written.GetProperty("existing_position").ValueKind.ShouldBe(JsonValueKind.Null);
+    }
+
+    [Theory]
+    [InlineData(2001, 1, 1, "thesis")]
+    [InlineData(10, 6, 1, "key risks")]
+    [InlineData(10, 1, 301, "key risk")]
+    public void An_answer_past_the_contracts_length_caps_is_refused(
+        int thesisLength, int riskCount, int riskLength, string expected)
+    {
+        // The caps are in the JSON schema, and System.Text.Json does not read JSON Schema,
+        // so the engine enforces them here. From stage 4 every thesis is stored and read
+        // back into a prompt, which is what makes an uncapped one expensive rather than ugly.
+        var dto = JsonSerializer.Deserialize<TradeSignalDto>(Example("signal-buy.json"), ContractSerialization.Options)! with
+        {
+            Thesis = new string('x', thesisLength),
+            KeyRisks = Enumerable.Repeat(new string('y', riskLength), riskCount).ToArray()
+        };
+
+        Should.Throw<AgentResponseInvalidException>(() => TradeSignalMapper.ToDomain(dto))
+            .Message.ShouldContain(expected);
+    }
 }

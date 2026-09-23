@@ -7,7 +7,7 @@ using System.Text.Json.Serialization;
 /// the engine decides the size, which is what bounds the damage a prompt injection can do.
 /// </summary>
 /// <remarks>
-/// Required members and Disallow for the same reason as InvestmentProposalDto: an answer
+/// Required members and Disallow because an answer
 /// that is not this contract has to fail loudly rather than deserialise into nulls.
 /// </remarks>
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]

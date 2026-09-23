@@ -52,4 +52,35 @@ public class TickerTests
 
         ticker.ShouldBeNull();
     }
+
+    [Theory]
+    [InlineData("../internal/shutdown")]
+    [InlineData("AAPL/../../admin")]
+    [InlineData("AAPL?x=1")]
+    [InlineData("AA PL")]
+    [InlineData("AA$PL")]
+    [InlineData("1AAPL")]
+    [InlineData("ABCDEFGHIJK")]
+    public void Refuses_a_value_that_is_not_a_symbol(string input)
+    {
+        // Finding B. All three of the first cases were accepted before, and the first two
+        // resolved to a different URL entirely when interpolated into a path. The path is
+        // gone with the old endpoint, but the rule is what stage 5 needs: screening
+        // produces symbols from market data rather than from appsettings.json.
+        Should.Throw<ArgumentException>(() => new Ticker(input));
+        Ticker.TryCreate(input, out var ticker).ShouldBeFalse();
+        ticker.ShouldBeNull();
+    }
+
+    [Theory]
+    [InlineData("A")]
+    [InlineData("BRK.B")]
+    [InlineData("ABCDEFGHIJ")]
+    [InlineData("RDS-A")]
+    public void Accepts_what_the_contract_calls_a_symbol(string input)
+    {
+        // The same pattern as contracts/trade-signal.schema.json, so a symbol that the
+        // agent service accepts cannot be one the engine refuses.
+        new Ticker(input).Value.ShouldBe(input);
+    }
 }

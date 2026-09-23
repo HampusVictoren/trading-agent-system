@@ -15,15 +15,16 @@ builder.Configuration.AddUserSecrets<Program>(optional: true);
 
 builder.Services.AddEngineOptions(builder.Configuration);
 
-builder.Services.AddSingleton<RiskEngine>(sp =>
-    new RiskEngine(sp.GetRequiredService<IOptions<RiskPolicyOptions>>().Value.MaxPositionPercentage));
-
-// Nothing resolves these yet - stage 3 switches the new path on - but registering them here
-// means the options-to-domain mapping is covered by ValidateOnStart rather than discovered
-// later, and stage 3 becomes wiring rather than new code.
+// RiskEngine holds no state of its own: Evaluate takes the policy, so the limits live in
+// one object that ValidateOnStart has already checked.
+builder.Services.AddSingleton<RiskEngine>();
 builder.Services.AddSingleton<RiskPolicy>(sp =>
     sp.GetRequiredService<IOptions<RiskPolicyOptions>>().Value.ToRiskPolicy());
 builder.Services.AddSingleton<PositionSizer>();
+
+// Injected rather than read from DateTimeOffset.UtcNow, so the quote-age rule is testable
+// without waiting for time to pass.
+builder.Services.AddSingleton(TimeProvider.System);
 
 builder.Services.AddAgentClient();
 

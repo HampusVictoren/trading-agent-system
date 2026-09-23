@@ -6,8 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A hybrid, modular automated trading agent that runs entirely locally:
 - The **.NET 10 engine** (`src/engine`) is deterministic and rule-based. It owns scheduling, the portfolio (cash, positions), the `RiskEngine` that checks proposals against hard rules, and order execution.
-- The **Python agent service** (`src/agents`) is a FastAPI app. It exposes `POST /analyze/{ticker}` and runs a team of AG2 v1.0+ agents that reason over market data and return a validated JSON decision.
-- A **FastMCP server** exposes market-data tools such as `get_stock_quote`, backed by yfinance.
+- The **Python agent service** (`src/agents`) is a FastAPI app. It exposes `POST /v1/signals` and runs a team of AG2 v1.0+ agents over a computed fact sheet, returning a validated `TradeSignal`: a direction and a conviction, never an amount.
+- **Market data** comes from yfinance behind a `MarketDataProvider` port, with a TTL cache and a timeout, and is turned into a `FactSheet` by pure functions before any agent runs.
 - **PostgreSQL + pgvector** (Docker) holds hard facts and the agents' semantic memory (`agent.agent_memories`).
 - **Ollama** is the LLM backend for both text generation (`llama3.2`) and embeddings (`nomic-embed-text`). The plan is to add Claude or Grok later.
 
@@ -43,8 +43,8 @@ docker exec -it trading-db psql -U postgres -d tradingdb   # superuser, via the 
 # Python agent service — run from src/agents (Python 3.12, managed with uv)
 uv sync
 uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
-curl -X POST http://127.0.0.1:8000/analyze/AAPL
-uv run python -m app.infrastructure.mcp.market_data_server   # run the FastMCP server standalone
+curl -X POST http://127.0.0.1:8000/v1/signals -H "X-Api-Key: $KEY" -H "Content-Type: application/json" \
+  -d @../../contracts/examples/request.json
 
 # Smoke-test memory. MemoryStore takes a pool and an embeddings client, both built by the
 # FastAPI lifespan in app/main.py; a script builds its own the same way.
@@ -120,33 +120,43 @@ Each role owns its schema, so its migration tool can create tables there, and ha
 
 ### Request flow
 
-1. `TradingWorker` (`src/engine/Hosting/Workers`) is a `BackgroundService` that holds a single in-memory `Portfolio` (10,000 USD). Every `Trading:CycleIntervalSeconds` it runs `ProcessProposalUseCase` for each ticker in `Trading:Tickers`.
-2. `PythonAgentClient` calls `POST /analyze/{ticker}` on the agent service.
-3. `routes.py` calls `run_agent_analysis` in `app/infrastructure/ag2/team.py`. It runs three AG2 agents **sequentially**, not as a group chat:
-   - `MarketAnalyst` fetches market data with a tool.
-   - `RiskManager` reviews the analysis for downside and valuation risk.
-   - `PortfolioManager` is called with `ask(..., response_schema=InvestmentProposal)`. AG2 sends the schema as `response_format` (json_schema), and `reply.content(retries=2)` validates the answer with pydantic. On a validation error, it asks the model again with the error message.
-   - If anything fails, `run_agent_analysis` raises an `AnalysisError` from `app/application/errors.py`. **There is no fallback HOLD**: a failure that looks like a decision is one the engine cannot tell apart from a real one.
-4. `app/api/errors.py` turns that into an honest status code, and a body of `{error_code, correlation_id}` and nothing else. The detail is logged, never returned.
+1. `TradingWorker` (`src/engine/Hosting/Workers`) is a `BackgroundService` that holds a single in-memory `Portfolio` (10,000 USD). Every `Trading:CycleIntervalSeconds` it runs `ProcessProposalUseCase` for each ticker in `Trading:Tickers`, with a correlation id it generates and logs first.
+2. `PythonAgentClient` posts a `TradeSignalRequestDto` to `POST /v1/signals`. The instrument travels in the body as a typed object, so nothing is interpolated into a path. The correlation id goes on the `X-Correlation-Id` header, taken from the body so the two cannot disagree.
+3. `SignalPipeline.run` (`app/application/pipeline.py`) computes a `FactSheet` from market data — price, P/E, returns over 1/3/12 months, volatility, distance to the 52-week high — and then runs the team's steps in order. Each step is given **only the earlier results its `reads` names**, as a delimited JSON block; there is no shared transcript.
+
+   | Step | reads | produces |
+   |---|---|---|
+   | `market_analyst` | `FactSheet` | `MarketRead` (trend, valuation, up to three notes) |
+   | `risk_manager` | `FactSheet`, `MarketRead` | `RiskAssessment` (downside, veto, up to three risks) |
+   | `portfolio_manager` | `MarketRead`, `RiskAssessment` | `TradeView` (stance, conviction, thesis, risks, horizon) |
+
+   The portfolio manager never sees the fact sheet, and `TradeView` has no price field, so the pipeline supplies the instrument from the request and the price from the fact sheet. **There is no fallback HOLD**: a failure that looks like a decision is one the engine cannot tell apart from a real one.
+4. `app/api/errors.py` turns a failure into an honest status code, and a body of `{error_code, correlation_id}` and nothing else. The detail is logged, never returned.
 
    | Failure | Status | `error_code` |
    |---|---|---|
    | Decision made, including HOLD | 200 | - |
    | No or wrong `X-Api-Key` | 401 | `unauthorized` |
-   | Ticker is not a ticker | 422 | `invalid_request` |
+   | The request is not the contract | 422 | `invalid_request` |
+   | No such `team_id` | 422 | `unknown_team` |
+   | The team does not cover that instrument | 422 | `instrument_not_supported` |
+   | No market data exists for the symbol | 422 | `instrument_not_found` |
+   | Market data could not be reached | 503 | `market_data_unavailable` |
    | LLM answered with an error status | 502 | `llm_failed` |
    | Model never matched the schema, after AG2's retries | 502 | `agent_response_invalid` |
    | A step failed for a reason of AG2's own | 502 | `agent_chain_failed` |
    | LLM backend unreachable | 503 | `llm_unreachable` |
    | LLM did not answer within `TAS_LLM__DEFAULT__TIMEOUT_S` | 504 | `llm_timeout` |
 
-5. Back in the engine, a non-2xx becomes `AgentUnavailable` with the status code in the message; anything that isn't `BUY` is ignored. `RiskEngine.ValidateTrade` enforces a 5% max position size and a cash check (and throws `RiskViolationException`), then `Portfolio.ExecuteBuy` runs with `quantity: 1` and the proposed amount as the price.
+5. Back in the engine: a non-2xx becomes `AgentUnavailable`; `TradeSignalMapper` checks every value and throws `AgentResponseInvalidException` if one makes no sense; an answer about another instrument is refused; anything that is not `BUY` is `NoAction`. Then `PositionSizer` turns the view into a quantity — `budget = min(position headroom, cash above the buffer) × conviction tier`, then `floor(budget / the signal's own price)` — and `RiskEngine.Evaluate` **re-derives the same limits from the other direction** and can still say no. Sizing producing nothing is `NotSized`, which is kept apart from `RejectedByRisk` because one says something about the team and the other about the portfolio.
 
 ### Cross-service contract
 
-The JSON proposal (`ticker`, `action`, `amount_usd`, `confidence`, `reasoning`) is defined in two places that must stay in sync:
-- `src/agents/app/domain/models.py`: the `InvestmentProposal` pydantic model. It is used as both the FastAPI `response_model` and the AG2 `response_schema`. Its rules: `action` is one of `BUY`/`SELL`/`HOLD`, `amount_usd >= 0`, `0 <= confidence <= 1`, and `BUY` requires `amount_usd > 0`. Changes to this model change what the LLM is asked to produce.
-- `src/engine/Application/Dtos/InvestmentProposalDto.cs`: snake_case via `JsonPropertyName`, with `action` as a plain string.
+`contracts/trade-signal.schema.json` is the agreement, with five examples in `contracts/examples/`. Neither side generates the other; both read the checked-in files in their tests, so drift fails a test rather than a live run.
+
+- `src/agents/app/domain/signals.py`: `TradeSignal`, `SignalRequest`, `TradeView`. **`TradeView` is what the last agent step is asked for** — stance, conviction, thesis, key risks, horizon. `TradeSignal` inherits it and adds what code is responsible for: the instrument, the reference price and its timestamp, and the run's identity. The engine sizes an order as `floor(budget / reference_price)`, so a model that could write that number would decide how many shares are bought.
+- `src/engine/Application/Contracts/`: the same shape as DTOs, with `TradeSignalMapper` as the seam into the domain. It enforces the schema's length caps, because System.Text.Json does not read JSON Schema.
+- **There is no `amount_usd` anywhere.** The agents give a view; the engine decides how much money moves. That is decision 1, and it is what bounds what a prompt injection can do.
 
 ### Layering
 
@@ -154,14 +164,15 @@ Both services follow a Clean Architecture / DDD layout: `Domain` → `Applicatio
 
 ### Intended design vs. current code
 
-- **Two paths exist side by side until the switch-over.** `POST /analyze/{ticker}` still runs the old three-agent chain in `app/infrastructure/ag2/team.py` on the `InvestmentProposal` contract - that is what the request flow above describes, and it is what running the engine does today. The new `SignalPipeline` is built at startup and reachable from `Resources`, but no route calls it yet; stage 3's last pull request adds `POST /v1/signals`, points the engine at it, and deletes the old path.
-- **The new path in one line:** `SignalPipeline.run(SignalRequest)` computes a `FactSheet` from market data, runs each `StepSpec` of the team with exactly the earlier results its `reads` names, and joins the last step's `TradeView` with the instrument from the request and the price from the fact sheet. `app/application/` holds the pipeline, the teams and the versioning; `app/infrastructure/ag2/runner.py` runs a turn and translates AG2's failures; nothing in `app/domain/` or `app/application/` imports AG2.
-- **MCP calls:** the design has agents calling tools over the MCP protocol. The old `team.py` imports `get_stock_quote` from the MCP server module and calls it in-process. The new team has no tools at all - everything it needs is computed into the `FactSheet` - so the MCP server is unused by the new path.
-- **Memory:** `MemoryStore` works, including writes and search against `trading-db`, and the lifespan builds one - but no route uses it yet. The plan is a `search_history_tool` on `RiskManager` and a `save` call after each analysis cycle.
+- **Teams are data.** `app/application/teams.py` holds `TeamSpec` as an ordered list of `StepSpec`, validated in `__post_init__` — so an invalid team cannot be constructed and importing the module is the startup validation. `team_version` is a sha256 over the steps, the schemas' contents, the prompt files' contents and each role's resolved model: **include what changes what the model says, exclude what changes how it is reached.** Which team runs is `Trading:TeamId` in the engine's configuration, which is what makes stage 4's comparison possible.
+- **No tools.** The new team has none: everything it needs is computed into the `FactSheet`, which is decision 5. The FastMCP server was deleted with the old path — it was only ever used in-process, and its `{"error": ...}` return shape read to a model as a successful call. Tools return when something needs data that cannot be computed in advance, and `StepSpec` will need a port of its own so AG2 stays out of the application layer.
+- **The schema bounds a handover's size, not its content.** A live trace showed the portfolio manager quoting figures it never received: the analyst had repeated them in its free-text `observations`, although its prompt asks it not to. What holds structurally is the part that matters — `TradeView` has no price field. Which fields a team hands over is what stage 4 measures.
+- **Memory:** `MemoryStore` works, including writes and search against `trading-db`, and the lifespan builds one - but no route uses it yet. The plan is a `search_history_tool` on the risk manager and a `save` call after each analysis cycle.
 - **LLM provider:** switching providers *is* an environment variable now. `app/infrastructure/llm/provider.py` maps a `ModelSpec` to AG2's `ModelConfig` across five providers. Only the OpenAI family has actually been run: AG2 exports a placeholder for every extra that is not installed, and constructing one raises `ImportError: ... Install with "ag2[anthropic]"` - a startup failure with an install hint, since configurations are built in the lifespan. Two arguments do not survive every branch: `AnthropicConfig` has no `seed` (the settings refuse one), and `OllamaConfig` has no `timeout` (the factory warns at startup, and `openai_compatible` against Ollama's `/v1` is the route that keeps it).
 - **Model quality:** `llama3.2` (3B) often gives weak or contradictory reasoning, even though the JSON is valid. A larger local model or Claude/Grok would do better.
-- **Risk limit:** `PortfolioManager` isn't told the portfolio's cash or the engine's 5% limit. It often proposes amounts far above the limit (1,000–100,000 USD), and `RiskEngine` rejects them. The rejection is logged as `fail` with a stack trace, even though it's an expected business outcome.
-- **Timing:** one analysis cycle takes about 12–15 s with `llama3.2`. The engine's `HttpClient` uses the default 100 s timeout.
+- **No agent is told about money.** The request carries `available_risk_budget_usd` and `max_position_pct` — stage 4 wants to know what the engine was willing to spend — but neither reaches a prompt. Under decision 1 no agent produces an amount, so a budget is a figure it cannot act on, and a figure in a prompt is one a model starts reasoning about.
+- **The engine has no market data of its own.** `PositionSizer` is given `PriceSnapshot.Empty`, so a portfolio holding something other than the instrument being analysed cannot be valued and the sizer says which holding stopped it. With one ticker in `Trading:Tickers` the signal's own price is all that is needed. Stage 4's `GET /v1/quotes/{symbol}` closes this.
+- **Timing:** one cycle takes about 7–10 s with `llama3.2`, down from 12–15 s — smaller prompts and no tool call.
 - **Empty packages:** none left. `app/infrastructure/llm/provider.py` and `app/infrastructure/market_data/` were filled in stage 3.
 - **Engine database access:** the `engine_svc` role and the `trading` schema exist, but the engine has no DB access code until stage 4.
 - **AG2 API version:** AG2 is used through its v1.0+ API (`from ag2 import Agent, tool`, `ag2.config.OpenAIConfig`, `await agent.ask(...)`). The pre-1.0 `autogen`/`ConversableAgent` API is not used here.
