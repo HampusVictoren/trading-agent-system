@@ -46,6 +46,26 @@ class AgentChainFailed(AnalysisError):
     error_code = "agent_chain_failed"
 
 
+class UnknownTeam(AnalysisError):
+    """The engine asked for a team setup that does not exist.
+
+    A 422 rather than a fallback to the default team: answering with a different team than
+    the one that was asked for would put the wrong team_version in stage 4's statistics.
+    """
+
+    error_code = "unknown_team"
+
+
+class InstrumentNotSupported(AnalysisError):
+    """The team does not cover this kind of instrument.
+
+    Equity is the only kind today. A derivative reaching an equity team would get an
+    answer built on ratios that do not apply to it.
+    """
+
+    error_code = "instrument_not_supported"
+
+
 class MarketDataUnavailable(AnalysisError):
     """The market-data source could not be reached, or did not answer in time.
 

@@ -17,10 +17,12 @@ from app.application.errors import (
     AgentResponseInvalid,
     AnalysisError,
     InstrumentNotFound,
+    InstrumentNotSupported,
     LlmFailed,
     LlmTimeout,
     LlmUnreachable,
     MarketDataUnavailable,
+    UnknownTeam,
 )
 from app.observability.correlation import current_correlation_id
 
@@ -36,6 +38,8 @@ STATUS_BY_ERROR: dict[type[AnalysisError], int] = {
     AgentChainFailed: 502,
     MarketDataUnavailable: 503,
     InstrumentNotFound: 422,
+    UnknownTeam: 422,
+    InstrumentNotSupported: 422,
 }
 
 
