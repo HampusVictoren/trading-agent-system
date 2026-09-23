@@ -43,6 +43,8 @@ jobs:
       - name: Check formatting
         run: dotnet format TradingSystem.slnx --verify-no-changes --no-restore
 
+      # The database tests start a Postgres container through Testcontainers. The runner
+      # already has Docker, so this needs no setup step - only the image pull, once per run.
       - name: Test
         run: dotnet test --solution TradingSystem.slnx --no-build
 

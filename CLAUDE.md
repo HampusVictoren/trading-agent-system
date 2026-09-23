@@ -8,7 +8,7 @@ A hybrid, modular automated trading agent that runs entirely locally:
 - The **.NET 10 engine** (`src/engine`) is deterministic and rule-based. It owns scheduling, the portfolio (cash, positions), the `RiskEngine` that checks proposals against hard rules, and order execution.
 - The **Python agent service** (`src/agents`) is a FastAPI app. It exposes `POST /v1/signals` and runs a team of AG2 v1.0+ agents over a computed fact sheet, returning a validated `TradeSignal`: a direction and a conviction, never an amount.
 - **Market data** comes from yfinance behind a `MarketDataProvider` port, with a TTL cache and a timeout, and is turned into a `FactSheet` by pure functions before any agent runs.
-- **PostgreSQL + pgvector** (Docker) holds hard facts and the agents' semantic memory (`agent.agent_memories`).
+- **PostgreSQL + pgvector** (Docker) holds both services' state, in a schema each: `trading` has the portfolio, the append-only order ledger and every decision the engine has ever made (EF Core), and `agent` has the agents' semantic memory (`agent.agent_memories`).
 - **Ollama** is the LLM backend for both text generation (`llama3.2`) and embeddings (`nomic-embed-text`). The plan is to add Claude or Grok later.
 
 Everything in this repo is written in **English** — code, comments, log messages, exception messages, commit messages and documentation. There are exactly two exceptions:
@@ -34,6 +34,25 @@ cd src/agents && uv run pytest
 
 `global.json` opts `dotnet test` into Microsoft.Testing.Platform, which the .NET 10 SDK
 requires for xunit v3. Note the `--solution` flag: the new runner needs it.
+
+**The database tests need Docker.** They start a `pgvector/pgvector:0.8.6-pg16` container,
+run `db/init/01-schema.sh` inside it and connect as `engine_svc`, so the migration is proved
+under the grants it actually runs under rather than as a superuser. They are a collection
+fixture, so a run that touches only domain tests starts no container.
+
+```bash
+# Migrations. dotnet-ef is a local tool, pinned in dotnet-tools.json.
+dotnet tool restore
+dotnet dotnet-ef migrations add <Name> --project src/engine --output-dir Infrastructure/Persistence/Migrations
+dotnet dotnet-ef migrations script --project src/engine --idempotent   # read it before trusting it
+dotnet dotnet-ef migrations has-pending-model-changes --project src/engine
+```
+
+Two things about generated migrations. `dotnet ef` writes its files with a **UTF-8 BOM**,
+which `.editorconfig` forbids, so strip it or `dotnet format` fails. And EF 10 refuses to
+`Migrate()` when the model has drifted from the last migration, which means the database
+tests double as a drift guard: change a configuration without adding a migration and every
+one of them goes red.
 
 ```bash
 # Database: compose owns the trading-db container. Needs .env in the repo root (see .env.example).
@@ -85,13 +104,18 @@ The working directory must be `src/agents` for the `app.*` imports to resolve.
 
 **Every request carries a correlation id.** `CorrelationIdMiddleware` reads `X-Correlation-Id`, or invents one, echoes it on the response and puts it in every log line. Logs are JSON, configured in the lifespan, so uvicorn's own lines are formatted too - except the two banner lines it prints before startup. `/health` is liveness and checks nothing else on purpose; `/ready` checks the database and the LLM backend and answers 503 until both do.
 
-The engine reads `AgentService:BaseUrl`, `RequestTimeoutSeconds`, `RiskPolicy` and `Trading` from `appsettings.json`, all validated at startup. **`AgentService:ApiKey` is not there**, because it is a secret: locally it lives in the user secrets store, outside the repository, and elsewhere it comes from the environment.
+The engine reads `AgentService:BaseUrl`, `RequestTimeoutSeconds`, `RiskPolicy` and `Trading` from `appsettings.json`, all validated at startup. **`AgentService:ApiKey` and `Database:ConnectionString` are not there**, because both are secrets: locally they live in the user secrets store, outside the repository, and elsewhere they come from the environment. Neither has a default - an engine that cannot reach its database refuses to start, because from stage 4 a cycle it cannot store is a cycle whose evidence is lost.
 
 ```bash
 # Both sides need the same value. Generate one, then give it to each:
 python -c "import secrets; print(secrets.token_urlsafe(32))"
 # -> TAS_AGENT_API_KEY=<key> in src/agents/.env
 dotnet user-secrets set "AgentService:ApiKey" "<key>" --project src/engine
+
+# The engine's own connection string carries the engine_svc password from the repo root .env.
+dotnet user-secrets set "Database:ConnectionString" \
+  "Host=127.0.0.1;Port=5432;Database=tradingdb;Username=engine_svc;Password=<engine password>" \
+  --project src/engine
 ```
 
 ## Local environment (Windows + WSL2)
@@ -109,10 +133,20 @@ dotnet user-secrets set "AgentService:ApiKey" "<key>" --project src/engine
 
 | Schema | Owner | Holds |
 |---|---|---|
-| `trading` | `engine_svc` | Portfolio, orders and decisions (EF Core, from stage 4). Empty today. |
+| `trading` | `engine_svc` | `portfolios`, `positions`, `orders`, `decisions`, through EF Core |
 | `agent` | `agent_svc` | `agent.agent_memories` — pgvector semantic memory |
 
 Each role owns its schema, so its migration tool can create tables there, and has **no access to the other's** — not even to see what tables exist. Neither can create anything in `public`. Only the two roles and the superuser may connect. The `vector` extension stays in `public`, because `pgvector.asyncpg.register_vector` looks it up there.
+
+`trading` is EF Core's, migrated from `src/engine/Infrastructure/Persistence/Migrations` with
+its history table inside the same schema - `engine_svc` may not create anything in `public`, so
+EF's default location would fail as permission denied. `portfolios` carries a `positions`
+collection keyed on `(portfolio_id, symbol)`, so "one holding per instrument" is a primary key
+rather than a convention, and it uses Postgres's `xmin` as its concurrency token. `orders` and
+`decisions` are **append-only, enforced by a trigger** that raises on `UPDATE` and `DELETE`,
+including a `DELETE` that would match no rows; `TRUNCATE` is deliberately left alone, because
+that is the owner clearing the table on purpose rather than a cycle rewriting history.
+`decisions.correlation_id` is unique, so one analysis cannot become two rows.
 
 `agent.agent_memories` has a `bigint` identity key, a `NOT NULL` 768-dimensional `embedding`, and an HNSW index with `vector_cosine_ops`. `MemoryStore.search` ranks rows by cosine distance (`<=>`), filtered by ticker. Always schema-qualify table names.
 
@@ -174,5 +208,6 @@ Both services follow a Clean Architecture / DDD layout: `Domain` → `Applicatio
 - **The engine has no market data of its own.** `PositionSizer` is given `PriceSnapshot.Empty`, so a portfolio holding something other than the instrument being analysed cannot be valued and the sizer says which holding stopped it. With one ticker in `Trading:Tickers` the signal's own price is all that is needed. Stage 4's `GET /v1/quotes/{symbol}` closes this.
 - **Timing:** one cycle takes about 7–10 s with `llama3.2`, down from 12–15 s — smaller prompts and no tool call.
 - **Empty packages:** none left. `app/infrastructure/llm/provider.py` and `app/infrastructure/market_data/` were filled in stage 3.
-- **Engine database access:** the `engine_svc` role and the `trading` schema exist, but the engine has no DB access code until stage 4.
+- **Engine database access:** `TradingDbContext` and the `trading` schema exist, reached through three ports in `Application/Persistence` - `IPortfolioRepository`, `IDecisionLog` and `IUnitOfWork`. One commit per cycle, so the decision, the position change and the ledger line move together. `FindAsync` takes no id because the engine trades one account, and a second row is reported rather than silently picked. Nothing calls any of it yet: the worker still holds its portfolio in a field, and that is the next pull request.
+- **The engine stores what the engine saw.** `decisions` holds the request, the signal and the outcome - not the agent service's own working. The fact sheet and the intermediate steps are Python's data, stored on Python's side against the same correlation id, so attributing a result to one agent is a join made when the question is asked. Widening the contract with fields the engine never reads would make it the owner of somebody else's internals, which is the shared-database problem over HTTP.
 - **AG2 API version:** AG2 is used through its v1.0+ API (`from ag2 import Agent, tool`, `ag2.config.OpenAIConfig`, `await agent.ask(...)`). The pre-1.0 `autogen`/`ConversableAgent` API is not used here.
