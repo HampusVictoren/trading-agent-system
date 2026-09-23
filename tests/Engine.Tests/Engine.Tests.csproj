@@ -19,7 +19,14 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The database tests run the checked-in init script, so the container's roles and
+         grants are the ones production gets rather than a copy that can drift. -->
+    <Content Include="../../db/init/*.sh" LinkBase="db/init" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="xunit.v3" Version="4.0.1" />
+    <PackageReference Include="Testcontainers.PostgreSql" Version="4.15.0" />
     <PackageReference Include="Shouldly" Version="4.3.0" />
     <PackageReference Include="NSubstitute" Version="6.2.0" />
   </ItemGroup>

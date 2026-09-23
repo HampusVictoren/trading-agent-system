@@ -1,5 +1,6 @@
 namespace Engine.Hosting;
 
+using Engine.Application.Persistence;
 using Engine.Hosting.Options;
 using Engine.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -23,6 +24,10 @@ public static class PersistenceExtensions
 
             builder.UseSnakeCaseNamingConvention();
         });
+
+        services.AddScoped<IPortfolioRepository, PortfolioRepository>();
+        services.AddScoped<IDecisionLog, DecisionLog>();
+        services.AddScoped<IUnitOfWork, UnitOfWork>();
 
         return services;
     }

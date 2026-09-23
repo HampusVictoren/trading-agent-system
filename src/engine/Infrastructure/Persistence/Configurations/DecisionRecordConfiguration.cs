@@ -5,6 +5,7 @@ using Engine.Domain.Aggregates.Portfolio;
 using Engine.Domain.ValueObjects;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 /// <summary>
 /// Every analysis cycle, whatever came of it. The shape is the decision this pull request
@@ -17,6 +18,16 @@ public sealed class DecisionRecordConfiguration : IEntityTypeConfiguration<Decis
     private const int MaxThesisLength = 2000;
     private const int MaxRiskLength = 300;
     private const int MaxTeamVersionLength = 64;
+
+    /// <summary>
+    /// Npgsql refuses to write a DateTimeOffset whose offset is not zero, because timestamptz
+    /// stores an instant and nothing else. quote_as_of comes from another service, which is
+    /// free to express that instant in whatever offset it likes, so it is normalised here
+    /// rather than rejected at three in the morning. Reading back gives UTC, which is the
+    /// same instant.
+    /// </summary>
+    private static readonly ValueConverter<DateTimeOffset, DateTimeOffset> AsAnInstant =
+        new(value => value.ToUniversalTime(), stored => stored);
 
     public void Configure(EntityTypeBuilder<DecisionRecord> builder)
     {
@@ -49,6 +60,9 @@ public sealed class DecisionRecordConfiguration : IEntityTypeConfiguration<Decis
         builder.Property(decision => decision.ReferencePrice)
             .HasPrecision(MoneyPrecision.Digits, MoneyPrecision.Decimals);
         builder.Property(decision => decision.ReferenceCurrency).HasMaxLength(3).IsFixedLength();
+
+        builder.Property(decision => decision.RequestedAt).HasConversion(AsAnInstant);
+        builder.Property(decision => decision.QuoteAsOf).HasConversion(AsAnInstant);
 
         builder.Property(decision => decision.Thesis).HasMaxLength(MaxThesisLength);
 
