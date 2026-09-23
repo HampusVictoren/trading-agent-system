@@ -11,9 +11,6 @@ dependencies = [
     "ag2[openai]>=1.0.5",
     "asyncpg>=0.31.0",
     "fastapi>=0.141.1",
-    # Capped: fastmcp 3 -> 4 arrived inside an unrelated Dependabot PR because
-    # this had no upper bound. A new major must be its own, visible update.
-    "fastmcp>=4.0.5,<5",
     # openai 3.x types its http_client against httpx2 (pydantic's successor to httpx), and
     # memory.py needs a client of its own to set trust_env=False. Declared directly rather
     # than relied on through openai, and capped so a new major is its own Dependabot PR.
