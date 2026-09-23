@@ -7,7 +7,7 @@ A running record of what has been done, what was learned along the way, and what
 
 This file answers "where are we, how did we get here, and what is next". When resuming, read *Current state* and *Next steps* first, then the roadmap section for the next stage.
 
-**Last updated:** 2026-09-23, after stage 3's fourth pull request. **Stage 3 is in progress: four of five are in. Only the switch-over is left.**
+**Last updated:** 2026-09-23, after PR #30. **Stage 3 is done.** The new path is the only path.
 
 ## Resuming checklist
 
@@ -40,35 +40,47 @@ Two things that are easy to misread as broken:
 
 ## Current state
 
-- **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21. **Stage 3 started** 2026-09-21 and is four pull requests in, of five. Stages 4-8 exist only as plan.
-- **`master` is at PR #28**, stage 3's third. Nothing reaches it without the three required checks passing, so what is there is green by construction.
-- **Branches:** `master` plus `stage-3-team-spec`, which is stage 3's fourth pull request.
-- **Two paths now exist side by side.** The new `SignalPipeline` is built at startup and reachable from `Resources`, but no route calls it. `POST /analyze/{ticker}` still runs the old three-agent chain on the old contract, and that is still what the engine gets. The fifth pull request adds `POST /v1/signals`, points the engine at it and deletes the old path.
+- **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21, **stage 3 done** 2026-09-23. Stages 4-8 exist only as plan.
+- **`master` is at PR #30.** Nothing reaches it without the three required checks passing, so what is there is green by construction.
+- **No open pull requests. Branches:** `master` only.
+- **There is one path now.** `POST /v1/signals` is the only endpoint that costs money, the engine calls it every cycle, and the old three-agent chain, `InvestmentProposal`, `ValidateTrade`, `RiskViolationException` and the FastMCP server are gone. Running the engine today produces real quantities at real prices, with the position cap holding across cycles.
 - **Every environment variable was renamed on 2026-09-23.** The local `src/agents/.env` was renamed in place and still works; a fresh clone follows `.env.example`. Nothing outside this repo reads them.
 - **Nothing you can see when you run it has changed since stage 1**, and that holds until stage 3's fifth pull request. Everything built in stage 2 and so far in stage 3 sits behind the seam and is exercised only by tests. Running the engine today still gives the stage 1 behaviour: three agents on the old `InvestmentProposal` contract, `quantity: 1` at the proposed amount, and `RiskEngine.ValidateTrade` rejecting most of it.
 - **What is now impossible** rather than merely unlikely: the agents cannot name an amount (the contract has no `amount_usd`, and a test refuses one that reappears); an answer that is not the contract cannot deserialise into nulls; a position cannot be sized against cash instead of net asset value; and an order cannot be placed on a quote that is stale or dated in the future.
 
 ## Next steps
 
-**Stage 3 - the agent service on the new contract** (roadmap estimate: 3-4 days). Read `docs/arkitektur-roadmap.md` first; PR #22 added two paragraphs at the top of that stage which change what it delivers.
+**Stage 4 - persistence and outcome measurement** (roadmap estimate: 3-4 days). Read
+`docs/arkitektur-roadmap.md` first.
 
-The stage's own framing matters more than its parts: *what it delivers is the experiment cycle, not the team.* The machinery - `TeamSpec`, typed handoffs, prompt files, `team_version` - is what gets built. Which team is actually good is settled by stage 4's outcomes, not by guessing now.
+This is the stage the project exists for. Everything so far produces decisions that vanish on
+restart; stage 4 stores them and measures what came of them, which is what turns *"are the
+agents any good?"* from an opinion into a number - per `team_version`, which stage 3 built
+precisely so that this comparison would be possible.
 
-The work was split into five pull requests. The order differs from the roadmap's list on purpose: the roadmap leads with the provider factory, which is self-contained and blocks nothing, while the models are what everything else refers to. So the vocabulary comes first, then what fills it, then the machinery, then the switch-over.
+Two things to decide **before** writing code, both recorded as findings:
 
-| # | Branch | What it does | State |
-|---|---|---|---|
-| 1 | `stage-3-contract-models` | The wire contract in Python, and the `TradeView` split | merged, PR #26 |
-| 2 | `stage-3-fact-sheet` | `FactSheet`, the market-data port, the step schemas | merged, PR #27 |
-| 3 | `stage-3-provider-factory` | `ModelSpec`/`LlmSettings`, the provider branches, `TAS_`-prefixed nested settings | merged, PR #28 |
-| 4 | `stage-3-team-spec` | `TeamSpec`, the pipeline, prompt files, `team_version` | open |
-| 5 | - | The switch-over | not started |
+- **Finding F - the cost model.** An outcome function that ignores commission and spread will
+  say a strategy works when it does not. Decide what a trade costs and how attribution works.
+- **Quote history.** `GET /v1/quotes/{symbol}` is what measures an outcome at a horizon, and it
+  is also what closes the engine's blind spot: `PositionSizer` is handed `PriceSnapshot.Empty`
+  today, so a portfolio holding more than the instrument being analysed cannot be valued.
 
-**What remains, in detail:**
+Roughly:
 
-5. **The switch-over**: `POST /v1/signals`, the engine calls the new endpoint, and the old path plus `InvestmentProposal`, `InvestmentProposalDto`, `RiskViolationException` and `ValidateTrade` are deleted. Finding B goes with them. This is where `PositionSizer` and `RiskEngine.Evaluate` - built and tested in stage 2, called by nobody - are finally wired in, and the only stage 3 PR that changes what the system does. It also adds the length guard to `TradeSignalMapper`: the caps are in the JSON schema, but System.Text.Json does not read JSON Schema, so the engine does not enforce them yet.
+1. **EF Core against the `trading` schema** as `engine_svc`, with migrations. `Portfolio`,
+   orders and `decisions` - every `TradeDecisionResult`, including `NotSized` and
+   `RejectedByRisk`, with the `run` block the signal carried.
+2. **`GET /v1/quotes/{symbol}`** on the agent service, from the same `MarketDataProvider` the
+   fact sheet uses.
+3. **`trading.signal_outcomes`** - the return at the signal's own `horizon_days` and at fixed
+   horizons, written when each has passed. Also for HOLD, or the comparison only sees the
+   trades that were taken.
+4. **The comparison itself**: outcomes grouped by `team_version`, which is what makes changing
+   the team an experiment rather than a guess.
 
-Before stage 4, decide the cost model in the outcome function (finding F) and how attribution will work. Before stage 5, decide whether a trading calendar is a domain concept (finding E), and turn finding D's currency mismatch into an outcome rather than a throw.
+Before stage 5, decide whether a trading calendar is a domain concept (finding E), and turn
+finding D's currency mismatch into an outcome rather than a throw.
 
 ## Open findings
 
@@ -79,7 +91,7 @@ roadmap on purpose: the plan should change when a stage starts, not every time a
 | | Finding | Status |
 |---|---|---|
 | A | A failed analysis is sent twice | **Fixed** in PR #17 |
-| B | A ticker is interpolated into the URL without escaping | Open - **stage 3**, when the old path is switched off |
+| B | A ticker is interpolated into the URL without escaping | **Fixed** in PR #30, both halves |
 | C | The proposal DTO accepts an answer that is not the contract | **Fixed** in PR #20 |
 | D | A currency mix is reported as a bug, not as an outcome | **Fixed** in PR #23 |
 | E | There is no trading calendar anywhere in the plan | Open - decide before stage 5 |
@@ -116,13 +128,17 @@ turns out to be worth it.
 for one call that ended in `AgentServiceUnavailableException`. After the fix the same probe
 records 1 for a failing response and 2 for a refused connection.
 
-### B — a ticker is interpolated into the URL without escaping (moved to stage 3)
+### B — a ticker is interpolated into the URL without escaping (fixed, PR #30)
 
-**Still open, and deliberately not fixed in stage 2.** The new contract carries an
-`instrument` object rather than a ticker in the path, so the interpolation disappears with the
-old endpoint rather than being patched. Stage 3 switches that over; until then the tickers
-still come from `appsettings.json`. The format rule on the value object is worth doing anyway,
-since screening will produce symbols from market data.
+**Both halves, and neither was a patch.** The interpolation went away with the endpoint: the
+contract carries an `instrument` object in a request body, so there is no path to walk out of.
+And `Ticker` finally has the format rule - the same pattern as the contract's `symbol`, checked
+after normalising, so `aapl` passes and `../internal/shutdown` does not. All three recorded
+exploits are now tests.
+
+The format rule is the half that still matters. Stage 5's screening produces symbols from
+market data rather than from `appsettings.json`, and a value object that accepts anything
+non-blank is no rule at all.
 
 The original finding, for context:
 
@@ -417,6 +433,30 @@ sheet, the run's identity from the team. Three tests exist only to guard that li
   - Dropped from the roadmap's sketch: `StepSpec.model`. `LlmSettings.roles` already overrides a step's model from the environment, and two ways to change the same thing is one too many. `StepSpec.tools` is also absent - the new team has no tools, and an AG2-typed field would drag AG2 into the application layer. It returns when tools do, and it will need a port of its own.
   - Live against Ollama and yfinance: AAPL in 10.1 s and MSFT in 6.8 s, both valid signals at version `6c6da0e6edad`, `reference_price` from the fact sheet. An unknown `team_id` is refused by name.
 
+- **`stage-3-switch-over`** (PR #30): four commits, and the only one in the stage that changes what the system does. `PositionSizer` and `RiskEngine.Evaluate` - built and tested in stage 2, called by nobody - are finally wired in.
+  - `POST /v1/signals` replaces `POST /analyze/{ticker}`. Versioned in the path from the first day it exists, because the two services deploy separately. The old chain, `InvestmentProposal`, `InvestmentProposalDto`, `ValidateTrade`, `RiskViolationException` and the FastMCP server are all gone; `RiskEngine` now holds no state at all.
+  - **`NotSized` is a new outcome**, kept apart from `RejectedByRisk`. "The conviction was below the floor" says something about the team; "the quote is stale" says something about the portfolio. Stage 4 needs to tell them apart.
+  - **`Trading:TeamId` is configuration**, with no default. That is what makes the experiment cycle an experiment.
+  - **The correlation id is generated per cycle and logged before the call**, and set on the header from the request body so the two cannot disagree. One cycle can now be followed across both services.
+  - Finding B closed, both halves - see the finding for why the format rule is the half that still matters.
+
+**Stage 3 closed 2026-09-23.** 241 Python tests and 172 .NET, from 52 and 154 when the stage
+started. The live run, four cycles against Ollama and yfinance:
+
+```
+Requesting analysis for AAPL as 35d48b67-...
+No order for AAPL: the budget of 250.000 USD does not reach one share at 336.85
+Bought 1 AAPL for $336.85. Cash left: $9663.15.
+No order for AAPL: the budget of 163.1500 USD does not reach one share at 336.85
+No action for AAPL: the agents answered HOLD.
+```
+
+Every line of that is new. The price is a real quote rather than a proposed amount. The
+conviction tiers are visible - 250 is half the 500 allowance, 500 is all of it. **The position
+cap holds across cycles**: 163.15 is what was left of the 5 %, and the old path had no such
+limit at all, because it measured against cash and never against the position. Zero
+error-level entries on either side.
+
 **A limit of the design, found by tracing a live run.** The portfolio manager's thesis quoted
 figures it never received: they reached it through the analyst's free-text `observations`,
 which repeated them although the prompt asked it not to. **The schema bounds the size of a
@@ -436,8 +476,8 @@ every schema an agent fills, resolves pydantic's `$defs`, and asserts that no st
 lacks a `maxLength`. A field added later is covered without anyone remembering. A second test feeds
 the walk a deliberately leaky model, so a bug in the walk cannot make the first one vacuous.
 
-**Counts:** 248 Python tests, from 52 when the stage started. 154 .NET, unchanged - the engine has
-not been touched in this stage yet.
+**Counts:** 241 Python tests and 172 .NET, from 52 and 154 when the stage started. The Python
+number went down at the end: the old contract's tests left with the old contract.
 
 **Mutation counts**, continuing the habit from stage 2: asking the view for the price 3 red,
 dropping `extra="forbid"` 1, changing a cap in the schema file 2, allowing a naive timestamp 1;
@@ -452,7 +492,9 @@ taking the price from somewhere other than the fact sheet 1, falling back to the
 telling every step about the holding 1, putting the budget in the message 1, dropping the rule
 that the last step produces `TradeView` 1, catching `APIConnectionError` first 2, letting
 `ValidationError` bubble 1, leaving the step's name out of the message 1, dropping the None
-guard 1 (0 before the test that covers it was written).
+guard 1 (0 before the test that covers it was written); dropping the check that the answer is
+about the right instrument 1, skipping the risk gate 1, removing the mapper's length guard 1,
+dropping `Ticker`'s format rule 7, treating HOLD as an unsized buy 2.
 
 ---
 
@@ -504,6 +546,11 @@ Things that cost time or were not obvious. Most are also recorded where they app
 - Python's `hash()` is salted per process. Anything that has to be stable across restarts - a version, a cache key written to disk - needs `hashlib` over a canonical serialisation, and the cheapest proof is running it in two subprocesses under different `PYTHONHASHSEED` values.
 - A pydantic model's docstring becomes its JSON schema's `description`, so it is part of what the model is asked for - and part of anything that hashes the schema.
 - Ruff's `S603` flags every `subprocess.run`, including one whose argument is a literal three lines above. A `# noqa: S603` with the reason is the honest answer.
+
+**.NET, continued**
+- A test that asserts "a second buy adds to the position" is wrong once a real position cap exists: the first cycle takes the whole allowance, so the second is correctly refused. The test had to change, not the code - and the corrected version is a better test, because it pins the cap holding across cycles.
+- `[GeneratedRegex]` needs the containing type to be `partial`. Making a `record` partial for it costs nothing and keeps the regex compiled at build time rather than at first use.
+- `TimeProvider` is in the base library, so a clock can be injected without a package. A three-line `FixedClock : TimeProvider` is enough for a test, and it makes a quote-age rule testable without waiting.
 
 **CI and GitHub**
 - A Dependabot PR title names only the packages whose requirement changed. Read the `uv.lock` diff: a dependency without an upper bound can move a major version silently, as fastmcp did in PR #5.
