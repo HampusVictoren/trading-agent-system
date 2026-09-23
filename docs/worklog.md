@@ -7,7 +7,7 @@ A running record of what has been done, what was learned along the way, and what
 
 This file answers "where are we, how did we get here, and what is next". When resuming, read *Current state* and *Next steps* first, then the roadmap section for the next stage.
 
-**Last updated:** 2026-09-23, after stage 3's third pull request. **Stage 3 is in progress: three of five are in.**
+**Last updated:** 2026-09-23, after stage 3's fourth pull request. **Stage 3 is in progress: four of five are in. Only the switch-over is left.**
 
 ## Resuming checklist
 
@@ -40,9 +40,10 @@ Two things that are easy to misread as broken:
 
 ## Current state
 
-- **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21. **Stage 3 started** 2026-09-21 and is three pull requests in, of five. Stages 4-8 exist only as plan.
-- **`master` is at PR #27**, stage 3's second. Nothing reaches it without the three required checks passing, so what is there is green by construction.
-- **Branches:** `master` plus `stage-3-provider-factory`, which is stage 3's third pull request.
+- **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21. **Stage 3 started** 2026-09-21 and is four pull requests in, of five. Stages 4-8 exist only as plan.
+- **`master` is at PR #28**, stage 3's third. Nothing reaches it without the three required checks passing, so what is there is green by construction.
+- **Branches:** `master` plus `stage-3-team-spec`, which is stage 3's fourth pull request.
+- **Two paths now exist side by side.** The new `SignalPipeline` is built at startup and reachable from `Resources`, but no route calls it. `POST /analyze/{ticker}` still runs the old three-agent chain on the old contract, and that is still what the engine gets. The fifth pull request adds `POST /v1/signals`, points the engine at it and deletes the old path.
 - **Every environment variable was renamed on 2026-09-23.** The local `src/agents/.env` was renamed in place and still works; a fresh clone follows `.env.example`. Nothing outside this repo reads them.
 - **Nothing you can see when you run it has changed since stage 1**, and that holds until stage 3's fifth pull request. Everything built in stage 2 and so far in stage 3 sits behind the seam and is exercised only by tests. Running the engine today still gives the stage 1 behaviour: three agents on the old `InvestmentProposal` contract, `quantity: 1` at the proposed amount, and `RiskEngine.ValidateTrade` rejecting most of it.
 - **What is now impossible** rather than merely unlikely: the agents cannot name an amount (the contract has no `amount_usd`, and a test refuses one that reappears); an answer that is not the contract cannot deserialise into nulls; a position cannot be sized against cash instead of net asset value; and an order cannot be placed on a quote that is stale or dated in the future.
@@ -59,13 +60,12 @@ The work was split into five pull requests. The order differs from the roadmap's
 |---|---|---|---|
 | 1 | `stage-3-contract-models` | The wire contract in Python, and the `TradeView` split | merged, PR #26 |
 | 2 | `stage-3-fact-sheet` | `FactSheet`, the market-data port, the step schemas | merged, PR #27 |
-| 3 | `stage-3-provider-factory` | `ModelSpec`/`LlmSettings`, the provider branches, `TAS_`-prefixed nested settings | open |
-| 4 | - | `TeamSpec`, the pipeline, prompt files, `team_version` | not started |
+| 3 | `stage-3-provider-factory` | `ModelSpec`/`LlmSettings`, the provider branches, `TAS_`-prefixed nested settings | merged, PR #28 |
+| 4 | `stage-3-team-spec` | `TeamSpec`, the pipeline, prompt files, `team_version` | open |
 | 5 | - | The switch-over | not started |
 
 **What remains, in detail:**
 
-4. **`TeamSpec` and typed handoffs** - a step reads named earlier results rather than a shared transcript, validated at startup: the last step must produce `TradeView`, a step may not read a later step's schema, and two steps may not share an `output_schema`. Prompts move to `app/teams/default/prompts/` as files and are hashed into `team_version` together with the spec, so a changed prompt is a new version. Tests use `ag2.testing.TestConfig` and `TrackingConfig`, both verified present. **The largest of the five, and the one that does not split usefully**: validation with no pipeline is code nobody runs, and a pipeline with no version produces statistics stage 4 cannot read. This PR also updates CLAUDE.md's language rule, which still points at `app/infrastructure/ag2/`.
 5. **The switch-over**: `POST /v1/signals`, the engine calls the new endpoint, and the old path plus `InvestmentProposal`, `InvestmentProposalDto`, `RiskViolationException` and `ValidateTrade` are deleted. Finding B goes with them. This is where `PositionSizer` and `RiskEngine.Evaluate` - built and tested in stage 2, called by nobody - are finally wired in, and the only stage 3 PR that changes what the system does. It also adds the length guard to `TradeSignalMapper`: the caps are in the JSON schema, but System.Text.Json does not read JSON Schema, so the engine does not enforce them yet.
 
 Before stage 4, decide the cost model in the outcome function (finding F) and how attribution will work. Before stage 5, decide whether a trading calendar is a domain concept (finding E), and turn finding D's currency mismatch into an outcome rather than a throw.
@@ -408,12 +408,35 @@ sheet, the run's identity from the team. Three tests exist only to guard that li
   - **The role check is the thing that makes an override safe.** `LlmSettings.for_role` cannot know which roles exist, so `TAS_LLM__ROLES__PORTFILIO_MANAGER__MODEL` would start the service, run the default, and show no symptom but a wrong answer. `build_model_configs` takes the roles that exist and refuses anything else. It takes them as an argument rather than importing them, so PR 4 swaps the source from the current team's three names to `TeamSpec` without touching the file.
   - Verified live, not only in tests: the service starts on the renamed variables and answers `POST /analyze/AAPL` with BUY in 18 s; a mistyped role stops startup naming both the typo and the real spellings; an override reaches only its own role.
 
+- **`stage-3-team-spec`** (open): five commits, and the stage's largest. A team is now data - an ordered list of `StepSpec`, each naming who runs, what it may read and what it must produce.
+  - **`reads` is where decision 4 becomes visible.** Looking at the spec tells you exactly what each agent sees, which is the thing that used to be buried in f-strings. What the portfolio manager does *not* read is the point: it gets the analyst's reading and the risk manager's assessment, never the fact sheet, so it weighs two judgements and is handed no figure at all.
+  - **The structure is checked in `__post_init__`**, so an invalid team cannot be constructed and importing the module *is* the startup validation. Refused: a team that does not end in `TradeView` (identity, not `isinstance` - a subclass would serialise fields the engine's DTO forbids), two steps producing the same schema, a repeated role, and a step reading a later step's result or its own.
+  - **Nothing in `app/domain/` or `app/application/` imports AG2.** A step runs through the `StepRunner` port, and `Ag2StepRunner` is the only file that catches an openai exception - which is also the only place the mapping can go wrong. The ordering of its `except` clauses is itself a test: `APITimeoutError` subclasses `APIConnectionError`, so caught the other way round a timeout becomes a 503 rather than a 504.
+  - **The message is built by the pipeline; the prompt file holds the instructions.** No placeholders, so nothing can be injected through a template and the file is the whole of a role's instruction - which is what makes it meaningful to hash. The risk budget and the position cap reach no step at all: under decision 1 no agent produces an amount, so a budget is a figure it cannot act on. Both stay in the contract, because stage 4 will want to know what the engine was willing to spend.
+  - **`team_version` is sha256 over a canonical payload**, never `hash()`, which is salted per process. The rule: include what changes what the model says, exclude what changes how it is reached. So the steps, the schemas' contents, the prompt files' contents and each role's resolved provider/model/temperature/seed are in; `base_url`, `timeout` and `api_key` are out. A test runs it in two subprocesses under different `PYTHONHASHSEED` values, and another asserts the key appears nowhere in the payload.
+  - Dropped from the roadmap's sketch: `StepSpec.model`. `LlmSettings.roles` already overrides a step's model from the environment, and two ways to change the same thing is one too many. `StepSpec.tools` is also absent - the new team has no tools, and an AG2-typed field would drag AG2 into the application layer. It returns when tools do, and it will need a port of its own.
+  - Live against Ollama and yfinance: AAPL in 10.1 s and MSFT in 6.8 s, both valid signals at version `6c6da0e6edad`, `reference_price` from the fact sheet. An unknown `team_id` is refused by name.
+
+**A limit of the design, found by tracing a live run.** The portfolio manager's thesis quoted
+figures it never received: they reached it through the analyst's free-text `observations`,
+which repeated them although the prompt asked it not to. **The schema bounds the size of a
+handover, not its content.** What holds structurally is the part that matters - `TradeView`
+has no price field, so `reference_price` came from the fact sheet and nothing a model wrote
+could become an order. Left as it is on purpose: which fields a team hands over is what stage
+4 measures, and `team_version` is what makes changing it safe.
+
+**Mutation testing earned its keep here.** Dropping the `result is None` guard in the AG2
+runner turned *nothing* red - with a `response_schema`, an empty answer raises
+`ValidationError` instead, so the None branch is unreachable through `TestConfig`. It is still
+reachable through the type AG2 declares, so a test now stubs at the AG2 boundary. Without the
+guard the literal `None` would be serialised into the next step's data block as a result.
+
 **The generic test is the one to copy elsewhere.** Rather than asserting a cap per field, it walks
 every schema an agent fills, resolves pydantic's `$defs`, and asserts that no string anywhere in it
 lacks a `maxLength`. A field added later is covered without anyone remembering. A second test feeds
 the walk a deliberately leaky model, so a bug in the walk cannot make the first one vacuous.
 
-**Counts:** 172 Python tests, from 52 when the stage started. 154 .NET, unchanged - the engine has
+**Counts:** 248 Python tests, from 52 when the stage started. 154 .NET, unchanged - the engine has
 not been touched in this stage yet.
 
 **Mutation counts**, continuing the habit from stage 2: asking the view for the price 3 red,
@@ -424,7 +447,12 @@ deviation 1, removing the oldest-first guard 1; caching for ever 1, dropping the
 folding an unknown symbol into an outage 1, calling the source without `to_thread` 1; dropping
 the unknown-role check 2, not building the overrides at startup 2, turning the client's own
 retries back on 1, allowing a seed for Anthropic 1, allowing `openai_compatible` with no
-`base_url` 2, removing the `TAS_` prefix 10.
+`base_url` 2, removing the `TAS_` prefix 10; giving every step everything produced so far 2,
+taking the price from somewhere other than the fact sheet 1, falling back to the first team 2,
+telling every step about the holding 1, putting the budget in the message 1, dropping the rule
+that the last step produces `TradeView` 1, catching `APIConnectionError` first 2, letting
+`ValidationError` bubble 1, leaving the step's name out of the message 1, dropping the None
+guard 1 (0 before the test that covers it was written).
 
 ---
 
@@ -471,6 +499,11 @@ Things that cost time or were not obvious. Most are also recorded where they app
 - AG2's four provider configurations differ more than they look: `AnthropicConfig` has no `seed`, `OllamaConfig` has neither `api_key` nor `timeout`, and the endpoint argument is `base_url`, `api_host` (a bare host) or `host` depending on which one.
 - Passing conditional keyword arguments as `**({"k": v} if cond else {})` defeats mypy, which then checks the dict against every parameter. Build the object and apply the optional argument through `ModelConfig.copy()` instead.
 - pydantic-settings lowercases the segments of a nested environment variable, so `TAS_LLM__ROLES__PORTFOLIO_MANAGER__MODEL` lands under the key `portfolio_manager`.
+- `ag2.testing.TestConfig(*turns)` scripts a model from strings, and a `BaseException` among the turns is raised untouched. So a scripted `ConnectionError` is a *builtin* one, not openai's - the exception translation has to be tested with `openai.APIConnectionError` and friends, constructed against an `httpx2.Request`.
+- With a `response_schema`, `reply.content()` raises pydantic's `ValidationError` for an empty or malformed answer rather than returning `None`. The `None` the type declares is not reachable that way, so a guard for it needs a stub at the AG2 boundary to be tested at all.
+- Python's `hash()` is salted per process. Anything that has to be stable across restarts - a version, a cache key written to disk - needs `hashlib` over a canonical serialisation, and the cheapest proof is running it in two subprocesses under different `PYTHONHASHSEED` values.
+- A pydantic model's docstring becomes its JSON schema's `description`, so it is part of what the model is asked for - and part of anything that hashes the schema.
+- Ruff's `S603` flags every `subprocess.run`, including one whose argument is a literal three lines above. A `# noqa: S603` with the reason is the honest answer.
 
 **CI and GitHub**
 - A Dependabot PR title names only the packages whose requirement changed. Read the `uv.lock` diff: a dependency without an upper bound can move a major version silently, as fastmcp did in PR #5.
