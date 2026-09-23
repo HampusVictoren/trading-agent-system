@@ -13,8 +13,8 @@ from pgvector.asyncpg import register_vector
 from app.api.errors import register_error_handlers
 from app.api.routes import router
 from app.dependencies import Resources, get_resources
-from app.infrastructure.ag2.config import build_llm_config
 from app.infrastructure.db.memory import MemoryStore
+from app.infrastructure.llm.provider import build_model_config
 from app.observability.correlation import CorrelationIdMiddleware
 from app.observability.logging import configure_logging
 from app.settings import Settings, get_settings
@@ -56,6 +56,17 @@ async def _database_pool(settings: Settings) -> AsyncIterator[asyncpg.Pool]:
         await pool.close()
 
 
+def _probe_url(settings: Settings) -> str | None:
+    """What /ready asks for a model list, or None when there is nothing generic to ask.
+
+    A provider with its own endpoint - Anthropic, xAI - has no OpenAI-shaped /models, and
+    guessing one would make readiness report an outage that is not there. Such a provider
+    needs a probe of its own; until one runs here, readiness says so rather than pretending.
+    """
+    base_url = settings.llm.default.base_url
+    return None if base_url is None else str(base_url).rstrip("/")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Builds every shared resource once, on the loop that will use it, and closes it again.
@@ -70,19 +81,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # 127.0.0.1. openai 3.x types http_client as httpx2.AsyncClient, which is what this is.
     async with httpx2.AsyncClient(trust_env=False) as http_client:
         embeddings = AsyncOpenAI(
-            base_url=str(settings.ollama_base_url),
-            api_key="ollama",
+            base_url=str(settings.embeddings_base_url),
+            api_key=settings.embeddings_api_key.get_secret_value(),
             http_client=http_client,
         )
 
         async with _database_pool(settings) as pool:
             app.state.resources = Resources(
-                llm_config=build_llm_config(settings),
+                llm_config=build_model_config(settings.llm.default),
                 memory=MemoryStore(pool, embeddings),
                 http_client=http_client,
-                llm_base_url=str(settings.llm_base_url).rstrip("/"),
+                llm_base_url=_probe_url(settings),
             )
-            logger.info("Agent service ready: model %s", settings.llm_model)
+            logger.info(
+                "Agent service ready: %s via %s",
+                settings.llm.default.model,
+                settings.llm.default.provider,
+            )
             yield
 
 
@@ -116,17 +131,22 @@ async def readiness_check(resources: Annotated[Resources, Depends(get_resources)
         logger.warning("Readiness: the database did not answer", exc_info=True)
         checks["database"] = "unavailable"
 
-    try:
-        response = await resources.http_client.get(
-            f"{resources.llm_base_url}/models", timeout=READINESS_TIMEOUT_SECONDS
-        )
-        response.raise_for_status()
-        checks["llm"] = "ok"
-    except Exception:
-        logger.warning("Readiness: the LLM backend did not answer", exc_info=True)
-        checks["llm"] = "unavailable"
+    if resources.llm_base_url is None:
+        checks["llm"] = "unchecked"
+    else:
+        try:
+            response = await resources.http_client.get(
+                f"{resources.llm_base_url}/models", timeout=READINESS_TIMEOUT_SECONDS
+            )
+            response.raise_for_status()
+            checks["llm"] = "ok"
+        except Exception:
+            logger.warning("Readiness: the LLM backend did not answer", exc_info=True)
+            checks["llm"] = "unavailable"
 
-    ready = all(state == "ok" for state in checks.values())
+    # "unchecked" does not block readiness: it means this service has no way to ask, not
+    # that the answer was bad.
+    ready = all(state in ("ok", "unchecked") for state in checks.values())
     return JSONResponse(
         status_code=200 if ready else 503,
         content={"status": "ready" if ready else "not ready", "checks": checks},

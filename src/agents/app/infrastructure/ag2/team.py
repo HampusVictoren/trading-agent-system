@@ -1,5 +1,5 @@
 from ag2 import Agent, tool
-from ag2.config import OpenAIConfig
+from ag2.config import ModelConfig
 from ag2.exceptions import AG2Error
 from openai import APIConnectionError, APIStatusError, APITimeoutError
 from pydantic import ValidationError
@@ -21,7 +21,7 @@ def get_stock_quote_tool(ticker: str) -> dict:
     return get_stock_quote(ticker)
 
 
-async def run_agent_analysis(ticker: str, llm_config: OpenAIConfig) -> InvestmentProposal:
+async def run_agent_analysis(ticker: str, llm_config: ModelConfig) -> InvestmentProposal:
     """Runs the three agents in sequence. The model configuration is built once by the
     lifespan and passed in, so a request never constructs it."""
     # 1. Analyst agent with its MCP tool
