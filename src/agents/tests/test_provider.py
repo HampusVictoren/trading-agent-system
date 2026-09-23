@@ -11,8 +11,13 @@ import logging
 import pytest
 from ag2.config import ModelProvider, OpenAIConfig
 
-from app.infrastructure.llm.provider import CLIENT_RETRIES, build_model_config
-from app.settings import ModelSpec, Provider
+from app.infrastructure.ag2.team import ROLES as KNOWN_ROLES
+from app.infrastructure.llm.provider import (
+    CLIENT_RETRIES,
+    build_model_config,
+    build_model_configs,
+)
+from app.settings import LlmSettings, ModelSpec, Provider
 
 # Installed here. Everything else in Provider is a placeholder until its extra is added.
 RUNNABLE = {Provider.OPENAI_COMPATIBLE, Provider.OPENAI}
@@ -96,3 +101,57 @@ class TestOllamaLosesTheTimeout:
     def test_the_openai_compatible_route_does_carry_it(self):
         # The supported way to reach Ollama, and the one this project runs on.
         assert build_model_config(a_spec()).timeout == 30.0
+
+
+class TestRoleOverridesAreCheckedAgainstRealRoles:
+    """The check that makes a per-role override safe to use."""
+
+    def roles(self, **overrides) -> LlmSettings:
+        return LlmSettings(default=a_spec(), roles=overrides)
+
+    def test_a_mistyped_role_stops_the_service(self):
+        # Without this the service starts, runs the default model, and the only symptom is
+        # an answer that is not the one that was configured. LlmSettings.for_role cannot
+        # catch it - it has no way to know which roles exist - so the check lives here.
+        with pytest.raises(ValueError, match="portfilio_manager"):
+            build_model_configs(self.roles(portfilio_manager=a_spec()), KNOWN_ROLES)
+
+    def test_the_error_lists_the_roles_that_do_exist(self):
+        # A message that only says "unknown" leaves the reader guessing at the spelling.
+        with pytest.raises(ValueError, match="market_analyst"):
+            build_model_configs(self.roles(analyst=a_spec()), KNOWN_ROLES)
+
+    def test_a_real_role_is_built(self):
+        configs = build_model_configs(
+            self.roles(portfolio_manager=a_spec(model="qwen3")), KNOWN_ROLES
+        )
+
+        assert configs.for_role("portfolio_manager").model == "qwen3"
+
+    def test_a_role_without_an_override_gets_the_default(self):
+        configs = build_model_configs(
+            self.roles(portfolio_manager=a_spec(model="qwen3")), KNOWN_ROLES
+        )
+
+        assert configs.for_role("market_analyst").model == "llama3.2"
+
+    def test_no_overrides_is_fine(self):
+        configs = build_model_configs(self.roles(), KNOWN_ROLES)
+
+        assert configs.by_role == {}
+        assert configs.for_role("risk_manager") is configs.default
+
+    def test_every_configured_model_is_built_at_startup(self):
+        # Building them here rather than per request is what turns a missing extra into a
+        # startup failure. anthropic has no extra installed, so this is what it looks like.
+        with pytest.raises(ImportError, match="ag2\\["):
+            build_model_configs(
+                self.roles(portfolio_manager=a_spec(provider=Provider.ANTHROPIC, base_url=None)),
+                KNOWN_ROLES,
+            )
+
+    def test_the_teams_roles_are_what_gets_checked(self):
+        # ROLES is passed in rather than imported by the factory, so the rule does not
+        # depend on where roles come from. Today it is the team module; once teams are
+        # data it is TeamSpec, and nothing in provider.py changes.
+        assert set(KNOWN_ROLES) == {"market_analyst", "risk_manager", "portfolio_manager"}

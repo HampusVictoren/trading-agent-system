@@ -3,17 +3,17 @@
 from dataclasses import dataclass
 
 import httpx2
-from ag2.config import ModelConfig
 from fastapi import Request
 
 from app.infrastructure.db.memory import MemoryStore
+from app.infrastructure.llm.provider import ModelConfigs
 
 
 @dataclass(frozen=True)
 class Resources:
     """Everything that is expensive to build and safe to share for the process's lifetime."""
 
-    llm_config: ModelConfig
+    models: ModelConfigs
     memory: MemoryStore
     http_client: httpx2.AsyncClient
 

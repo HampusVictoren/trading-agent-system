@@ -13,8 +13,9 @@ from pgvector.asyncpg import register_vector
 from app.api.errors import register_error_handlers
 from app.api.routes import router
 from app.dependencies import Resources, get_resources
+from app.infrastructure.ag2.team import ROLES
 from app.infrastructure.db.memory import MemoryStore
-from app.infrastructure.llm.provider import build_model_config
+from app.infrastructure.llm.provider import build_model_configs
 from app.observability.correlation import CorrelationIdMiddleware
 from app.observability.logging import configure_logging
 from app.settings import Settings, get_settings
@@ -88,7 +89,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         async with _database_pool(settings) as pool:
             app.state.resources = Resources(
-                llm_config=build_model_config(settings.llm.default),
+                models=build_model_configs(settings.llm, ROLES),
                 memory=MemoryStore(pool, embeddings),
                 http_client=http_client,
                 llm_base_url=_probe_url(settings),

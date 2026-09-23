@@ -27,6 +27,8 @@ signatures but their extras are not installed, so nothing has constructed one.
 """
 
 import logging
+from collections.abc import Collection, Mapping
+from dataclasses import dataclass
 
 from ag2.config import (
     AnthropicConfig,
@@ -36,7 +38,7 @@ from ag2.config import (
     XAIConfig,
 )
 
-from app.settings import ModelSpec, Provider
+from app.settings import LlmSettings, ModelSpec, Provider
 
 logger = logging.getLogger(__name__)
 
@@ -112,3 +114,44 @@ def build_model_config(spec: ModelSpec) -> ModelConfig:
             if spec.base_url is not None:
                 return ollama.copy(host=str(spec.base_url))
             return ollama
+
+
+@dataclass(frozen=True)
+class ModelConfigs:
+    """One configuration per role, built once at startup.
+
+    Holding the built configurations rather than the specs is what makes a missing extra
+    or a malformed override a startup failure: every one of them has been constructed by
+    the time the service reports ready.
+    """
+
+    default: ModelConfig
+    by_role: Mapping[str, ModelConfig]
+
+    def for_role(self, role: str) -> ModelConfig:
+        return self.by_role.get(role, self.default)
+
+
+def build_model_configs(llm: LlmSettings, known_roles: Collection[str]) -> ModelConfigs:
+    """Every configured model, checked against the roles that actually exist.
+
+    The check is the point. `LlmSettings.for_role` cannot know which roles a team has, so
+    on its own a mistyped `TAS_LLM__ROLES__PORTFILIO_MANAGER__MODEL` reads as "the
+    override did not take effect" - the service runs happily on the default model and the
+    only symptom is an answer that is not the one that was configured.
+
+    `known_roles` is passed in rather than imported, so that the rule does not depend on
+    where the roles come from. It is the current team's steps today and `TeamSpec`'s once
+    teams are data.
+    """
+    unknown = sorted(set(llm.roles) - set(known_roles))
+    if unknown:
+        raise ValueError(
+            f"TAS_LLM__ROLES names {unknown}, which no step uses. "
+            f"The roles that exist are {sorted(known_roles)}."
+        )
+
+    return ModelConfigs(
+        default=build_model_config(llm.default),
+        by_role={role: build_model_config(spec) for role, spec in llm.roles.items()},
+    )

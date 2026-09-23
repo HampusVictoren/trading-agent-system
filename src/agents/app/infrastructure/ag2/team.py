@@ -1,5 +1,4 @@
 from ag2 import Agent, tool
-from ag2.config import ModelConfig
 from ag2.exceptions import AG2Error
 from openai import APIConnectionError, APIStatusError, APITimeoutError
 from pydantic import ValidationError
@@ -12,7 +11,17 @@ from app.application.errors import (
     LlmUnreachable,
 )
 from app.domain.models import InvestmentProposal
+from app.infrastructure.llm.provider import ModelConfigs
 from app.infrastructure.mcp.market_data_server import get_stock_quote
+
+# A role is the name of a step, and it is what TAS_LLM__ROLES__<ROLE>__* overrides. The
+# names are lowercase because that is how pydantic-settings spells a nested key, and they
+# are the names stage 3's TeamSpec will carry over.
+ANALYST = "market_analyst"
+RISK_MANAGER = "risk_manager"
+PORTFOLIO_MANAGER = "portfolio_manager"
+
+ROLES = (ANALYST, RISK_MANAGER, PORTFOLIO_MANAGER)
 
 
 @tool
@@ -21,9 +30,9 @@ def get_stock_quote_tool(ticker: str) -> dict:
     return get_stock_quote(ticker)
 
 
-async def run_agent_analysis(ticker: str, llm_config: ModelConfig) -> InvestmentProposal:
-    """Runs the three agents in sequence. The model configuration is built once by the
-    lifespan and passed in, so a request never constructs it."""
+async def run_agent_analysis(ticker: str, models: ModelConfigs) -> InvestmentProposal:
+    """Runs the three agents in sequence. The model configurations are built once by the
+    lifespan and passed in, so a request never constructs one."""
     # 1. Analyst agent with its MCP tool
     analyst = Agent(
         "MarketAnalyst",
@@ -31,7 +40,7 @@ async def run_agent_analysis(ticker: str, llm_config: ModelConfig) -> Investment
             "Du är en junior aktieanalytiker. Din uppgift är att hämta marknadsdata "
             "för den givna tickern med verktyget get_stock_quote_tool och ge en kort bedömning."
         ),
-        config=llm_config,
+        config=models.for_role(ANALYST),
         tools=[get_stock_quote_tool],
     )
 
@@ -42,7 +51,7 @@ async def run_agent_analysis(ticker: str, llm_config: ModelConfig) -> Investment
             "Du är en strikt Risk Manager. Granska analytikerns data och tes. "
             "Identifiera eventuella nedsidor, hög värdering (P/E) eller osäkerhet."
         ),
-        config=llm_config,
+        config=models.for_role(RISK_MANAGER),
     )
 
     # 3. Portfolio manager agent (response shape is driven by response_schema below)
@@ -55,7 +64,7 @@ async def run_agent_analysis(ticker: str, llm_config: ModelConfig) -> Investment
             "i USD att köpa för (0 vid HOLD), confidence är din säkerhet mellan 0 och 1 och "
             "reasoning är en kort motivering som sammanfattar valet."
         ),
-        config=llm_config,
+        config=models.for_role(PORTFOLIO_MANAGER),
     )
 
     try:
