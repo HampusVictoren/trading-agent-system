@@ -27,6 +27,7 @@ builder.Services.AddSingleton<PositionSizer>();
 builder.Services.AddSingleton(TimeProvider.System);
 
 builder.Services.AddAgentClient();
+builder.Services.AddTradingDatabase();
 
 // Polly's telemetry reports a handled timeout at error level. The worker already logs the
 // same event in the engine's own words, so demote the library's copy: error level should

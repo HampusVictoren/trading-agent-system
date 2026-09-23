@@ -10,4 +10,22 @@
     <PackageReference Include="Microsoft.Extensions.Http.Resilience" Version="10.10.0" />
     <PackageReference Include="Microsoft.Extensions.Options.DataAnnotations" Version="10.0.12" />
   </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
+    <!-- Named explicitly only to settle a version: Npgsql 10.0.3 asks for EF Core 10.0.4 and
+         the design-time package for 10.0.12, which left the test project resolving one
+         version while engine.dll had been compiled against the other. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.12" />
+    <!-- One line in OnConfiguring instead of forty HasColumnName calls. Postgres folds
+         unquoted identifiers to lower case, so PascalCase columns would have to be quoted
+         in every hand-written query - including the report view stage 4 ends with. -->
+    <PackageReference Include="EFCore.NamingConventions" Version="10.0.1" />
+    <!-- Design-time only: `dotnet ef migrations add` needs it, the running service does not,
+         so PrivateAssets keeps it out of anything that references this project. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.12">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>compile; runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
 </Project>

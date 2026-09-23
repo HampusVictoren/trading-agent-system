@@ -22,6 +22,11 @@ public static class EngineOptionsExtensions
             .ValidateDataAnnotations()
             .ValidateOnStart();
 
+        services.AddOptions<DatabaseOptions>()
+            .Bind(configuration.GetSection(DatabaseOptions.SectionName))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+
         services.AddSingleton<IValidateOptions<TradingOptions>, TradingOptionsValidator>();
         services.AddOptions<TradingOptions>()
             .Bind(configuration.GetSection(TradingOptions.SectionName))
