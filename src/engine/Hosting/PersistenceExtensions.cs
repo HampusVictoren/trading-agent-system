@@ -28,6 +28,7 @@ public static class PersistenceExtensions
 
         services.AddScoped<IPortfolioRepository, PortfolioRepository>();
         services.AddScoped<IDecisionLog, DecisionLog>();
+        services.AddScoped<IOutcomeLog, OutcomeLog>();
         services.AddScoped<IUnitOfWork, UnitOfWork>();
 
         return services;
