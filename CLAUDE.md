@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 A hybrid, modular automated trading agent that runs entirely locally:
 - The **.NET 10 engine** (`src/engine`) is deterministic and rule-based. It owns scheduling, the portfolio (cash, positions), the `RiskEngine` that checks proposals against hard rules, and order execution.
 - The **Python agent service** (`src/agents`) is a FastAPI app. It exposes `POST /v1/signals` and runs a team of AG2 v1.0+ agents over a computed fact sheet, returning a validated `TradeSignal`: a direction and a conviction, never an amount.
-- **Market data** comes from yfinance behind a `MarketDataProvider` port, with a TTL cache and a timeout, and is turned into a `FactSheet` by pure functions before any agent runs.
+- **Market data** comes from yfinance behind a `MarketDataProvider` port, with a TTL cache and a timeout, and is turned into a `FactSheet` by pure functions before any agent runs. The same provider answers `GET /v1/quotes/{symbol}`, which is how the engine prices holdings it is not analysing - one market-data integration, in one service.
 - **PostgreSQL + pgvector** (Docker) holds both services' state, in a schema each: `trading` has the portfolio, the append-only order ledger and every decision the engine has ever made (EF Core), and `agent` has the agents' semantic memory (`agent.agent_memories`).
 - **Ollama** is the LLM backend for both text generation (`llama3.2`) and embeddings (`nomic-embed-text`). The plan is to add Claude or Grok later.
 
@@ -156,8 +156,8 @@ that is the owner clearing the table on purpose rather than a cycle rewriting hi
 
 ### Request flow
 
-1. `TradingWorker` (`src/engine/Hosting/Workers`) is a `BackgroundService` that holds **no** portfolio. Every `Trading:CycleIntervalSeconds`, for each ticker in `Trading:Tickers`, it opens a scope, reads the portfolio through `IPortfolioRepository`, runs `ProcessProposalUseCase`, and commits through `IUnitOfWork` - so one cycle is one change tracker and one transaction. The account is opened at `Trading:OpeningBalanceUsd` only when nothing is stored. The correlation id is generated and logged first, and the outcome is logged *after* the commit, so a line in the log means a row in the database. A failed commit is an error line and the loop carries on: the buy is in the same transaction as the decision, so nothing was traded.
-2. `PythonAgentClient` posts a `TradeSignalRequestDto` to `POST /v1/signals`. The instrument travels in the body as a typed object, so nothing is interpolated into a path. The correlation id goes on the `X-Correlation-Id` header, taken from the body so the two cannot disagree.
+1. `TradingWorker` (`src/engine/Hosting/Workers`) is a `BackgroundService` that holds **no** portfolio. Every `Trading:CycleIntervalSeconds`, for each ticker in `Trading:Tickers` (AAPL and MSFT), it opens a scope, reads the portfolio through `IPortfolioRepository`, runs `ProcessProposalUseCase`, and commits through `IUnitOfWork` - so one cycle is one change tracker and one transaction. The account is opened at `Trading:OpeningBalanceUsd` only when nothing is stored. The correlation id is generated and logged first, and the outcome is logged *after* the commit, so a line in the log means a row in the database. A failed commit is an error line and the loop carries on: the buy is in the same transaction as the decision, so nothing was traded.
+2. `PythonAgentClient` posts a `TradeSignalRequestDto` to `POST /v1/signals`. Before sizing, it also asks `GET /v1/quotes/{symbol}` for every *other* holding, carrying the same correlation id; the analysed instrument's price always comes from the signal, so an order is never sized against a quote the agents never saw. The instrument travels in the body as a typed object, so nothing is interpolated into a path. The correlation id goes on the `X-Correlation-Id` header, taken from the body so the two cannot disagree.
 3. `SignalPipeline.run` (`app/application/pipeline.py`) computes a `FactSheet` from market data — price, P/E, returns over 1/3/12 months, volatility, distance to the 52-week high — and then runs the team's steps in order. Each step is given **only the earlier results its `reads` names**, as a delimited JSON block; there is no shared transcript.
 
    | Step | reads | produces |
@@ -178,6 +178,7 @@ that is the owner clearing the table on purpose rather than a cycle rewriting hi
    | The team does not cover that instrument | 422 | `instrument_not_supported` |
    | No market data exists for the symbol | 422 | `instrument_not_found` |
    | Market data could not be reached | 503 | `market_data_unavailable` |
+   | A quote symbol that is not a symbol | 404 | - (the path never matches) |
    | LLM answered with an error status | 502 | `llm_failed` |
    | Model never matched the schema, after AG2's retries | 502 | `agent_response_invalid` |
    | A step failed for a reason of AG2's own | 502 | `agent_chain_failed` |
@@ -188,10 +189,11 @@ that is the owner clearing the table on purpose rather than a cycle rewriting hi
 
 ### Cross-service contract
 
-`contracts/trade-signal.schema.json` is the agreement, with five examples in `contracts/examples/`. Neither side generates the other; both read the checked-in files in their tests, so drift fails a test rather than a live run.
+`contracts/trade-signal.schema.json` and `contracts/quote.schema.json` are the agreement, with six examples in `contracts/examples/`. Neither side generates the other; both read the checked-in files in their tests, so drift fails a test rather than a live run.
 
 - `src/agents/app/domain/signals.py`: `TradeSignal`, `SignalRequest`, `TradeView`. **`TradeView` is what the last agent step is asked for** — stance, conviction, thesis, key risks, horizon. `TradeSignal` inherits it and adds what code is responsible for: the instrument, the reference price and its timestamp, and the run's identity. The engine sizes an order as `floor(budget / reference_price)`, so a model that could write that number would decide how many shares are bought.
 - `src/engine/Application/Contracts/`: the same shape as DTOs, with `TradeSignalMapper` as the seam into the domain. It enforces the schema's length caps, because System.Text.Json does not read JSON Schema.
+- `contracts/quote.schema.json`: what `GET /v1/quotes/{symbol}` answers. Deliberately narrower than the fact sheet - P/E and sector are read by agents, a price is read by arithmetic - and it is the one contract that carries a **currency**, because a quote can be for an instrument the engine does not price in dollars. The symbol travels in the path, validated against the same pattern on both sides *before* any lookup, which is what finding B was actually about.
 - **There is no `amount_usd` anywhere.** The agents give a view; the engine decides how much money moves. That is decision 1, and it is what bounds what a prompt injection can do.
 
 ### Layering
@@ -207,7 +209,7 @@ Both services follow a Clean Architecture / DDD layout: `Domain` → `Applicatio
 - **LLM provider:** switching providers *is* an environment variable now. `app/infrastructure/llm/provider.py` maps a `ModelSpec` to AG2's `ModelConfig` across five providers. Only the OpenAI family has actually been run: AG2 exports a placeholder for every extra that is not installed, and constructing one raises `ImportError: ... Install with "ag2[anthropic]"` - a startup failure with an install hint, since configurations are built in the lifespan. Two arguments do not survive every branch: `AnthropicConfig` has no `seed` (the settings refuse one), and `OllamaConfig` has no `timeout` (the factory warns at startup, and `openai_compatible` against Ollama's `/v1` is the route that keeps it).
 - **Model quality:** `llama3.2` (3B) often gives weak or contradictory reasoning, even though the JSON is valid. A larger local model or Claude/Grok would do better.
 - **No agent is told about money.** The request carries `available_risk_budget_usd` and `max_position_pct` — stage 4 wants to know what the engine was willing to spend — but neither reaches a prompt. Under decision 1 no agent produces an amount, so a budget is a figure it cannot act on, and a figure in a prompt is one a model starts reasoning about.
-- **The engine has no market data of its own.** `PositionSizer` is given `PriceSnapshot.Empty`, so a portfolio holding something other than the instrument being analysed cannot be valued and the sizer says which holding stopped it. With one ticker in `Trading:Tickers` the signal's own price is all that is needed. Stage 4's `GET /v1/quotes/{symbol}` closes this.
+- **The engine still has no market data integration of its own**, and it no longer needs one: it asks the agent service for a price per holding. A quote that cannot be fetched, or that is older than `RiskPolicy:MaxQuoteAgeSeconds`, is left out rather than substituted - the portfolio then cannot be valued and the sizer names the holding that stopped it. Valuing a holding at what it cost would overstate a loser, raising the position allowance for everything else exactly when the portfolio had shrunk.
 - **Timing:** one cycle takes about 7–10 s with `llama3.2`, down from 12–15 s — smaller prompts and no tool call.
 - **Empty packages:** none left. `app/infrastructure/llm/provider.py` and `app/infrastructure/market_data/` were filled in stage 3.
 - **Engine database access:** `TradingDbContext` and the `trading` schema, reached through three ports in `Application/Persistence` - `IPortfolioRepository`, `IDecisionLog` and `IUnitOfWork`. One commit per cycle, so the decision, the position change and the ledger line move together. `FindAsync` takes no id because the engine trades one account, and a second row is reported rather than silently picked. **The portfolio survives a restart**, and there is no shared mutable state left in the worker for a second ticker or a second worker to get wrong.
