@@ -169,9 +169,11 @@ public class PythonAgentClientTests
         recorder.Body.ShouldContain("\"existing_position\":null");
     }
 
-    /// <summary>Records the request it was given, then answers with a valid signal.</summary>
-    private sealed class RecordingHandler : HttpMessageHandler
+    /// <summary>Records the request it was given, then answers with whatever it was told to.</summary>
+    private sealed class RecordingHandler(string? answer = null) : HttpMessageHandler
     {
+        private readonly string _answer = answer ?? ValidBody;
+
         public HttpRequestMessage? Seen { get; private set; }
         public string Body { get; private set; } = string.Empty;
 
@@ -183,8 +185,65 @@ public class PythonAgentClientTests
 
             return new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = new StringContent(ValidBody, Encoding.UTF8, "application/json")
+                Content = new StringContent(_answer, Encoding.UTF8, "application/json")
             };
         }
+    }
+
+    private const string ValidQuote =
+        """
+        {"instrument":{"type":"equity","symbol":"MSFT"},
+         "price":415.25,"currency":"USD","as_of":"2026-09-24T18:44:00Z"}
+        """;
+
+    [Fact]
+    public async Task Returns_a_quote_when_the_service_honours_the_contract()
+    {
+        var client = ClientWith(new StubHandler(HttpStatusCode.OK, ValidQuote));
+
+        var quote = await client.GetQuoteAsync("MSFT", TestContext.Current.CancellationToken);
+
+        quote.ShouldNotBeNull();
+        quote.Price.ShouldBe(415.25m);
+        quote.Currency.ShouldBe("USD");
+        quote.Instrument.ShouldBeOfType<EquityInstrumentDto>().Symbol.ShouldBe("MSFT");
+    }
+
+    [Fact]
+    public async Task A_quote_the_service_could_not_give_is_an_unavailable_agent_service()
+    {
+        // 422 for an unknown symbol, 503 for a market data outage. The engine treats them
+        // alike - this holding has no price this cycle - and the status goes in the message.
+        var client = ClientWith(new StubHandler(HttpStatusCode.ServiceUnavailable, "{}"));
+
+        var exception = await Should.ThrowAsync<AgentServiceUnavailableException>(
+            () => client.GetQuoteAsync("MSFT", TestContext.Current.CancellationToken));
+
+        exception.Message.ShouldContain("503");
+        exception.Message.ShouldContain("MSFT");
+    }
+
+    [Fact]
+    public async Task A_quote_that_is_not_the_contract_is_reported_as_invalid()
+    {
+        var client = ClientWith(new StubHandler(HttpStatusCode.OK, "<html>not json</html>", "text/html"));
+
+        await Should.ThrowAsync<AgentResponseInvalidException>(
+            () => client.GetQuoteAsync("MSFT", TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task The_symbol_is_escaped_into_the_path()
+    {
+        // Ticker has already refused anything that is not a symbol, and the agent service
+        // checks the pattern again before it looks anything up. Escaping here means neither
+        // of those is the only thing standing between a value and a URL - which is the half
+        // of finding B that was about the engine.
+        var recorder = new RecordingHandler(ValidQuote);
+        var client = ClientWith(recorder);
+
+        await client.GetQuoteAsync("../internal/shutdown", TestContext.Current.CancellationToken);
+
+        recorder.Seen!.RequestUri!.AbsolutePath.ShouldBe("/v1/quotes/..%2Finternal%2Fshutdown");
     }
 }
