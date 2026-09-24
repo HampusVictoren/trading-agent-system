@@ -135,7 +135,7 @@ dotnet user-secrets set "Database:ConnectionString" \
 
 | Schema | Owner | Holds |
 |---|---|---|
-| `trading` | `engine_svc` | `portfolios`, `positions`, `orders`, `decisions`, through EF Core |
+| `trading` | `engine_svc` | `portfolios`, `positions`, `orders`, `decisions`, `signal_outcomes` and the `hit_rate` view, through EF Core |
 | `agent` | `agent_svc` | `agent.agent_memories` — pgvector semantic memory |
 
 Each role owns its schema, so its migration tool can create tables there, and has **no access to the other's** — not even to see what tables exist. Neither can create anything in `public`. Only the two roles and the superuser may connect. The `vector` extension stays in `public`, because `pgvector.asyncpg.register_vector` looks it up there.
@@ -149,6 +149,14 @@ rather than a convention, and it uses Postgres's `xmin` as its concurrency token
 including a `DELETE` that would match no rows; `TRUNCATE` is deliberately left alone, because
 that is the owner clearing the table on purpose rather than a cycle rewriting history.
 `decisions.correlation_id` is unique, so one analysis cannot become two rows.
+
+`signal_outcomes` is one row per signal per horizon, append-only as well, unique on
+`(decision_id, horizon_unit, horizon_days)` so a sweep that runs twice cannot write the same
+measurement again. The horizon takes two columns because five trading days and five calendar
+days are different measurements. A row that could never be measured is still a row, with the
+reason and null returns, so the sweep stops retrying it and the report still knows it existed.
+`trading.hit_rate` is the minimum report: hit rate against the index per `team_version`,
+conviction tier and stance, with gross and net edge side by side.
 
 `agent.agent_memories` has a `bigint` identity key, a `NOT NULL` 768-dimensional `embedding`, and an HNSW index with `vector_cosine_ops`. `MemoryStore.search` ranks rows by cosine distance (`<=>`), filtered by ticker. Always schema-qualify table names.
 
@@ -215,6 +223,7 @@ Both services follow a Clean Architecture / DDD layout: `Domain` → `Applicatio
 - **Empty packages:** none left. `app/infrastructure/llm/provider.py` and `app/infrastructure/market_data/` were filled in stage 3.
 - **Engine database access:** `TradingDbContext` and the `trading` schema, reached through three ports in `Application/Persistence` - `IPortfolioRepository`, `IDecisionLog` and `IUnitOfWork`. One commit per cycle, so the decision, the position change and the ledger line move together. `FindAsync` takes no id because the engine trades one account, and a second row is reported rather than silently picked. **The portfolio survives a restart**, and there is no shared mutable state left in the worker for a second ticker or a second worker to get wrong.
 - **The trading calendar is the bar series.** `Engine.Domain.Outcomes` counts a horizon in bars rather than against a holiday table: a day with a bar is a day the market was open, which is right per exchange without anyone saying which, and a missing day is a fact about the data rather than an assumption. `Horizon` keeps trading days and calendar days apart - the fixed horizons are trading days, the model's own `horizon_days` is calendar days, because that is what the prompt asked it for.
-- **`OutcomeCalculator` is written and configured, and nothing resolves it yet.** It is a pure function: a stored decision and two bar series in, a verdict out, with commission and spread subtracted as a round trip on the instrument leg only. The `Outcome` section holds what it is scored against - commission, spread, the HOLD band, the benchmark symbol and the fixed horizons - kept apart from `RiskPolicy` because a number that changes a measurement should not sit among numbers that change a decision. The job that calls it, and `trading.signal_outcomes`, are the next pull request.
+- **`MeasurementWorker` is the second background service.** It sweeps at startup and then every `Outcome:SweepIntervalHours`, fetching one history per instrument plus one for the benchmark however many signals there are, and writing everything in one transaction. A horizon that has not passed gets no row and is asked about again; one that never can gets a row saying why. It writes only `signal_outcomes` and never touches the portfolio, which is a test.
+- **`OutcomeCalculator` is a pure function over bars.** It is a pure function: a stored decision and two bar series in, a verdict out, with commission and spread subtracted as a round trip on the instrument leg only. The `Outcome` section holds what it is scored against - commission, spread, the HOLD band, the benchmark symbol and the fixed horizons - kept apart from `RiskPolicy` because a number that changes a measurement should not sit among numbers that change a decision. The job that calls it, and `trading.signal_outcomes`, are the next pull request.
 - **The engine stores what the engine saw.** `decisions` holds the request, the signal and the outcome - not the agent service's own working. The fact sheet and the intermediate steps are Python's data, stored on Python's side against the same correlation id, so attributing a result to one agent is a join made when the question is asked. Widening the contract with fields the engine never reads would make it the owner of somebody else's internals, which is the shared-database problem over HTTP.
 - **AG2 API version:** AG2 is used through its v1.0+ API (`from ag2 import Agent, tool`, `ag2.config.OpenAIConfig`, `await agent.ask(...)`). The pre-1.0 `autogen`/`ConversableAgent` API is not used here.

@@ -7,9 +7,9 @@ A running record of what has been done, what was learned along the way, and what
 
 This file answers "where are we, how did we get here, and what is next". When resuming, read *Current state* and *Next steps* first, then the roadmap section for the next stage.
 
-**Last updated:** 2026-09-24. Decisions are stored, the portfolio survives a restart, the
-engine can price any holding and fetch the bars an outcome is measured by - and nothing has
-measured one yet. That is the next pull request, and it is the one the stage is for.
+**Last updated:** 2026-09-24. The machinery is complete: decisions are stored, the portfolio
+survives a restart, and a sweep measures every signal whose horizon has passed. **The baseline
+is now a matter of waiting**, which is the one thing that cannot be built.
 
 ## Resuming checklist
 
@@ -43,11 +43,13 @@ Two things that are easy to misread as broken:
 
 ## Current state
 
-- **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21, **stage 3 done** 2026-09-23. **Stage 4 started** 2026-09-23. PR 5 was split in two, so the stage is seven pull requests; five are done. Stages 5-8 exist only as plan.
+- **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21, **stage 3 done** 2026-09-23. **Stage 4 started** 2026-09-23. PR 5 was split in two, so the stage is seven pull requests; six are done. Only the Python half is left. Stages 5-8 exist only as plan.
 - **`master` is at PR #36.** Nothing reaches it without the three required checks passing, so what is there is green by construction.
 - **Branches:** `master` plus whatever branch is being worked on.
 - **There is one path now.** `POST /v1/signals` is the only endpoint that costs money, the engine calls it every cycle, and the old three-agent chain, `InvestmentProposal`, `ValidateTrade`, `RiskViolationException` and the FastMCP server are gone. Running the engine today produces real quantities at real prices, with the position cap holding across cycles.
 - **Every environment variable was renamed on 2026-09-23.** The local `src/agents/.env` was renamed in place and still works; a fresh clone follows `.env.example`. Nothing outside this repo reads them.
+- **Measurement runs, and has nothing to measure yet.** A sweep on 2026-09-24 found 68 horizons across 17 signals, every one of them not due: all the signals were made that same day. It made exactly three history calls - AAPL, MSFT and SPY - which is the "one per symbol plus one for the benchmark" property working on real data.
+- **The model asks for horizons of a year.** Of 21 signals, nine say 365 days and seven say 180, although the prompt asks for a short-term thesis. The fixed horizons of 1, 5 and 20 trading days still make a baseline possible, but the model's *own* horizon will not be measurable until 2027 and is close to useless as a measure of whether it can judge time. That is a prompt problem, found before a single measurement - which is what stage 4 is for.
 - **The engine trades two instruments.** `Trading:Tickers` is AAPL and MSFT, so a cycle is two analyses and the quote endpoint is used in a real run rather than only by tests.
 - **The `trading` schema is live and has real rows in it.** Runs on 2026-09-24 opened the account at 10 000 USD and bought one AAPL at 337.445 and one MSFT at 497.56, with a second engine process picking the same portfolio up rather than opening another. Delete them with `TRUNCATE trading.decisions, trading.orders, trading.positions, trading.portfolios RESTART IDENTITY CASCADE` if a clean baseline matters - the append-only triggers deliberately do not block that.
 - **The engine now needs `Database:ConnectionString`** or it refuses to start. It is in the user secrets store on this machine, set 2026-09-23. `dotnet user-secrets list --project src/engine` prints it, so do not run that where anyone can see the screen.
@@ -93,7 +95,7 @@ all land in PR 4, and are repeated here so they are not re-derived from scratch.
 | 3 ✅ | `GET /v1/quotes/{symbol}` on the agent service, deterministic and with no LLM, plus the engine's client for it. | It is what an outcome is measured against, and it also closes the gap left in stage 3: `PositionSizer` gets `PriceSnapshot.Empty` today, so a portfolio holding more than one instrument cannot be valued. |
 | 4 ✅ | The outcome function: return over a horizon, comparison against an index, hit per stance, a horizon landing on a non-trading day. Pure functions, TDD. | Findings E and F land here. Indata and expected figure are the specification, which is exactly where writing the test first pays. |
 | 5a ✅ | The history endpoint, the engine's client for it, and the `Outcome` configuration. | Split out because the whole of PR 5 was five commits: this half is *how the engine gets bars*, and it runs on its own. |
-| 5b | The scheduled job and `trading.signal_outcomes`: the fixed horizons (1, 5, 20 trading days) and the model's own, **for every signal** - including HOLD, risk rejections and everything that was never bought. A SQL view for the minimum report. | Measuring only the trades that went through measures the wrong population. |
+| 5b ✅ | The scheduled job and `trading.signal_outcomes`: the fixed horizons (1, 5, 20 trading days) and the model's own, **for every signal** - including HOLD, risk rejections and everything that was never bought. A SQL view for the minimum report. | Measuring only the trades that went through measures the wrong population. |
 | 6 | Python's side: Alembic for the `agent` schema, the pool leak in `memory.py`, memory wired into the pipeline, each signal's `FactSheet` stored, and `POST /v1/outcomes` so the engine can tell Python what happened. | **The database is never the integration point** - that is what separates "two schemas" from the shared-database anti-pattern. |
 
 **After PR 5, the baseline is a deliverable, not a by-product.** The thin three-step team has to
@@ -104,34 +106,39 @@ the fixed horizons is part of the stage's definition of done.
 
 Before stage 5, turn finding D's currency mismatch into an outcome rather than a throw.
 
-### Next up: PR 5b - the job, the table and the first measurement
+### Next up: PR 6 - Python's side, and then waiting
 
-Everything it needs now exists. **After it the baseline starts accumulating**, which is the
-stage's actual deliverable rather than a by-product.
+The last pull request of the stage, and the smallest: Alembic for the `agent` schema so
+`agent_memories` becomes a real migration rather than a line in `01-schema.sh`, the pool leak
+in `memory.py`, the memory wired into the pipeline at last, each signal's `FactSheet` stored
+against its correlation id, and `POST /v1/outcomes` so the engine can tell Python what
+happened.
 
-**Already decided, so the checkpoint is short.** A signal that can never be measured gets a
-row with null returns and the reason, because otherwise the job re-scans the same failures
-forever and the population being reported on quietly loses members. One row per
-(decision, horizon) with a unique index, so a job that runs twice cannot double-write - the
-same guard `decisions.correlation_id` gives a cycle. The horizon is stored as its unit *and*
-its count, because five trading days and five calendar days are different measurements. The
-job is a second `BackgroundService` in the engine's process, sweeping once a day.
+**The rule it exists to keep:** the database is never the integration point. Two schemas, two
+roles, and everything that crosses between them crosses over HTTP. Storing the fact sheet on
+Python's side against the same correlation id is what makes attribution a join done when the
+question is asked, rather than a contract widened with fields the engine never reads.
 
-**What is left to settle** is smaller: whether the report is a SQL view or a query in code,
-and whether the sweep measures every unmeasured signal each time or only those whose horizon
-could plausibly have passed.
+**To settle first:** whether the memory the risk manager reads is the outcome of past signals
+or only their reasoning - the first is far more useful and is only possible now that outcomes
+exist, but it changes what a prompt sees and therefore `team_version`.
 
-**The shape of the change.** A migration for `trading.signal_outcomes` - decision id, horizon
-unit and count, the measured date and price, the four returns, the cost, the verdict, and a
-status telling a measured row from an abandoned one. An `IOutcomeLog` port beside the
-existing three. A `MeasurementWorker` that reads unmeasured decisions, asks for the two
-histories it needs, calls `OutcomeCalculator`, and writes what comes back. A view for hit
-rate against the index per `team_version` and conviction level.
+### And then the part that is not code
 
-**What its tests have to prove.** That running the sweep twice writes one row per horizon.
-That a `NotDue` signal is retried and a `NotMeasurable` one is not. That the two writers
-cannot lose each other's work - the concurrency test that has had nothing to contend with
-until now. And that the view answers the only question that matters.
+**The baseline is a deliverable.** The thin three-step team has to run long enough to produce
+measured outcomes at the fixed horizons before anything is added to it. As of 2026-09-24
+nothing has been measured, because every signal is from that day; the first rows appear once
+a trading day has passed. Until then, no comparison between team versions means anything.
+
+Two things worth fixing before the baseline is taken seriously:
+
+- **The model's horizons are absurd.** Nine of 21 signals ask for 365 days. The fixed
+  horizons still work, but the model's own is unmeasurable for a year. That is a prompt to
+  change - and changing it changes `team_version`, which is exactly the point of hashing it.
+- **`llama3.2` at 3B.** The roadmap has said from the start that a larger model or Claude
+  would reason better. A baseline measured on a model nobody intends to keep is a baseline
+  that measures the wrong thing, so it is worth deciding *which* model the baseline is of
+  before letting it run for a fortnight.
 
 ## Open findings
 
@@ -756,6 +763,40 @@ steps* rather than here, because they are still being spent.
   20th simply absent - the trading calendar working on real data rather than on a fixture. A
   future window answered with an empty array, a missing window 422, a date that is not a date
   422. 271 .NET tests and 270 Python green.
+
+- **PR `stage-4-outcome-job`** (four commits, 2026-09-24): the sweep, the table and the
+  report. **The machinery of stage 4 is complete after this**; what is left is waiting.
+
+  - **Three decisions.** A signal that can never be measured gets a row; one row per
+    (decision, horizon) with a unique index; the sweep is a second `BackgroundService` that
+    runs at startup and then on its interval.
+  - **Three results, three behaviours.** Scored, abandoned with a reason, or left for the
+    next sweep. There is a test where a horizon is not due on Monday and measured on Tuesday,
+    and another where an abandoned one is never asked about again.
+  - **An outage is not a hole.** An instrument whose history could not be fetched waits;
+    writing "unmeasurable" would stop anyone ever asking again about a signal that is
+    perfectly measurable tomorrow. Without the benchmark the sweep stops rather than filling
+    the table with rows that say the index was down.
+  - **The window starts ten days early.** A comparison needs the benchmark's last close on or
+    before the signal, and a signal made on the Friday of a long weekend has no such bar in a
+    window beginning on its own date.
+  - **`trading.hit_rate` repeats `ConvictionTier`'s thresholds in SQL**, which is a
+    duplication worth having - a report needing a deploy to change is a report nobody runs -
+    and it is guarded by a test that drives each boundary from both sides.
+
+  *Mutation testing:* the view's conviction boundary moved **1**; not-measurable rows not
+  written **2**; the signal filter removed **1**. That last one took three attempts: the
+  first two mutations did not change behaviour at all, which is its own reminder that a
+  mutation has to bite to mean anything.
+
+  *A claim from the plan was wrong.* The sweep is **not** the second writer the portfolio's
+  row version was put in for: it writes only `signal_outcomes` and never touches the
+  portfolio. Corrected rather than tested around, and replaced by a test that says the sweep
+  moves no money. The row version still has no contender.
+
+  *Verified live:* one sweep, 68 horizons across 17 signals, every one not due because every
+  signal was made that day - and exactly three history calls for AAPL, MSFT and SPY, with the
+  window at the signal date less ten days. 286 .NET tests and 270 Python green.
 
 ---
 
