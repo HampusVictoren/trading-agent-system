@@ -48,9 +48,9 @@ public static class PersistenceExtensions
     /// sentence about it - the same thing the agent service's lifespan does with its pool.
     /// </remarks>
     public static async Task EnsureTheSchemaIsCurrentAsync(
-        this IHost host, CancellationToken cancellationToken = default)
+        this IServiceProvider services, CancellationToken cancellationToken = default)
     {
-        await using var scope = host.Services.CreateAsyncScope();
+        await using var scope = services.CreateAsyncScope();
         var context = scope.ServiceProvider.GetRequiredService<TradingDbContext>();
 
         string[] pending;
