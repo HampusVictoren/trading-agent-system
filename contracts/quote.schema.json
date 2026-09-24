@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/HampusVictoren/trading-agent-system/contracts/quote.schema.json",
+  "title": "Instrument quote",
+  "description": "What the agent service answers for GET /v1/quotes/{symbol}. Deterministic: the same market data the fact sheet is built from, with no model involved. It exists because the engine has no market data of its own and cannot otherwise value a holding it is not currently analysing - and the position limit is a share of that value. It is deliberately narrower than the fact sheet: P/E and sector are read by agents, a price is read by arithmetic.",
+  "type": "object",
+  "unevaluatedProperties": false,
+  "required": [
+    "instrument",
+    "price",
+    "currency",
+    "as_of"
+  ],
+  "properties": {
+    "instrument": { "$ref": "#/$defs/instrument" },
+    "price": {
+      "description": "The last price the provider reported, in the instrument's own currency.",
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "currency": {
+      "description": "The currency the price is in. Not assumed to be USD: the engine refuses to mix currencies rather than converting behind anyone's back.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8
+    },
+    "as_of": {
+      "description": "When the price was taken, not when it was asked for. The engine refuses to value a holding on a quote older than its policy allows, which it cannot do without this.",
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "$defs": {
+    "instrument": {
+      "description": "Echoed from the request rather than from the provider's response, so the symbol in an answer is always one that passed validation.",
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": ["type", "symbol"],
+      "properties": {
+        "type": { "const": "equity" },
+        "symbol": {
+          "description": "The same rule the engine's Ticker enforces, and the same one the signal contract uses.",
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9.\\-]{0,9}$"
+        }
+      }
+    }
+  }
+}

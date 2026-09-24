@@ -6,6 +6,7 @@ import httpx2
 from fastapi import Request
 
 from app.application.pipeline import SignalPipeline
+from app.application.ports import MarketDataProvider
 from app.infrastructure.db.memory import MemoryStore
 from app.infrastructure.llm.provider import ModelConfigs
 
@@ -17,8 +18,14 @@ class Resources:
     models: ModelConfigs
 
     # Built at startup with every team validated, every prompt read and every model
-    # configuration constructed. No route calls it until the switch-over adds /v1/signals.
+    # configuration constructed.
     pipeline: SignalPipeline
+
+    # The same instance the pipeline runs on, so the quote endpoint and the fact sheet share
+    # one cache: a price fetched for an analysis is the price a valuation gets, and the TTL
+    # is spent once rather than twice.
+    market: MarketDataProvider
+
     memory: MemoryStore
     http_client: httpx2.AsyncClient
 

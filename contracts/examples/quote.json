@@ -1,0 +1,6 @@
+{
+  "instrument": { "type": "equity", "symbol": "MSFT" },
+  "price": 415.25,
+  "currency": "USD",
+  "as_of": "2026-09-24T18:44:00Z"
+}

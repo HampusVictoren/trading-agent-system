@@ -13,6 +13,8 @@ public class PythonAgentClient : IAgentClient
 
     private const string SignalsPath = "v1/signals";
 
+    private const string QuotesPath = "v1/quotes";
+
     private readonly HttpClient _httpClient;
 
     public PythonAgentClient(HttpClient httpClient)
@@ -71,6 +73,52 @@ public class PythonAgentClient : IAgentClient
         {
             throw new AgentResponseInvalidException(
                 $"The agent service answered for {Describe(request)} with something other than the agreed JSON.", ex);
+        }
+    }
+
+    /// <summary>
+    /// Fetches one price. The symbol goes into the path, escaped - the agent service
+    /// validates it against the contract's pattern before it looks anything up, and
+    /// <see cref="Ticker"/> has already refused anything that is not a symbol on this side.
+    /// Escaping it anyway is what keeps both of those from being the only thing standing
+    /// between a value and a URL.
+    /// </summary>
+    public async Task<QuoteDto?> GetQuoteAsync(
+        string symbol, string correlationId, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            using var message = new HttpRequestMessage(
+                HttpMethod.Get, $"{QuotesPath}/{Uri.EscapeDataString(symbol)}");
+
+            // The cycle's own id, so the line the agent service writes about this quote can
+            // be found next to the line about the decision it priced.
+            message.Headers.Add(CorrelationIdHeader, correlationId);
+
+            var response = await _httpClient.SendAsync(message, cancellationToken);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new AgentServiceUnavailableException(
+                    $"The agent service answered {(int)response.StatusCode} for a quote on {symbol}.");
+            }
+
+            return await response.Content.ReadFromJsonAsync<QuoteDto>(
+                ContractSerialization.Options, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw; // We are shutting down, which is not a failure of the agent service.
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TimeoutRejectedException or OperationCanceledException)
+        {
+            throw new AgentServiceUnavailableException(
+                $"The agent service did not answer for a quote on {symbol}.", ex);
+        }
+        catch (Exception ex) when (ex is JsonException or NotSupportedException)
+        {
+            throw new AgentResponseInvalidException(
+                $"The agent service answered for a quote on {symbol} with something other than the agreed JSON.", ex);
         }
     }
 

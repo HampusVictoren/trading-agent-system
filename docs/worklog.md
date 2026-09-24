@@ -7,8 +7,8 @@ A running record of what has been done, what was learned along the way, and what
 
 This file answers "where are we, how did we get here, and what is next". When resuming, read *Current state* and *Next steps* first, then the roadmap section for the next stage.
 
-**Last updated:** 2026-09-24, after stage 4's second pull request. The engine's decisions now
-have somewhere to go, and the portfolio survives a restart.
+**Last updated:** 2026-09-24, after stage 4's third pull request. Decisions are stored, the
+portfolio survives a restart, and the engine can price a holding it is not analysing.
 
 ## Resuming checklist
 
@@ -42,12 +42,13 @@ Two things that are easy to misread as broken:
 
 ## Current state
 
-- **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21, **stage 3 done** 2026-09-23. **Stage 4 started** 2026-09-23, two of its six pull requests done. Stages 5-8 exist only as plan.
-- **`master` is at PR #33.** Nothing reaches it without the three required checks passing, so what is there is green by construction.
+- **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21, **stage 3 done** 2026-09-23. **Stage 4 started** 2026-09-23, three of its six pull requests done. Stages 5-8 exist only as plan.
+- **`master` is at PR #34.** Nothing reaches it without the three required checks passing, so what is there is green by construction.
 - **Branches:** `master` plus whatever branch is being worked on.
 - **There is one path now.** `POST /v1/signals` is the only endpoint that costs money, the engine calls it every cycle, and the old three-agent chain, `InvestmentProposal`, `ValidateTrade`, `RiskViolationException` and the FastMCP server are gone. Running the engine today produces real quantities at real prices, with the position cap holding across cycles.
 - **Every environment variable was renamed on 2026-09-23.** The local `src/agents/.env` was renamed in place and still works; a fresh clone follows `.env.example`. Nothing outside this repo reads them.
-- **The `trading` schema is live and has real rows in it.** A run on 2026-09-24 opened the account at 10 000 USD, bought one AAPL at 337.445, and a second engine process picked the same portfolio up rather than opening another. Delete them with `TRUNCATE trading.decisions, trading.orders, trading.positions, trading.portfolios RESTART IDENTITY CASCADE` if a clean baseline matters - the append-only triggers deliberately do not block that.
+- **The engine trades two instruments.** `Trading:Tickers` is AAPL and MSFT, so a cycle is two analyses and the quote endpoint is used in a real run rather than only by tests.
+- **The `trading` schema is live and has real rows in it.** Runs on 2026-09-24 opened the account at 10 000 USD and bought one AAPL at 337.445 and one MSFT at 497.56, with a second engine process picking the same portfolio up rather than opening another. Delete them with `TRUNCATE trading.decisions, trading.orders, trading.positions, trading.portfolios RESTART IDENTITY CASCADE` if a clean baseline matters - the append-only triggers deliberately do not block that.
 - **The engine now needs `Database:ConnectionString`** or it refuses to start. It is in the user secrets store on this machine, set 2026-09-23. `dotnet user-secrets list --project src/engine` prints it, so do not run that where anyone can see the screen.
 - **Migrations are applied by hand, and the engine refuses to start without them.** Decided 2026-09-24: `dotnet dotnet-ef database update` stays a deploy step, but startup names the pending migrations and the command instead of failing on a missing column mid-cycle.
 - **What is now impossible** rather than merely unlikely: the agents cannot name an amount (the contract has no `amount_usd`, and a test refuses one that reappears); an answer that is not the contract cannot deserialise into nulls; a position cannot be sized against cash instead of net asset value; and an order cannot be placed on a quote that is stale or dated in the future.
@@ -88,7 +89,7 @@ all land in PR 4, and are repeated here so they are not re-derived from scratch.
 |---|---|---|
 | 1 ✅ | `trading` schema through EF Core: `portfolios`, `positions`, `orders` (append-only), `decisions`. `IPortfolioRepository`/`IUnitOfWork`, a reconstitution constructor on `Portfolio`. Testcontainers, and the migration tested **both ways**. | The shape is the decision. Everything after it writes rows in this form. |
 | 2 ✅ | `TradingWorker` loads the portfolio per cycle and saves the decision. | This is where restart-survival becomes visible - and **the thread-safety problem disappears structurally** rather than being guarded against. |
-| 3 | `GET /v1/quotes/{symbol}` on the agent service, deterministic and with no LLM, plus the engine's client for it. | It is what an outcome is measured against, and it also closes the gap left in stage 3: `PositionSizer` gets `PriceSnapshot.Empty` today, so a portfolio holding more than one instrument cannot be valued. |
+| 3 ✅ | `GET /v1/quotes/{symbol}` on the agent service, deterministic and with no LLM, plus the engine's client for it. | It is what an outcome is measured against, and it also closes the gap left in stage 3: `PositionSizer` gets `PriceSnapshot.Empty` today, so a portfolio holding more than one instrument cannot be valued. |
 | 4 | The outcome function: return over a horizon, comparison against an index, hit per stance, a horizon landing on a non-trading day. Pure functions, TDD. | Findings E and F land here. Indata and expected figure are the specification, which is exactly where writing the test first pays. |
 | 5 | The scheduled job and `trading.signal_outcomes`: the fixed horizons (1, 5, 20 trading days) and the model's own, **for every signal** - including HOLD, risk rejections and everything that was never bought. A SQL view for the minimum report. | Measuring only the trades that went through measures the wrong population. |
 | 6 | Python's side: Alembic for the `agent` schema, the pool leak in `memory.py`, memory wired into the pipeline, each signal's `FactSheet` stored, and `POST /v1/outcomes` so the engine can tell Python what happened. | **The database is never the integration point** - that is what separates "two schemas" from the shared-database anti-pattern. |
@@ -101,41 +102,47 @@ the fixed horizons is part of the stage's definition of done.
 
 Before stage 5, turn finding D's currency mismatch into an outcome rather than a throw.
 
-### Next up: PR 3 - the quote endpoint
+### Next up: PR 4 - the outcome function
 
-`GET /v1/quotes/{symbol}` on the agent service, deterministic and with no LLM, plus the
-engine's client for it. It is what an outcome will be measured against in PR 4, and it closes
-the gap stage 3 left: `PositionSizer` is handed `PriceSnapshot.Empty`, so a portfolio holding
-anything other than the instrument being analysed cannot be valued and the sizer says which
-holding stopped it.
+Return over a horizon, compared against an index, and a hit defined per stance. Pure
+functions, written test-first: input and expected figure *are* the specification, which is
+exactly where writing the test first pays. Findings E and F land here, and the decisions
+behind them were already taken on 2026-09-23 - fixed basis points per side, trading days
+counted as bars, SPY with a fixed ±2 % band.
 
-**Three things to settle first.**
+**The thing to settle first, and it is bigger than it looks: where the engine gets historical
+bars.** The calendar decision says a horizon of five trading days is the fifth *bar* at or
+after the signal date, and the hit definition needs the index's bars over the same period.
+`GET /v1/quotes/{symbol}` answers with one price now, which is not enough for either. Three
+ways out, and this is a checkpoint question rather than something to assume:
 
-1. **Where the symbol travels.** The roadmap says `GET /v1/quotes/{symbol}`, but finding B was
-   about a symbol interpolated into a path, and the signal contract moved it into a body for
-   exactly that reason. `Ticker` now has the format rule on the engine's side and the schema
-   has it on Python's, so a path parameter is defensible - but it is a decision, not a
-   default. Recommendation: path parameter, validated against the same pattern on both sides,
-   with a test that a traversal attempt is a 422 rather than a lookup.
-2. **One symbol or many.** A portfolio with *n* holdings costs *n* round trips per cycle to
-   value. Recommendation: start with one symbol, because the portfolio holds one instrument
-   today and a batch endpoint designed before there is a second is designed from guesswork.
-   Note it as the first thing to revisit when `Trading:Tickers` grows.
-3. **Whether a quote needs the API key.** It costs no LLM call, but it does cost a yfinance
-   call and it exposes the market-data integration. Recommendation: same `X-Api-Key` as
-   `/v1/signals` - an endpoint that is cheap to call is the one worth rate-limiting first.
+1. **A history endpoint on the agent service**, `GET /v1/quotes/{symbol}/history`, over the
+   same `MarketDataProvider` that already fetches two years of bars for every fact sheet. It
+   keeps market data in one service, which is the rule the whole architecture rests on. The
+   cost is a second contract and a payload that is a list rather than a value.
+2. **Measure when the horizon passes, from the daily quote.** The job runs daily and writes
+   an outcome the day a horizon comes due, using the quote of that day. No new endpoint - but
+   it cannot count trading days without knowing which days were trading days, so the calendar
+   decision would have to be revisited, and a job that misses a day silently measures the
+   wrong horizon.
+3. **Let Python compute the outcome** and have the engine ask for it. Keeps bars where the
+   data is, but puts the measurement in the service being measured, and the roadmap is
+   deliberate that the engine owns `trading.signal_outcomes`.
 
-**The shape of the change.** Python: a route over the existing `CachingMarketData`, returning
-the same `Quote` the fact sheet is built from, with `instrument_not_found` and
-`market_data_unavailable` reusing the error vocabulary already in `app/api/errors.py`. A
-`contracts/quote.schema.json` read by both sides' tests, like the signal contract. Engine: a
-client behind a port, and `ProcessProposalUseCase` building a real `PriceSnapshot` from the
-portfolio's holdings instead of passing `PriceSnapshot.Empty`.
+Recommendation: (1). It is the one that leaves the calendar decision intact, and the provider
+already fetches the bars.
 
-**What its tests have to prove.** That a portfolio holding two instruments can be valued and
-sized - the case `A_portfolio_holding_something_the_engine_cannot_price_is_not_sized` currently
-pins as *not* working. And that a quote the engine cannot get is an outcome rather than an
-exception, because a market-data outage must not look like a risk decision.
+**Also to settle:** where the cost model's basis points live. `RiskPolicy` is about what may
+be traded, not about how a result is scored, so they probably want an `Outcome` section of
+their own - which also keeps a number that changes a *measurement* apart from numbers that
+change a *decision*.
+
+**What its tests have to prove.** A horizon that lands on a non-trading day resolves to
+something stated rather than to whatever the data happened to have. A cost model that turns a
+positive gross return negative at short horizons, because that is the case finding F is about.
+And a hit per stance: BUY beats the index, SELL does worse, HOLD stays inside the band -
+with the raw returns stored beside the verdict, so changing the band later does not throw away
+what was already measured.
 
 ## Open findings
 
@@ -338,6 +345,8 @@ function and therefore an ideal test-first target.
 - **One row with ticker `TEST`** sits in `agent.agent_memories` from the smoke test on 2026-09-20. Harmless; delete it if a clean table matters.
 - **The first account was opened on 2026-09-24** at 10 000 USD, and `trading` now holds real rows from a live run against `llama3.2`. They are a smoke test, not a baseline: the baseline starts when the outcome job in PR 5 exists.
 - **`orders.placed_at` is a shadow property** filled by the database's `now()`. It is audit metadata today; stage 5 counts a holding period from the last purchase, and that is when it becomes domain data and has to come from the engine's injected clock instead.
+- **Quotes share the analysis client's resilience policy**, which does not retry a failing response. That rule was written for a call costing 12-15 s of LLM time and is stricter than an idempotent GET needs; the cost of leaving it is one cycle without a price for one holding, and the cost of a second typed client is a second place for the key and the timeouts to drift. Revisit if missing quotes ever show up in the decision rows.
+- **A quote for a symbol that is not a symbol answers 404, not 422.** FastAPI rejects it at routing, before validation, so it never reaches the error vocabulary. Honest but inconsistent with every other refusal in the contract; worth a `Path` converter or a catch-all route if the difference ever matters to a caller.
 - **Nothing translates a duplicate `correlation_id`.** `UnitOfWork` turns EF's concurrency exception into `ConcurrentChangeException`, but a unique-index violation still surfaces as `DbUpdateException` and lands in the worker's general handler with a stack trace. That is arguably right - the ids are fresh Guids, so a duplicate is a bug - but it has never been seen, so it has never been read.
 
 ---
@@ -652,6 +661,45 @@ steps* rather than here, because they are still being spent.
   one would be a bug rather than a condition, and it falls into the worker's general handler
   with a stack trace.
 
+- **PR `stage-4-quotes`** (four commits, 2026-09-24): `GET /v1/quotes/{symbol}`, and the
+  engine using it to value the holdings it is not analysing. This closes the gap stage 3
+  recorded as a test rather than a comment.
+
+  - **Three decisions, all taken the recommended way.** The symbol travels in the path, the
+    endpoint answers one symbol at a time, and `Trading:Tickers` gains MSFT so the endpoint
+    is exercised by a real run rather than only by tests.
+  - **Finding B was never about the path.** It was about a value nobody checked. FastAPI now
+    validates the symbol against the same pattern the contract and `Ticker` enforce *before*
+    the route body runs, so `../internal/shutdown` never reaches a lookup; the engine escapes
+    it into the URL anyway, so neither check is the only thing standing between a value and a
+    URL. Five such symbols are tests on the Python side and three on the engine's.
+  - **The contract is narrower than the fact sheet.** P/E and sector are read by agents; a
+    price is read by arithmetic. Every field in a contract is a field the other side has to
+    keep accepting, and the engine's DTOs refuse unknown members by design.
+  - **It is the first contract with a currency.** A quote can be for an instrument the engine
+    does not price in dollars, so a SEK price arrives as SEK and `Money` refuses to add it to
+    a dollar total. That is half of what finding D's remainder needs.
+  - **A missing or stale quote is left out, never substituted.** The portfolio then cannot be
+    valued and the sizer names the holding that stopped it. Valuing a holding at what it cost
+    would overstate a loser, raising the allowance for everything else exactly when the
+    portfolio had shrunk - the same argument that produced `PortfolioValuation.PriceMissing`
+    in stage 2.
+
+  *Mutation testing:* the path pattern removed **3** (Python); the staleness window widened
+  to ten years **1**. The first attempt at that second mutation was `if (false)`, which is
+  unreachable code and therefore a build error here - the lesson from stage 3, met again.
+
+  *Found by running it, not by review.* The agent service was logging every quote under a
+  correlation id it had invented, because the engine set the header only on the signal call.
+  A decision that cannot be traced back to the prices it was made on is a decision stage 4
+  cannot explain. After the fix, four cycles in one run had their signal and their quote under
+  one id.
+
+  *Verified live:* a real quote for MSFT at 497.56 over HTTP, a traversal symbol answered 404,
+  no key answered 401, and the engine bought one MSFT while holding AAPL - which is only
+  possible if the AAPL holding was priced through the endpoint. 227 .NET tests and 255 Python
+  green.
+
 ---
 
 ## Lessons and gotchas
@@ -689,6 +737,8 @@ Things that cost time or were not obvious. Most are also recorded where they app
 - Testcontainers can run a repository's real init script with `WithResourceMapping(new FileInfo(...), "/docker-entrypoint-initdb.d/")`, so the test database gets the production roles and grants instead of a copy that drifts.
 
 **Python**
+- **Entering `TestClient(app)` as a context manager runs the app's lifespan**, which opens a database pool and probes the LLM backend. A unit test must *construct* the client instead. The mistake is invisible on this machine, where both are up, and fails only in CI - eleven errors at setup, with the real reason ten frames down.
+- **CI is reproducible locally with a throwaway worktree:** `git worktree add --detach <tmp> HEAD` gives a tree with only tracked files, so no `.env`, no `.venv` and no build output. Running `uv sync --locked && uv run pytest` there is what CI actually does, and it catches anything that only passes because this machine has something CI does not.
 - `uv_build` assumes a `src/` layout. This repo needs `module-name = "app"` and `module-root = ""`.
 - openai 3.x types its client against `httpx2`, so `memory.py` has a documented `type: ignore` until stage 1 moves client creation into the lifespan.
 - AG2 1.0.5: `ask()` without `stream=` runs on a fresh `MemoryStream` (`stream or MemoryStream()` in `Agent._open_run`), so agent objects shared between requests do not leak history.
