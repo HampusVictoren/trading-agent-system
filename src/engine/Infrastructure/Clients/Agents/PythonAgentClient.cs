@@ -1,5 +1,6 @@
 namespace Engine.Infrastructure.Clients.Agents;
 
+using System.Globalization;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Engine.Application.Contracts;
@@ -119,6 +120,49 @@ public class PythonAgentClient : IAgentClient
         {
             throw new AgentResponseInvalidException(
                 $"The agent service answered for a quote on {symbol} with something other than the agreed JSON.", ex);
+        }
+    }
+
+    /// <summary>
+    /// Fetches the closes since a date. The date is formatted invariantly rather than with
+    /// whatever culture the process happens to run under, because a URL is not a place where
+    /// a machine's locale should be able to change the meaning of a request.
+    /// </summary>
+    public async Task<HistoryDto?> GetHistoryAsync(
+        string symbol, DateOnly from, string correlationId, CancellationToken cancellationToken = default)
+    {
+        var path = $"{QuotesPath}/{Uri.EscapeDataString(symbol)}/history"
+            + $"?from={Uri.EscapeDataString(from.ToString("O", CultureInfo.InvariantCulture))}";
+
+        try
+        {
+            using var message = new HttpRequestMessage(HttpMethod.Get, path);
+            message.Headers.Add(CorrelationIdHeader, correlationId);
+
+            var response = await _httpClient.SendAsync(message, cancellationToken);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new AgentServiceUnavailableException(
+                    $"The agent service answered {(int)response.StatusCode} for history on {symbol}.");
+            }
+
+            return await response.Content.ReadFromJsonAsync<HistoryDto>(
+                ContractSerialization.Options, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw; // We are shutting down, which is not a failure of the agent service.
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TimeoutRejectedException or OperationCanceledException)
+        {
+            throw new AgentServiceUnavailableException(
+                $"The agent service did not answer for history on {symbol}.", ex);
+        }
+        catch (Exception ex) when (ex is JsonException or NotSupportedException)
+        {
+            throw new AgentResponseInvalidException(
+                $"The agent service answered for history on {symbol} with something other than the agreed JSON.", ex);
         }
     }
 

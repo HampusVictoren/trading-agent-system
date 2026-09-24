@@ -29,4 +29,12 @@ public interface IAgentClient
     /// </remarks>
     Task<QuoteDto?> GetQuoteAsync(
         string symbol, string correlationId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// An instrument's closes from a date onwards, which is how an outcome is measured and
+    /// what stands in for a trading calendar: a day with no bar is a day the market was
+    /// shut. An empty series is a valid answer.
+    /// </summary>
+    Task<HistoryDto?> GetHistoryAsync(
+        string symbol, DateOnly from, string correlationId, CancellationToken cancellationToken = default);
 }
