@@ -39,4 +39,9 @@ builder.Services.AddTransient<ProcessProposalUseCase>();
 builder.Services.AddHostedService<TradingWorker>();
 
 var host = builder.Build();
+
+// Before anything runs a cycle: the engine never migrates itself, but it will not start
+// against a database that is behind this build.
+await host.EnsureTheSchemaIsCurrentAsync();
+
 await host.RunAsync();

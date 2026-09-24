@@ -20,6 +20,7 @@ public class EngineOptionsTests
         ["Trading:Tickers:0"] = "AAPL",
         ["Trading:CycleIntervalSeconds"] = "15",
         ["Trading:TeamId"] = "default",
+        ["Trading:OpeningBalanceUsd"] = "10000",
         ["Database:ConnectionString"] = "Host=127.0.0.1;Database=tradingdb;Username=engine_svc",
     };
 
@@ -55,6 +56,7 @@ public class EngineOptionsTests
         Resolve<TradingOptions>().Tickers.ShouldBe(["AAPL"]);
         Resolve<TradingOptions>().CycleInterval.ShouldBe(TimeSpan.FromSeconds(15));
         Resolve<TradingOptions>().TeamId.ShouldBe("default");
+        Resolve<TradingOptions>().OpeningBalanceUsd.ShouldBe(10_000m);
     }
 
     [Fact]
@@ -114,6 +116,19 @@ public class EngineOptionsTests
         // buys a cycle of 401s. It is a secret, so it comes from user secrets or the
         // environment rather than appsettings.json - which is exactly why it can be absent.
         Should.Throw<OptionsValidationException>(() => Resolve<AgentServiceOptions>(("AgentService:ApiKey", null)));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("0")]
+    [InlineData("-100")]
+    public void An_opening_balance_that_is_not_a_portfolio_is_rejected(string? value)
+    {
+        // The number is used once in the account's life and then sets the size of every trade
+        // that follows, because the position cap is a share of the portfolio's value. A
+        // missing setting binds to zero, which the lower bound is there to catch.
+        Should.Throw<OptionsValidationException>(
+            () => Resolve<TradingOptions>(("Trading:OpeningBalanceUsd", value)));
     }
 
     [Fact]

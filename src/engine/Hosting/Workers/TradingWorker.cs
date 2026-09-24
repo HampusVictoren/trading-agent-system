@@ -1,5 +1,6 @@
 namespace Engine.Hosting.Workers;
 
+using Engine.Application.Persistence;
 using Engine.Application.UseCases;
 using Engine.Domain.Aggregates.Portfolio;
 using Engine.Domain.ValueObjects;
@@ -19,10 +20,14 @@ public class TradingWorker : BackgroundService
         _logger = logger;
     }
 
+    /// <remarks>
+    /// The worker holds no portfolio. Each cycle reads it, changes it and commits it inside
+    /// one scope, which is what makes a restart continue rather than begin - and it is also
+    /// why there is no shared mutable state left to get wrong when a second ticker, or a
+    /// second worker, arrives.
+    /// </remarks>
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var portfolio = new Portfolio(new Money(10000m, "USD"));
-
         while (!stoppingToken.IsCancellationRequested)
         {
             foreach (var tickerSymbol in _options.Tickers)
@@ -30,8 +35,8 @@ public class TradingWorker : BackgroundService
                 if (stoppingToken.IsCancellationRequested)
                     return;
 
+                // One scope per cycle, so one change tracker and one transaction per decision.
                 using var scope = _scopeFactory.CreateScope();
-                var useCase = scope.ServiceProvider.GetRequiredService<ProcessProposalUseCase>();
 
                 // One id per cycle, generated here and logged before the call, so a line in
                 // this log can be found in the agent service's - it echoes the id and puts
@@ -40,18 +45,26 @@ public class TradingWorker : BackgroundService
 
                 try
                 {
-                    _logger.LogInformation(
-                        "Requesting analysis for {Ticker} as {CorrelationId}...", tickerSymbol, correlationId);
-                    var result = await useCase.ExecuteAsync(portfolio, tickerSymbol, correlationId, stoppingToken);
-                    LogOutcome(result, portfolio);
+                    await RunCycleAsync(scope.ServiceProvider, tickerSymbol, correlationId, stoppingToken);
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
                     return;
                 }
+                catch (ConcurrentChangeException ex)
+                {
+                    // An expected outcome rather than a bug, so no stack trace. Nothing was
+                    // traded either: the buy is in the same transaction as the decision, so a
+                    // commit that fails costs an LLM call and nothing else. The next cycle
+                    // reads the portfolio again.
+                    _logger.LogError(
+                        "Cycle {CorrelationId} for {Ticker} was not stored: {Reason}",
+                        correlationId, tickerSymbol, ex.Message);
+                }
                 catch (Exception ex)
                 {
-                    // Only a bug reaches this point: every expected outcome is a result.
+                    // Only a bug, or an outage, reaches this point: every expected outcome of
+                    // the analysis itself is a result rather than an exception.
                     _logger.LogError(ex, "Unexpected failure in the trading cycle for {Ticker}.", tickerSymbol);
                 }
             }
@@ -65,6 +78,42 @@ public class TradingWorker : BackgroundService
                 return;
             }
         }
+    }
+
+    /// <summary>
+    /// One cycle: read the portfolio, decide, commit. The outcome is logged only after the
+    /// commit, so a line in this log means a row in the database rather than an intention.
+    /// </summary>
+    private async Task RunCycleAsync(
+        IServiceProvider services, string tickerSymbol, string correlationId, CancellationToken cancellationToken)
+    {
+        var portfolios = services.GetRequiredService<IPortfolioRepository>();
+        var useCase = services.GetRequiredService<ProcessProposalUseCase>();
+        var unitOfWork = services.GetRequiredService<IUnitOfWork>();
+
+        var portfolio = await portfolios.FindAsync(cancellationToken) ?? OpenTheAccount(portfolios);
+
+        _logger.LogInformation(
+            "Requesting analysis for {Ticker} as {CorrelationId}...", tickerSymbol, correlationId);
+
+        var result = await useCase.ExecuteAsync(portfolio, tickerSymbol, correlationId, cancellationToken);
+
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+
+        LogOutcome(result, portfolio);
+    }
+
+    /// <summary>Happens once in the account's life: the first cycle against an empty database.</summary>
+    private Portfolio OpenTheAccount(IPortfolioRepository portfolios)
+    {
+        var portfolio = new Portfolio(new Money(_options.OpeningBalanceUsd, Money.DefaultCurrency));
+        portfolios.Add(portfolio);
+
+        _logger.LogInformation(
+            "No portfolio was stored, so one was opened with ${Balance} {Currency}.",
+            _options.OpeningBalanceUsd, Money.DefaultCurrency);
+
+        return portfolio;
     }
 
     /// <summary>
