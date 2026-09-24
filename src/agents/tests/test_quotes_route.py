@@ -42,18 +42,23 @@ A_SNAPSHOT = MarketSnapshot(
 
 
 @pytest.fixture
-def client(monkeypatch):
-    """The app with its market data substituted, and nothing else."""
+def quotes():
+    """The route with its market data substituted, and nothing else running.
+
+    The client is constructed rather than entered as a context manager, on purpose: entering
+    it runs the app's lifespan, which opens a database pool and probes the LLM backend. A
+    unit test must not need either - and in CI neither exists, which is exactly how that
+    mistake announces itself.
+    """
     market = AsyncMock()
     market.snapshot.return_value = A_SNAPSHOT
 
-    settings = SimpleNamespace(agent_api_key=SecretStr(API_KEY))
-    app.dependency_overrides[get_settings] = lambda: settings
+    app.dependency_overrides[get_settings] = lambda: SimpleNamespace(
+        agent_api_key=SecretStr(API_KEY)
+    )
     app.dependency_overrides[get_resources] = lambda: SimpleNamespace(market=market)
 
-    with TestClient(app) as test_client:
-        test_client.market = market  # type: ignore[attr-defined]
-        yield test_client
+    yield TestClient(app, raise_server_exceptions=False), market
 
     app.dependency_overrides.clear()
 
@@ -63,7 +68,9 @@ def get(client: TestClient, symbol: str, key: str | None = API_KEY):
     return client.get(f"/v1/quotes/{symbol}", headers=headers)
 
 
-def test_a_quote_comes_back_in_the_shape_the_contract_describes(client):
+def test_a_quote_comes_back_in_the_shape_the_contract_describes(quotes):
+    client, _ = quotes
+
     response = get(client, "MSFT")
 
     assert response.status_code == 200
@@ -75,9 +82,11 @@ def test_a_quote_comes_back_in_the_shape_the_contract_describes(client):
     }
 
 
-def test_the_fact_sheets_own_fields_do_not_leak_into_the_answer(client):
+def test_the_fact_sheets_own_fields_do_not_leak_into_the_answer(quotes):
     # P/E and sector are read by agents, not by arithmetic. Every field in a contract is a
     # field the other side has to keep accepting, so the engine gets only what it uses.
+    client, _ = quotes
+
     body = get(client, "MSFT").json()
 
     assert "pe_ratio" not in body
@@ -94,26 +103,31 @@ def test_the_fact_sheets_own_fields_do_not_leak_into_the_answer(client):
         "1MSFT",
     ],
 )
-def test_a_symbol_that_is_not_a_symbol_is_refused_before_any_lookup(client, symbol):
+def test_a_symbol_that_is_not_a_symbol_is_refused_before_any_lookup(quotes, symbol):
     # Finding B was not "a symbol in a path" but "a symbol nobody checked". The pattern runs
     # before the route body, so the provider is never asked.
+    client, market = quotes
+
     response = get(client, symbol)
 
     assert response.status_code in (404, 422)
-    client.market.snapshot.assert_not_called()
+    market.snapshot.assert_not_called()
 
 
-def test_a_quote_is_not_free_to_ask_for(client):
+def test_a_quote_is_not_free_to_ask_for(quotes):
     # It costs no model call, but it does cost a market data call and it exposes the one
     # integration this system has. The dependency is on the router, so the route is closed
     # by construction rather than by remembering.
+    client, market = quotes
+
     assert get(client, "MSFT", key=None).status_code == 401
     assert get(client, "MSFT", key="wrong").status_code == 401
-    client.market.snapshot.assert_not_called()
+    market.snapshot.assert_not_called()
 
 
-def test_an_unknown_symbol_is_the_callers_problem(client):
-    client.market.snapshot.side_effect = InstrumentNotFound("no data for NOSUCH")
+def test_an_unknown_symbol_is_the_callers_problem(quotes):
+    client, market = quotes
+    market.snapshot.side_effect = InstrumentNotFound("no data for NOSUCH")
 
     response = get(client, "NOSUCH")
 
@@ -121,8 +135,9 @@ def test_an_unknown_symbol_is_the_callers_problem(client):
     assert response.json()["error_code"] == "instrument_not_found"
 
 
-def test_a_market_data_outage_is_not_the_callers_problem(client):
-    client.market.snapshot.side_effect = MarketDataUnavailable("yfinance timed out")
+def test_a_market_data_outage_is_not_the_callers_problem(quotes):
+    client, market = quotes
+    market.snapshot.side_effect = MarketDataUnavailable("yfinance timed out")
 
     response = get(client, "MSFT")
 
@@ -130,10 +145,11 @@ def test_a_market_data_outage_is_not_the_callers_problem(client):
     assert response.json()["error_code"] == "market_data_unavailable"
 
 
-def test_the_answer_never_carries_a_symbol_the_provider_invented(client):
+def test_the_answer_never_carries_a_symbol_the_provider_invented(quotes):
     # The provider echoes a symbol back and nothing validates it. The response is built from
     # the path parameter, which FastAPI has already checked.
-    client.market.snapshot.return_value = A_SNAPSHOT.model_copy(
+    client, market = quotes
+    market.snapshot.return_value = A_SNAPSHOT.model_copy(
         update={"quote": A_SNAPSHOT.quote.model_copy(update={"symbol": "../elsewhere"})}
     )
 

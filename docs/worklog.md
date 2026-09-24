@@ -737,6 +737,8 @@ Things that cost time or were not obvious. Most are also recorded where they app
 - Testcontainers can run a repository's real init script with `WithResourceMapping(new FileInfo(...), "/docker-entrypoint-initdb.d/")`, so the test database gets the production roles and grants instead of a copy that drifts.
 
 **Python**
+- **Entering `TestClient(app)` as a context manager runs the app's lifespan**, which opens a database pool and probes the LLM backend. A unit test must *construct* the client instead. The mistake is invisible on this machine, where both are up, and fails only in CI - eleven errors at setup, with the real reason ten frames down.
+- **CI is reproducible locally with a throwaway worktree:** `git worktree add --detach <tmp> HEAD` gives a tree with only tracked files, so no `.env`, no `.venv` and no build output. Running `uv sync --locked && uv run pytest` there is what CI actually does, and it catches anything that only passes because this machine has something CI does not.
 - `uv_build` assumes a `src/` layout. This repo needs `module-name = "app"` and `module-root = ""`.
 - openai 3.x types its client against `httpx2`, so `memory.py` has a documented `type: ignore` until stage 1 moves client creation into the lifespan.
 - AG2 1.0.5: `ask()` without `stream=` runs on a fresh `MemoryStream` (`stream or MemoryStream()` in `Agent._open_run`), so agent objects shared between requests do not leak history.
