@@ -7,22 +7,31 @@ A running record of what has been done, what was learned along the way, and what
 
 This file answers "where are we, how did we get here, and what is next". When resuming, read *Current state* and *Next steps* first, then the roadmap section for the next stage.
 
-**Last updated:** 2026-09-24. The machinery is complete: decisions are stored, the portfolio
-survives a restart, and a sweep measures every signal whose horizon has passed. **The baseline
-is now a matter of waiting**, which is the one thing that cannot be built.
+**Last updated:** 2026-09-24, with two pull requests open. **We are in stage 4**, the one the
+project exists for. Its machinery is complete on those branches: decisions are stored, the
+portfolio survives a restart, and a sweep measures every signal whose horizon has passed.
+What is left is one pull request on Python's side - and then **the baseline, which is a matter
+of waiting** and the one thing that cannot be built.
 
 ## Resuming checklist
 
 ```bash
 cd ~/repos/trading-agent-system            # the WSL clone; the Windows clone is stale
-git status && git branch -a                # expect master plus at most one working branch
+git status && git branch -a                # normally master plus one working branch; today two, see Current state
 git pull --ff-only
 docker compose up -d                       # trading-db; needs .env in the repo root
 cd src/agents && uv sync                   # Python dependencies from uv.lock
 curl -s http://127.0.0.1:11434/api/tags    # is Ollama on Windows reachable from WSL?
 ```
 
-Then run the CI checks listed in CLAUDE.md before changing anything, so that a failure is known to be pre-existing.
+Then run the CI checks listed in CLAUDE.md before changing anything, so that a failure is known to be pre-existing. **CI is reproducible locally** with a throwaway worktree, which is what catches anything that only passes because this machine has something CI does not:
+
+```bash
+git worktree add --detach /tmp/ci HEAD       # tracked files only: no .env, no .venv, no bin/
+cd /tmp/ci/src/agents && uv sync --locked && uv run pytest
+cd /tmp/ci && dotnet test --solution TradingSystem.slnx
+git worktree remove --force /tmp/ci
+```
 
 **Both services now refuse to start on an incomplete environment**, which is deliberate. On this machine everything is already in place; on a new clone it is not:
 
@@ -43,29 +52,32 @@ Two things that are easy to misread as broken:
 
 ## Current state
 
-- **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21, **stage 3 done** 2026-09-23. **Stage 4 started** 2026-09-23. PR 5 was split in two, so the stage is seven pull requests; six are done. Only the Python half is left. Stages 5-8 exist only as plan.
-- **`master` is at PR #36.** Nothing reaches it without the three required checks passing, so what is there is green by construction.
-- **Branches:** `master` plus whatever branch is being worked on.
+- **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21, **stage 3 done** 2026-09-23. **Stage 4 started** 2026-09-23 and is where the work is now. PR 5 was split in two, so the stage is seven pull requests: four are merged, **two are written and open**, and one - Python's half - has not been started. Stages 5-8 exist only as plan.
+- **`master` is at PR #36**, which is stage 4's PR 4. Nothing reaches it without the three required checks passing, so what is there is green by construction.
+- **Two pull requests are open, and one is stacked on the other.** `stage-4-measure` (the history endpoint, the client, the `Outcome` configuration) targets `master`; `stage-4-outcome-job` (the sweep, the table, the view) targets *`stage-4-measure`*, so its diff shows only its own four commits. GitHub retargets the second to `master` when the first merges. **Merge them in that order**, then delete both branches on each side - this is a deliberate exception to the one-working-branch rule, and it ends when they land.
+- **Everything below describes the code on those branches**, not what is on `master`. `master` alone has no quote history, no `signal_outcomes` and no sweep.
 - **There is one path now.** `POST /v1/signals` is the only endpoint that costs money, the engine calls it every cycle, and the old three-agent chain, `InvestmentProposal`, `ValidateTrade`, `RiskViolationException` and the FastMCP server are gone. Running the engine today produces real quantities at real prices, with the position cap holding across cycles.
 - **Every environment variable was renamed on 2026-09-23.** The local `src/agents/.env` was renamed in place and still works; a fresh clone follows `.env.example`. Nothing outside this repo reads them.
 - **Measurement runs, and has nothing to measure yet.** A sweep on 2026-09-24 found 68 horizons across 17 signals, every one of them not due: all the signals were made that same day. It made exactly three history calls - AAPL, MSFT and SPY - which is the "one per symbol plus one for the benchmark" property working on real data.
 - **The model asks for horizons of a year.** Of 21 signals, nine say 365 days and seven say 180, although the prompt asks for a short-term thesis. The fixed horizons of 1, 5 and 20 trading days still make a baseline possible, but the model's *own* horizon will not be measurable until 2027 and is close to useless as a measure of whether it can judge time. That is a prompt problem, found before a single measurement - which is what stage 4 is for.
 - **The engine trades two instruments.** `Trading:Tickers` is AAPL and MSFT, so a cycle is two analyses and the quote endpoint is used in a real run rather than only by tests.
-- **The `trading` schema is live and has real rows in it.** Runs on 2026-09-24 opened the account at 10 000 USD and bought one AAPL at 337.445 and one MSFT at 497.56, with a second engine process picking the same portfolio up rather than opening another. Delete them with `TRUNCATE trading.decisions, trading.orders, trading.positions, trading.portfolios RESTART IDENTITY CASCADE` if a clean baseline matters - the append-only triggers deliberately do not block that.
+- **The `trading` schema is live and has real rows in it.** Runs on 2026-09-24 opened the account at 10 000 USD and bought one AAPL at 337.445 and one MSFT at 497.56, with a second engine process picking the same portfolio up rather than opening another. The local database has **both** migrations applied, including `signal_outcomes` and the `hit_rate` view - so it is ahead of `master` until the two open pull requests land. Delete the rows with `TRUNCATE trading.signal_outcomes, trading.decisions, trading.orders, trading.positions, trading.portfolios RESTART IDENTITY CASCADE` if a clean baseline matters; the append-only triggers deliberately do not block that.
 - **The engine now needs `Database:ConnectionString`** or it refuses to start. It is in the user secrets store on this machine, set 2026-09-23. `dotnet user-secrets list --project src/engine` prints it, so do not run that where anyone can see the screen.
 - **Migrations are applied by hand, and the engine refuses to start without them.** Decided 2026-09-24: `dotnet dotnet-ef database update` stays a deploy step, but startup names the pending migrations and the command instead of failing on a missing column mid-cycle.
 - **What is now impossible** rather than merely unlikely: the agents cannot name an amount (the contract has no `amount_usd`, and a test refuses one that reappears); an answer that is not the contract cannot deserialise into nulls; a position cannot be sized against cash instead of net asset value; and an order cannot be placed on a quote that is stale or dated in the future.
 
 ## Next steps
 
-**Stage 4 - persistence and outcome measurement** (roadmap estimate: 4 days, the longest so
-far). Read the stage in `docs/arkitektur-roadmap.md` before starting; it carries several
-decisions that are easy to miss.
+**Stage 4 - persistence and outcome measurement**, six pull requests in and one to go. Read
+the stage in `docs/arkitektur-roadmap.md` before continuing; it carries several decisions that
+are easy to miss.
 
-**This is the stage the project exists for.** Everything built so far produces decisions that
-vanish on restart. Stage 4 stores them and measures what came of them, which is what turns
-*"are the agents any good?"* from an opinion into a number - grouped by `team_version`, which
-stage 3 built precisely so that this comparison would be possible.
+**This is the stage the project exists for**, and most of it now exists. Decisions survive a
+restart, every signal is stored with the room it was decided in, and a nightly sweep scores
+each one against the index at fixed horizons and at the model's own. What that turns *"are
+the agents any good?"* into is a number grouped by `team_version` - which stage 3 built
+precisely so this comparison would be possible, and which nothing can answer until a trading
+day has passed.
 
 > **Backtesting proves nothing here.** The model may already know from its training data how
 > AAPL went in 2024, so a backtest flatters itself. The only honest measure is decisions logged
