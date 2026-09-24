@@ -7,9 +7,9 @@ A running record of what has been done, what was learned along the way, and what
 
 This file answers "where are we, how did we get here, and what is next". When resuming, read *Current state* and *Next steps* first, then the roadmap section for the next stage.
 
-**Last updated:** 2026-09-24, after stage 4's fourth pull request. Decisions are stored, the
-portfolio survives a restart, the engine can price any holding, and an outcome can be
-computed - though nothing computes one yet.
+**Last updated:** 2026-09-24. Decisions are stored, the portfolio survives a restart, the
+engine can price any holding and fetch the bars an outcome is measured by - and nothing has
+measured one yet. That is the next pull request, and it is the one the stage is for.
 
 ## Resuming checklist
 
@@ -43,8 +43,8 @@ Two things that are easy to misread as broken:
 
 ## Current state
 
-- **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21, **stage 3 done** 2026-09-23. **Stage 4 started** 2026-09-23, four of its six pull requests done. Stages 5-8 exist only as plan.
-- **`master` is at PR #35.** Nothing reaches it without the three required checks passing, so what is there is green by construction.
+- **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21, **stage 3 done** 2026-09-23. **Stage 4 started** 2026-09-23. PR 5 was split in two, so the stage is seven pull requests; five are done. Stages 5-8 exist only as plan.
+- **`master` is at PR #36.** Nothing reaches it without the three required checks passing, so what is there is green by construction.
 - **Branches:** `master` plus whatever branch is being worked on.
 - **There is one path now.** `POST /v1/signals` is the only endpoint that costs money, the engine calls it every cycle, and the old three-agent chain, `InvestmentProposal`, `ValidateTrade`, `RiskViolationException` and the FastMCP server are gone. Running the engine today produces real quantities at real prices, with the position cap holding across cycles.
 - **Every environment variable was renamed on 2026-09-23.** The local `src/agents/.env` was renamed in place and still works; a fresh clone follows `.env.example`. Nothing outside this repo reads them.
@@ -92,7 +92,8 @@ all land in PR 4, and are repeated here so they are not re-derived from scratch.
 | 2 ✅ | `TradingWorker` loads the portfolio per cycle and saves the decision. | This is where restart-survival becomes visible - and **the thread-safety problem disappears structurally** rather than being guarded against. |
 | 3 ✅ | `GET /v1/quotes/{symbol}` on the agent service, deterministic and with no LLM, plus the engine's client for it. | It is what an outcome is measured against, and it also closes the gap left in stage 3: `PositionSizer` gets `PriceSnapshot.Empty` today, so a portfolio holding more than one instrument cannot be valued. |
 | 4 ✅ | The outcome function: return over a horizon, comparison against an index, hit per stance, a horizon landing on a non-trading day. Pure functions, TDD. | Findings E and F land here. Indata and expected figure are the specification, which is exactly where writing the test first pays. |
-| 5 | The scheduled job and `trading.signal_outcomes`: the fixed horizons (1, 5, 20 trading days) and the model's own, **for every signal** - including HOLD, risk rejections and everything that was never bought. A SQL view for the minimum report. | Measuring only the trades that went through measures the wrong population. |
+| 5a ✅ | The history endpoint, the engine's client for it, and the `Outcome` configuration. | Split out because the whole of PR 5 was five commits: this half is *how the engine gets bars*, and it runs on its own. |
+| 5b | The scheduled job and `trading.signal_outcomes`: the fixed horizons (1, 5, 20 trading days) and the model's own, **for every signal** - including HOLD, risk rejections and everything that was never bought. A SQL view for the minimum report. | Measuring only the trades that went through measures the wrong population. |
 | 6 | Python's side: Alembic for the `agent` schema, the pool leak in `memory.py`, memory wired into the pipeline, each signal's `FactSheet` stored, and `POST /v1/outcomes` so the engine can tell Python what happened. | **The database is never the integration point** - that is what separates "two schemas" from the shared-database anti-pattern. |
 
 **After PR 5, the baseline is a deliverable, not a by-product.** The thin three-step team has to
@@ -103,41 +104,34 @@ the fixed horizons is part of the stage's definition of done.
 
 Before stage 5, turn finding D's currency mismatch into an outcome rather than a throw.
 
-### Next up: PR 5 - the scheduled job and the outcomes table
+### Next up: PR 5b - the job, the table and the first measurement
 
-The biggest pull request of the stage, because it is where everything so far starts producing
-rows: a history endpoint, the configuration the calculator needs, `trading.signal_outcomes`,
-the job that fills it, and a SQL view for the minimum report. **After it, the baseline starts
-accumulating**, which is the stage's actual deliverable.
+Everything it needs now exists. **After it the baseline starts accumulating**, which is the
+stage's actual deliverable rather than a by-product.
 
-**Four things to settle first.**
+**Already decided, so the checkpoint is short.** A signal that can never be measured gets a
+row with null returns and the reason, because otherwise the job re-scans the same failures
+forever and the population being reported on quietly loses members. One row per
+(decision, horizon) with a unique index, so a job that runs twice cannot double-write - the
+same guard `decisions.correlation_id` gives a cycle. The horizon is stored as its unit *and*
+its count, because five trading days and five calendar days are different measurements. The
+job is a second `BackgroundService` in the engine's process, sweeping once a day.
 
-1. **Does a signal that can never be measured get a row?** If outcomes are stored only when
-   they succeed, the job re-scans the same unmeasurable signals forever, and a signal that
-   quietly never gets measured is one missing from the population being reported on.
-   Recommendation: store it, with null returns and the reason - the same argument that made a
-   failed agent call a decision row.
-2. **The table's key.** One row per (decision, horizon) with a unique constraint, so a job
-   that runs twice cannot double-write - the same guard `decisions.correlation_id` already
-   gives a cycle. Recommendation: exactly that, with the horizon stored as its unit and its
-   count rather than as a single number.
-3. **What drives the job.** A second `BackgroundService` in the engine's own process is
-   simplest and needs no new deployment. It is also the second writer the `xmin` row version
-   was put in for, so it is worth a test that the two cannot lose each other's work.
-4. **How far back it looks, and how often.** A daily sweep over unmeasured signals is
-   probably right; the fixed horizons are 1, 5 and 20 trading days, so nothing needs checking
-   more than once a day.
+**What is left to settle** is smaller: whether the report is a SQL view or a query in code,
+and whether the sweep measures every unmeasured signal each time or only those whose horizon
+could plausibly have passed.
 
-**The shape of the change.** Python: `GET /v1/quotes/{symbol}/history` over the same
-`MarketDataProvider`, with a contract file and a bounded window. Engine: `GetHistoryAsync` on
-the existing client, a `BarSeries` mapper, an `Outcome` configuration section (commission,
-spread, band, benchmark symbol, fixed horizons) mapping to `OutcomePolicy` the way
-`RiskPolicy` already does, the migration for `signal_outcomes`, and the job.
+**The shape of the change.** A migration for `trading.signal_outcomes` - decision id, horizon
+unit and count, the measured date and price, the four returns, the cost, the verdict, and a
+status telling a measured row from an abandoned one. An `IOutcomeLog` port beside the
+existing three. A `MeasurementWorker` that reads unmeasured decisions, asks for the two
+histories it needs, calls `OutcomeCalculator`, and writes what comes back. A view for hit
+rate against the index per `team_version` and conviction level.
 
-**What its tests have to prove.** That the job is idempotent - running it twice writes one
-row per horizon. That a `NotDue` signal is retried and a `NotMeasurable` one is not. And that
-the report view answers the only question that matters: hit rate against the index, per
-`team_version` and conviction level.
+**What its tests have to prove.** That running the sweep twice writes one row per horizon.
+That a `NotDue` signal is retried and a `NotMeasurable` one is not. That the two writers
+cannot lose each other's work - the concurrency test that has had nothing to contend with
+until now. And that the view answers the only question that matters.
 
 ## Open findings
 
@@ -731,6 +725,37 @@ steps* rather than here, because they are still being spent.
   *Nothing runs it.* No configuration, no endpoint, no job - which is the point: the roadmap
   asks for pure functions written test-first, and wiring would have made them harder to
   write, not easier. 254 .NET tests green.
+
+- **PR `stage-4-measure`** (four commits, 2026-09-24): how the engine gets bars. The plan's
+  PR 5 was five commits, so it was split: this half is the inputs, the next is where
+  measurements go.
+
+  - **Three decisions.** Split the pull request in two; a signal that can never be measured
+    still gets a row (next half); the job will be a second `BackgroundService` in the
+    engine's own process, which is the second writer the `xmin` row version was put in for.
+  - **`GET /v1/quotes/{symbol}/history?from=` is a trading calendar as much as a price
+    series.** An empty array is a good answer rather than a 404 - it means nothing has traded
+    since that date, which the calculator already reads as a horizon that has not passed.
+    `from` is required, because an unbounded history would be a different, larger endpoint
+    every time the provider's window changed.
+  - **The mapper is where a wrong measurement is stopped.** It refuses a close of zero, days
+    out of order or repeated, a field the contract does not have, and a history about another
+    instrument - which would otherwise be measured as if it were this one.
+  - **The `Outcome` section is separate from `RiskPolicy` on purpose.** One says what may be
+    traded, the other how what was traded is judged. Commission and spread are nullable and
+    required, because zero commission is a real arrangement; the band is not, because a band
+    of zero is not.
+  - **One basis point of commission and two of spread**, per side, so six basis points a
+    round trip. A plausible figure for a liquid US large cap and nothing more - the first
+    thing to replace when there is a broker.
+
+  *Mutation testing:* the window filter removed **2** (Python); the instrument check removed
+  **1**.
+
+  *Verified live:* nine SPY bars from 14 to 24 September with the weekend of the 19th and
+  20th simply absent - the trading calendar working on real data rather than on a fixture. A
+  future window answered with an empty array, a missing window 422, a date that is not a date
+  422. 271 .NET tests and 270 Python green.
 
 ---
 

@@ -22,6 +22,13 @@ public class EngineOptionsTests
         ["Trading:TeamId"] = "default",
         ["Trading:OpeningBalanceUsd"] = "10000",
         ["Database:ConnectionString"] = "Host=127.0.0.1;Database=tradingdb;Username=engine_svc",
+        ["Outcome:CommissionBps"] = "1",
+        ["Outcome:SpreadBps"] = "2",
+        ["Outcome:HoldBandPct"] = "0.02",
+        ["Outcome:BenchmarkSymbol"] = "SPY",
+        ["Outcome:FixedHorizonTradingDays:0"] = "1",
+        ["Outcome:FixedHorizonTradingDays:1"] = "5",
+        ["Outcome:FixedHorizonTradingDays:2"] = "20",
     };
 
     /// <summary>Resolves an options instance from valid settings, with the given keys changed or removed.</summary>
@@ -129,6 +136,75 @@ public class EngineOptionsTests
         // missing setting binds to zero, which the lower bound is there to catch.
         Should.Throw<OptionsValidationException>(
             () => Resolve<TradingOptions>(("Trading:OpeningBalanceUsd", value)));
+    }
+
+    [Fact]
+    public void The_scoring_figures_map_onto_the_domains_own_policy()
+    {
+        var options = Resolve<OutcomeOptions>();
+
+        options.ToOutcomePolicy().RoundTripFraction.ShouldBe(0.0006m);
+        options.BenchmarkSymbol.ShouldBe("SPY");
+        options.FixedHorizons().Select(horizon => horizon.Days).ShouldBe([1, 5, 20]);
+    }
+
+    [Theory]
+    [InlineData("Outcome:CommissionBps")]
+    [InlineData("Outcome:SpreadBps")]
+    public void A_missing_cost_is_rejected_although_zero_would_be_legitimate(string key)
+    {
+        // Zero commission is a real arrangement, so "absent" and "none" would otherwise be
+        // the same value - the same reason CashBufferPct is nullable and required.
+        Should.Throw<OptionsValidationException>(() => Resolve<OutcomeOptions>((key, null)));
+
+        Resolve<OutcomeOptions>((key, "0")).ToOutcomePolicy().ShouldNotBeNull();
+    }
+
+    [Fact]
+    public void A_missing_hold_band_is_rejected()
+    {
+        // A band of zero means a HOLD is only right when the deviation is exactly nothing,
+        // so the lower bound catches an absent setting without needing a nullable.
+        Should.Throw<OptionsValidationException>(() => Resolve<OutcomeOptions>(("Outcome:HoldBandPct", null)));
+    }
+
+    [Fact]
+    public void A_benchmark_that_is_not_a_symbol_is_rejected()
+    {
+        // It would otherwise surface as a 422 from the agent service, at midnight, for a
+        // quote nobody could explain.
+        var exception = Should.Throw<OptionsValidationException>(
+            () => Resolve<OutcomeOptions>(("Outcome:BenchmarkSymbol", "../etc")));
+
+        exception.Message.ShouldContain("BenchmarkSymbol");
+    }
+
+    [Fact]
+    public void A_horizon_below_one_day_is_rejected()
+    {
+        Should.Throw<OptionsValidationException>(
+            () => Resolve<OutcomeOptions>(("Outcome:FixedHorizonTradingDays:0", "0")));
+    }
+
+    [Fact]
+    public void A_repeated_horizon_is_rejected()
+    {
+        // Two rows for one measurement, which the outcomes table will refuse anyway. Better
+        // at startup than when the first horizon comes due.
+        var exception = Should.Throw<OptionsValidationException>(
+            () => Resolve<OutcomeOptions>(("Outcome:FixedHorizonTradingDays:2", "5")));
+
+        exception.Message.ShouldContain("repeats");
+    }
+
+    [Fact]
+    public void A_missing_horizon_list_is_rejected()
+    {
+        Should.Throw<OptionsValidationException>(
+            () => Resolve<OutcomeOptions>(
+                ("Outcome:FixedHorizonTradingDays:0", null),
+                ("Outcome:FixedHorizonTradingDays:1", null),
+                ("Outcome:FixedHorizonTradingDays:2", null)));
     }
 
     [Fact]

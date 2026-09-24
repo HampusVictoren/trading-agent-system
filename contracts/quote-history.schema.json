@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/HampusVictoren/trading-agent-system/contracts/quote-history.schema.json",
+  "title": "Instrument history",
+  "description": "What the agent service answers for GET /v1/quotes/{symbol}/history?from=YYYY-MM-DD. Deterministic, no model. It is the engine's price history and its trading calendar at once: an outcome is measured by counting bars, and a day with no bar is a day the market was shut. Bounded in practice by how much history the provider fetches, which is two years.",
+  "type": "object",
+  "unevaluatedProperties": false,
+  "required": ["instrument", "bars"],
+  "properties": {
+    "instrument": { "$ref": "#/$defs/instrument" },
+    "bars": {
+      "description": "Oldest first, one entry per day the market was open. An empty array is a valid answer: it means nothing has traded since the date asked about, which the engine reads as a horizon that has not passed.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/bar" }
+    }
+  },
+  "$defs": {
+    "instrument": {
+      "description": "Echoed from the request rather than from the provider's response, so the symbol in an answer is always one that passed validation.",
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": ["type", "symbol"],
+      "properties": {
+        "type": { "const": "equity" },
+        "symbol": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9.\\-]{0,9}$"
+        }
+      }
+    },
+    "bar": {
+      "description": "One day's close, and only the close: it is all an outcome is measured on.",
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": ["on", "close"],
+      "properties": {
+        "on": { "type": "string", "format": "date" },
+        "close": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    }
+  }
+}

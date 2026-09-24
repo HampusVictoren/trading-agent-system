@@ -260,4 +260,52 @@ public class PythonAgentClientTests
 
         recorder.Seen!.Headers.GetValues(PythonAgentClient.CorrelationIdHeader).ShouldBe(["cycle-7"]);
     }
+
+    private const string ValidHistory =
+        """
+        {"instrument":{"type":"equity","symbol":"MSFT"},
+         "bars":[{"on":"2026-09-21","close":410.10},{"on":"2026-09-22","close":412.75}]}
+        """;
+
+    [Fact]
+    public async Task Returns_a_history_when_the_service_honours_the_contract()
+    {
+        var client = ClientWith(new StubHandler(HttpStatusCode.OK, ValidHistory));
+
+        var history = await client.GetHistoryAsync(
+            "MSFT", new DateOnly(2026, 9, 21), "cycle-1", TestContext.Current.CancellationToken);
+
+        history.ShouldNotBeNull();
+        history.Bars.Count.ShouldBe(2);
+        history.Bars[0].On.ShouldBe(new DateOnly(2026, 9, 21));
+        history.Bars[0].Close.ShouldBe(410.10m);
+    }
+
+    [Fact]
+    public async Task A_history_request_names_its_window_and_its_cycle()
+    {
+        // The date is formatted invariantly: a URL is not a place where a machine's locale
+        // should be able to change what was asked for. The correlation id goes with it for
+        // the same reason every other call carries one.
+        var recorder = new RecordingHandler(ValidHistory);
+        var client = ClientWith(recorder);
+
+        await client.GetHistoryAsync(
+            "MSFT", new DateOnly(2026, 9, 21), "sweep-3", TestContext.Current.CancellationToken);
+
+        recorder.Seen!.RequestUri!.PathAndQuery.ShouldBe("/v1/quotes/MSFT/history?from=2026-09-21");
+        recorder.Seen.Headers.GetValues(PythonAgentClient.CorrelationIdHeader).ShouldBe(["sweep-3"]);
+    }
+
+    [Fact]
+    public async Task A_history_the_service_could_not_give_is_an_unavailable_agent_service()
+    {
+        var client = ClientWith(new StubHandler(HttpStatusCode.ServiceUnavailable, "{}"));
+
+        var exception = await Should.ThrowAsync<AgentServiceUnavailableException>(
+            () => client.GetHistoryAsync(
+                "MSFT", new DateOnly(2026, 9, 21), "cycle-1", TestContext.Current.CancellationToken));
+
+        exception.Message.ShouldContain("503");
+    }
 }

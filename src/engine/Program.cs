@@ -1,4 +1,5 @@
 using Engine.Application.UseCases;
+using Engine.Domain.Outcomes;
 using Engine.Domain.Risk;
 using Engine.Hosting;
 using Engine.Hosting.Options;
@@ -21,6 +22,13 @@ builder.Services.AddSingleton<RiskEngine>();
 builder.Services.AddSingleton<RiskPolicy>(sp =>
     sp.GetRequiredService<IOptions<RiskPolicyOptions>>().Value.ToRiskPolicy());
 builder.Services.AddSingleton<PositionSizer>();
+
+// Registered although nothing resolves them yet: the job that measures outcomes arrives in
+// the next pull request, and having the options-to-domain mapping in place means a bad
+// figure is caught at startup rather than at midnight when the first horizon comes due.
+builder.Services.AddSingleton<OutcomePolicy>(sp =>
+    sp.GetRequiredService<IOptions<OutcomeOptions>>().Value.ToOutcomePolicy());
+builder.Services.AddSingleton<OutcomeCalculator>();
 
 // Injected rather than read from DateTimeOffset.UtcNow, so the quote-age rule is testable
 // without waiting for time to pass.
