@@ -8,6 +8,7 @@ using Engine.Domain.Risk;
 using Engine.Domain.Signals;
 using Engine.Domain.ValueObjects;
 using Engine.Hosting.Options;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 public class ProcessProposalUseCase
@@ -19,6 +20,7 @@ public class ProcessProposalUseCase
     private readonly RiskPolicy _policy;
     private readonly TradingOptions _trading;
     private readonly TimeProvider _clock;
+    private readonly ILogger<ProcessProposalUseCase> _logger;
 
     public ProcessProposalUseCase(
         IAgentClient agentClient,
@@ -27,7 +29,8 @@ public class ProcessProposalUseCase
         RiskEngine riskEngine,
         RiskPolicy policy,
         IOptions<TradingOptions> trading,
-        TimeProvider clock)
+        TimeProvider clock,
+        ILogger<ProcessProposalUseCase> logger)
     {
         _agentClient = agentClient;
         _decisions = decisions;
@@ -36,6 +39,7 @@ public class ProcessProposalUseCase
         _policy = policy;
         _trading = trading.Value;
         _clock = clock;
+        _logger = logger;
     }
 
     /// <summary>
@@ -141,11 +145,13 @@ public class ProcessProposalUseCase
                 signal);
         }
 
-        // PriceSnapshot.Empty: the engine has no quotes for its other holdings until stage 4's
-        // quote endpoint adds them, so a portfolio holding something else cannot be valued and
-        // the sizer says so. With one ticker configured the signal's own price is all that is
-        // needed.
-        var intent = _sizer.Size(signal, portfolio, PriceSnapshot.Empty, _policy);
+        // The price for the instrument being analysed always comes from the signal, so an
+        // order is never sized against a quote the agents never saw. Everything else the
+        // portfolio holds is asked for here, because the position limit is a share of the
+        // portfolio's value and a holding without a price makes that value unknowable.
+        var prices = await PricesForOtherHoldingsAsync(portfolio, requested, request, cancellationToken);
+
+        var intent = _sizer.Size(signal, portfolio, prices, _policy);
 
         if (intent is not OrderIntent.Buy order)
         {
@@ -154,7 +160,7 @@ public class ProcessProposalUseCase
                 signal);
         }
 
-        var decision = _riskEngine.Evaluate(order, signal, portfolio, PriceSnapshot.Empty, _policy, request.AsOf);
+        var decision = _riskEngine.Evaluate(order, signal, portfolio, prices, _policy, request.AsOf);
 
         if (decision is RiskDecision.Rejected rejected)
         {
@@ -169,6 +175,72 @@ public class ProcessProposalUseCase
             new TradeDecisionResult.Executed(requested, order.Quantity, order.Price),
             signal,
             placed);
+    }
+
+    /// <summary>
+    /// A price for every other holding, from the agent service's quote endpoint. One call
+    /// each: the portfolio holds one or two instruments, and a batch endpoint designed before
+    /// there is a third would be designed from guesswork.
+    /// </summary>
+    /// <remarks>
+    /// A quote that cannot be fetched, or that is too old to trust, is simply left out. The
+    /// portfolio then cannot be valued and the sizer names the holding that stopped it -
+    /// which is the honest outcome, and one the engine already had a word for. Valuing a
+    /// holding at what it cost instead would overstate a loser, raising the position
+    /// allowance for everything else at exactly the wrong moment.
+    /// </remarks>
+    private async Task<PriceSnapshot> PricesForOtherHoldingsAsync(
+        Portfolio portfolio,
+        Ticker analysed,
+        TradeSignalRequestDto request,
+        CancellationToken cancellationToken)
+    {
+        var prices = PriceSnapshot.Empty;
+        var now = request.AsOf;
+
+        foreach (var position in portfolio.Positions.Where(held => held.Ticker != analysed))
+        {
+            var quote = await QuoteOrNothingAsync(position.Ticker, request.CorrelationId, cancellationToken);
+
+            if (quote is null)
+                continue;
+
+            if (!quote.IsUsableAt(now, _policy.MaxQuoteAge))
+            {
+                _logger.LogWarning(
+                    "The quote for {Ticker} is dated {AsOf:O}, which is outside the {Limit} s window.",
+                    position.Ticker.Value, quote.AsOf, _policy.MaxQuoteAge.TotalSeconds);
+                continue;
+            }
+
+            prices = prices.With(quote.Ticker, quote.Price);
+        }
+
+        return prices;
+    }
+
+    /// <summary>
+    /// A failed quote is not a failed cycle: the analysis already succeeded, and one holding
+    /// without a price is a sizing outcome rather than an error. It is logged, because the
+    /// outcome alone says a price was missing and not why.
+    /// </summary>
+    private async Task<InstrumentQuote?> QuoteOrNothingAsync(
+        Ticker ticker, string correlationId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var dto = await _agentClient.GetQuoteAsync(ticker.Value, correlationId, cancellationToken);
+            return dto is null ? null : QuoteMapper.ToDomain(dto);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw; // We are shutting down.
+        }
+        catch (Exception ex) when (ex is AgentServiceUnavailableException or AgentResponseInvalidException)
+        {
+            _logger.LogWarning(ex, "No usable quote for {Ticker} this cycle.", ticker.Value);
+            return null;
+        }
     }
 
     /// <summary>

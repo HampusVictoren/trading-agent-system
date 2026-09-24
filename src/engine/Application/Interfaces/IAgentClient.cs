@@ -22,6 +22,11 @@ public interface IAgentClient
     /// call that costs 12-15 s of LLM time, and stricter than a GET needs. The cost of
     /// leaving it stricter is one cycle without a price for one holding; the cost of a
     /// second client is a second place for the key and the timeouts to drift.
+    ///
+    /// The correlation id is not optional. Every request in this system carries one, and a
+    /// quote is part of the cycle that priced a decision - without it, the reason a holding
+    /// had no price sits in the agent service's log under an id nothing else mentions.
     /// </remarks>
-    Task<QuoteDto?> GetQuoteAsync(string symbol, CancellationToken cancellationToken = default);
+    Task<QuoteDto?> GetQuoteAsync(
+        string symbol, string correlationId, CancellationToken cancellationToken = default);
 }

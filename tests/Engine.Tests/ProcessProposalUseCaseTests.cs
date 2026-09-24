@@ -6,6 +6,7 @@ using Engine.Domain.Aggregates.Portfolio;
 using Engine.Domain.Risk;
 using Engine.Domain.ValueObjects;
 using Engine.Hosting.Options;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSubstitute;
 using NSubstitute.ExceptionExtensions;
@@ -66,11 +67,23 @@ public class ProcessProposalUseCaseTests
             Run = new RunDto { TeamId = TeamId, TeamVersion = "abc123", Revisions = 0 }
         };
 
+    private static QuoteDto Quote(string symbol, decimal price, DateTimeOffset? asOf = null) => new()
+    {
+        Instrument = new EquityInstrumentDto { Symbol = symbol },
+        Price = price,
+        Currency = "USD",
+        AsOf = asOf ?? Now
+    };
+
     private static (ProcessProposalUseCase Sut, IAgentClient Client, CapturedDecisions Decisions) Build(
-        TradeSignalDto? signal = null, Exception? throws = null)
+        TradeSignalDto? signal = null, Exception? throws = null, QuoteDto? quote = null)
     {
         var client = Substitute.For<IAgentClient>();
         var decisions = new CapturedDecisions();
+
+        // Null unless a test says otherwise, which is what "the engine could not get a price
+        // for that holding" looks like from here.
+        client.GetQuoteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(quote);
 
         if (throws is not null)
         {
@@ -92,7 +105,8 @@ public class ProcessProposalUseCaseTests
 
         return (
             new ProcessProposalUseCase(
-                client, decisions, new PositionSizer(), new RiskEngine(), Policy, options, new FixedClock(Now)),
+                client, decisions, new PositionSizer(), new RiskEngine(), Policy, options, new FixedClock(Now),
+                NullLogger<ProcessProposalUseCase>.Instance),
             client,
             decisions);
     }
@@ -281,16 +295,66 @@ public class ProcessProposalUseCaseTests
         }
 
         [Fact]
-        public async Task A_portfolio_holding_something_the_engine_cannot_price_is_not_sized()
+        public async Task A_portfolio_is_valued_from_quotes_for_the_holdings_it_is_not_analysing()
         {
-            // The known gap, recorded as a test rather than as a comment. The engine has no
-            // quotes for its other holdings until stage 4 adds GET /v1/quotes/{symbol}, so a
-            // portfolio holding MSFT cannot be valued - and the sizer says which holding
-            // stopped it rather than valuing it at what it cost.
+            // 2 MSFT at 500 plus 9 200 in cash is 10 200, so 5 % is 510 and conviction 0.9
+            // takes the whole allowance: five shares at 100. Sizing against cash alone would
+            // have given a different number, and sizing on what MSFT cost would have given a
+            // third - which is the point of asking.
             var portfolio = NewPortfolio();
             portfolio.ExecuteBuy(new Ticker("MSFT"), 2m, new Money(400m, "USD"));
 
-            var result = await Run(Build(Signal()).Sut, portfolio);
+            var (sut, client, _) = Build(Signal(), quote: Quote("MSFT", 500m));
+
+            var result = await Run(sut, portfolio);
+
+            result.ShouldBeOfType<TradeDecisionResult.Executed>().Quantity.ShouldBe(5m);
+            await client.Received(1).GetQuoteAsync("MSFT", "cycle-1", Arg.Any<CancellationToken>());
+        }
+
+        [Fact]
+        public async Task The_instrument_being_analysed_is_never_quoted_separately()
+        {
+            // Its price comes from the signal, so an order is never sized against a quote the
+            // agents never saw - and asking for it again would be a second price for the same
+            // decision.
+            var portfolio = NewPortfolio();
+            portfolio.ExecuteBuy(new Ticker(Requested), 1m, new Money(100m, "USD"));
+
+            var (sut, client, _) = Build(Signal());
+
+            await Run(sut, portfolio);
+
+            await client.DidNotReceive().GetQuoteAsync(Requested, Arg.Any<string>(), Arg.Any<CancellationToken>());
+        }
+
+        [Fact]
+        public async Task A_holding_the_engine_cannot_get_a_price_for_is_not_sized()
+        {
+            // The quote endpoint answered 503, or with something that was not the contract.
+            // The portfolio cannot be valued, and the sizer names the holding that stopped it
+            // rather than valuing it at what it cost - which would overstate a loser and raise
+            // the allowance for everything else at exactly the wrong moment.
+            var portfolio = NewPortfolio();
+            portfolio.ExecuteBuy(new Ticker("MSFT"), 2m, new Money(400m, "USD"));
+
+            var result = await Run(Build(Signal(), quote: null).Sut, portfolio);
+
+            result.ShouldBeOfType<TradeDecisionResult.NotSized>()
+                .Reason.ShouldContain("no price for MSFT");
+        }
+
+        [Fact]
+        public async Task A_holding_whose_quote_is_too_old_is_treated_as_having_none()
+        {
+            // A valuation on a stale price is worse than one that could not be made: the
+            // position limit is a share of the portfolio's value, so an out-of-date holding
+            // moves the allowance for everything else.
+            var portfolio = NewPortfolio();
+            portfolio.ExecuteBuy(new Ticker("MSFT"), 2m, new Money(400m, "USD"));
+
+            var stale = Quote("MSFT", 500m, asOf: Now.AddMinutes(-10));
+            var result = await Run(Build(Signal(), quote: stale).Sut, portfolio);
 
             result.ShouldBeOfType<TradeDecisionResult.NotSized>()
                 .Reason.ShouldContain("no price for MSFT");

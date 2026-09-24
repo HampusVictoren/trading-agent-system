@@ -83,12 +83,19 @@ public class PythonAgentClient : IAgentClient
     /// Escaping it anyway is what keeps both of those from being the only thing standing
     /// between a value and a URL.
     /// </summary>
-    public async Task<QuoteDto?> GetQuoteAsync(string symbol, CancellationToken cancellationToken = default)
+    public async Task<QuoteDto?> GetQuoteAsync(
+        string symbol, string correlationId, CancellationToken cancellationToken = default)
     {
         try
         {
-            var response = await _httpClient.GetAsync(
-                $"{QuotesPath}/{Uri.EscapeDataString(symbol)}", cancellationToken);
+            using var message = new HttpRequestMessage(
+                HttpMethod.Get, $"{QuotesPath}/{Uri.EscapeDataString(symbol)}");
+
+            // The cycle's own id, so the line the agent service writes about this quote can
+            // be found next to the line about the decision it priced.
+            message.Headers.Add(CorrelationIdHeader, correlationId);
+
+            var response = await _httpClient.SendAsync(message, cancellationToken);
 
             if (!response.IsSuccessStatusCode)
             {

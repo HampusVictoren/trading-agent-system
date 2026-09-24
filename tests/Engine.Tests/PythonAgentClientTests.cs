@@ -201,7 +201,7 @@ public class PythonAgentClientTests
     {
         var client = ClientWith(new StubHandler(HttpStatusCode.OK, ValidQuote));
 
-        var quote = await client.GetQuoteAsync("MSFT", TestContext.Current.CancellationToken);
+        var quote = await client.GetQuoteAsync("MSFT", "cycle-1", TestContext.Current.CancellationToken);
 
         quote.ShouldNotBeNull();
         quote.Price.ShouldBe(415.25m);
@@ -217,7 +217,7 @@ public class PythonAgentClientTests
         var client = ClientWith(new StubHandler(HttpStatusCode.ServiceUnavailable, "{}"));
 
         var exception = await Should.ThrowAsync<AgentServiceUnavailableException>(
-            () => client.GetQuoteAsync("MSFT", TestContext.Current.CancellationToken));
+            () => client.GetQuoteAsync("MSFT", "cycle-1", TestContext.Current.CancellationToken));
 
         exception.Message.ShouldContain("503");
         exception.Message.ShouldContain("MSFT");
@@ -229,7 +229,7 @@ public class PythonAgentClientTests
         var client = ClientWith(new StubHandler(HttpStatusCode.OK, "<html>not json</html>", "text/html"));
 
         await Should.ThrowAsync<AgentResponseInvalidException>(
-            () => client.GetQuoteAsync("MSFT", TestContext.Current.CancellationToken));
+            () => client.GetQuoteAsync("MSFT", "cycle-1", TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -242,8 +242,22 @@ public class PythonAgentClientTests
         var recorder = new RecordingHandler(ValidQuote);
         var client = ClientWith(recorder);
 
-        await client.GetQuoteAsync("../internal/shutdown", TestContext.Current.CancellationToken);
+        await client.GetQuoteAsync("../internal/shutdown", "cycle-1", TestContext.Current.CancellationToken);
 
         recorder.Seen!.RequestUri!.AbsolutePath.ShouldBe("/v1/quotes/..%2Finternal%2Fshutdown");
+    }
+
+    [Fact]
+    public async Task A_quote_carries_the_cycles_correlation_id()
+    {
+        // Without it, the agent service's line about this quote sits under an id that
+        // nothing else in either log mentions - and a decision that cannot be traced back to
+        // the prices it was made on is a decision stage 4 cannot explain.
+        var recorder = new RecordingHandler(ValidQuote);
+        var client = ClientWith(recorder);
+
+        await client.GetQuoteAsync("MSFT", "cycle-7", TestContext.Current.CancellationToken);
+
+        recorder.Seen!.Headers.GetValues(PythonAgentClient.CorrelationIdHeader).ShouldBe(["cycle-7"]);
     }
 }
