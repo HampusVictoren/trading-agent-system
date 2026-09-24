@@ -32,6 +32,16 @@ class Stance(StrEnum):
     HOLD = "HOLD"
 
 
+# The one place the rule lives on this side. The quote endpoint takes a symbol in its path
+# rather than in a body, so the pattern has to be reachable from there too - and a second
+# copy of a validation rule is a second chance to get it wrong.
+SYMBOL_PATTERN = r"^[A-Z][A-Z0-9.-]{0,9}$"
+
+# What the pattern allows at most, stated separately because a path parameter is rejected
+# on length before the regex is ever run.
+MAX_SYMBOL_LENGTH = 10
+
+
 class EquityInstrument(BaseModel):
     # frozen, because an instrument is an identity rather than a state; extra="forbid" so a
     # field the contract does not have is refused instead of ignored.
@@ -43,7 +53,7 @@ class EquityInstrument(BaseModel):
     type: Literal["equity"]
 
     # The same pattern the engine's Ticker enforces: uppercase, as it normalises it.
-    symbol: Annotated[str, Field(pattern=r"^[A-Z][A-Z0-9.-]{0,9}$")]
+    symbol: Annotated[str, Field(pattern=SYMBOL_PATTERN)]
 
 
 # A discriminated union on "type", with one variant so far. Written as a plain alias rather

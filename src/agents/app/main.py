@@ -73,7 +73,9 @@ def _probe_url(settings: Settings) -> str | None:
     return None if base_url is None else str(base_url).rstrip("/")
 
 
-def _build_pipeline(settings: Settings, models: ModelConfigs) -> SignalPipeline:
+def _build_pipeline(
+    settings: Settings, models: ModelConfigs, market: CachingMarketData
+) -> SignalPipeline:
     """Every team, validated and ready, before the service reports itself up.
 
     Reading the prompts, hashing the versions and constructing the agents all happen here
@@ -92,11 +94,6 @@ def _build_pipeline(settings: Settings, models: ModelConfigs) -> SignalPipeline:
         )
         logger.info("Team '%s' is version %s with steps %s", team_id, version, spec.roles)
 
-    market = CachingMarketData(
-        fetch_from_yfinance,
-        timeout_s=settings.market_data_timeout_s,
-        ttl_s=settings.market_data_ttl_s,
-    )
     return SignalPipeline(teams, market)
 
 
@@ -121,9 +118,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         async with _database_pool(settings) as pool:
             models = build_model_configs(settings.llm, all_roles(TEAMS.values()))
+
+            # One provider for the whole process: the quote endpoint and the pipeline share
+            # its cache, so a symbol fetched for an analysis is not fetched again to value
+            # the holding it created.
+            market = CachingMarketData(
+                fetch_from_yfinance,
+                timeout_s=settings.market_data_timeout_s,
+                ttl_s=settings.market_data_ttl_s,
+            )
+
             app.state.resources = Resources(
                 models=models,
-                pipeline=_build_pipeline(settings, models),
+                pipeline=_build_pipeline(settings, models, market),
+                market=market,
                 memory=MemoryStore(pool, embeddings),
                 http_client=http_client,
                 llm_base_url=_probe_url(settings),
