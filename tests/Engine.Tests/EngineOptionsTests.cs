@@ -29,6 +29,7 @@ public class EngineOptionsTests
         ["Outcome:FixedHorizonTradingDays:0"] = "1",
         ["Outcome:FixedHorizonTradingDays:1"] = "5",
         ["Outcome:FixedHorizonTradingDays:2"] = "20",
+        ["Outcome:SweepIntervalHours"] = "24",
     };
 
     /// <summary>Resolves an options instance from valid settings, with the given keys changed or removed.</summary>

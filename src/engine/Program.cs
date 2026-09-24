@@ -44,7 +44,10 @@ builder.Services.Configure<TelemetryOptions>(options =>
     options.SeverityProvider = _ => ResilienceEventSeverity.Information);
 
 builder.Services.AddTransient<ProcessProposalUseCase>();
+builder.Services.AddTransient<MeasureOutcomesUseCase>();
+
 builder.Services.AddHostedService<TradingWorker>();
+builder.Services.AddHostedService<MeasurementWorker>();
 
 var host = builder.Build();
 
