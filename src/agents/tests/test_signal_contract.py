@@ -41,7 +41,7 @@ def schema() -> dict:
 
 def test_the_checked_in_examples_are_where_the_test_expects_them():
     # A directory that quietly moves would make every test below vacuous.
-    assert len(list(EXAMPLES.glob("*.json"))) == 6
+    assert len(list(EXAMPLES.glob("*.json"))) == 7
 
 
 @pytest.mark.parametrize("name", SIGNAL_EXAMPLES)

@@ -1,12 +1,13 @@
 """The HTTP surface. Closed by default, and only one of its endpoints costs money."""
 
+from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter, Depends, Path, Query
 
 from app.api.security import require_api_key
 from app.dependencies import Resources, get_resources
-from app.domain.quotes import InstrumentQuote
+from app.domain.quotes import InstrumentHistory, InstrumentQuote
 from app.domain.signals import (
     MAX_SYMBOL_LENGTH,
     SYMBOL_PATTERN,
@@ -70,4 +71,33 @@ async def get_quote(
 
     return InstrumentQuote.from_quote(
         snapshot.quote, instrument=EquityInstrument(type="equity", symbol=symbol)
+    )
+
+
+@router.get("/v1/quotes/{symbol}/history", response_model=InstrumentHistory)
+async def get_history(
+    symbol: Annotated[str, Path(pattern=SYMBOL_PATTERN, max_length=MAX_SYMBOL_LENGTH)],
+    since: Annotated[date, Query(alias="from")],
+    resources: Annotated[Resources, Depends(get_resources)],
+) -> InstrumentHistory:
+    """The closes since a date, which is how the engine measures an outcome.
+
+    It counts bars: five trading days after a signal is the fifth bar after it, and a day
+    with no bar is a day the market was shut. That makes this the engine's trading calendar
+    as well as its price history - which is why the endpoint returns the days and not only
+    the prices, and why an empty array is a perfectly good answer rather than a 404.
+
+    `from` is required. An unbounded history would be a different, larger endpoint every
+    time the provider's window changed, and the caller always knows the date it cares about:
+    the day the signal was made.
+
+    The provider fetches a quote and its series in one call and this reads only the series.
+    That is the same fetch a fact sheet needs, so on a symbol the team analyses the cache is
+    already warm; splitting the port in two to save it would mean two shapes of one call.
+    """
+    snapshot = await resources.market.snapshot(symbol)
+
+    return InstrumentHistory(
+        instrument=EquityInstrument(type="equity", symbol=symbol),
+        bars=tuple(bar for bar in snapshot.history if bar.on >= since),
     )

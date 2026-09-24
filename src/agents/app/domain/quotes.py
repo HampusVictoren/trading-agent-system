@@ -14,7 +14,7 @@ from typing import Annotated, Self
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
-from app.domain.facts import Currency, Quote
+from app.domain.facts import Currency, PriceBar, Quote
 from app.domain.signals import Instrument
 
 
@@ -46,3 +46,21 @@ class InstrumentQuote(BaseModel):
             currency=quote.currency,
             as_of=quote.as_of,
         )
+
+
+class InstrumentHistory(BaseModel):
+    """The closes behind an instrument, from a date the caller names.
+
+    The engine measures an outcome by counting bars: five trading days is the fifth bar
+    after the signal, and a day with no bar is a day the market was shut. That makes this
+    the engine's trading calendar as well as its price history, which is why it carries the
+    days rather than only the closes.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    instrument: Instrument
+
+    # Oldest first, and the same PriceBar the fact sheet's ratios are computed from - one
+    # shape for a close, whoever reads it.
+    bars: tuple[PriceBar, ...]
