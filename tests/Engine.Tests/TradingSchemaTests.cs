@@ -2,10 +2,14 @@ using Engine.Application.Persistence;
 using Engine.Application.UseCases;
 using Engine.Domain.Aggregates.Portfolio;
 using Engine.Domain.ValueObjects;
+using Engine.Hosting;
+using Engine.Hosting.Options;
 using Engine.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
 
 namespace Engine.Tests.Persistence;
@@ -186,6 +190,69 @@ public class TradingSchemaTests : IAsyncLifetime
             // Leave the schema as the other tests expect it, whichever assertion failed.
             await migrator.MigrateAsync(cancellationToken: TestContext.Current.CancellationToken);
         }
+    }
+
+    [Fact]
+    public async Task The_engine_refuses_to_start_against_a_database_that_is_behind()
+    {
+        // The alternative - migrating at startup - would move the schema before anyone could
+        // decide to. This turns "forgot to migrate" into a sentence naming the command, and
+        // leaves when the schema changes with whoever is deploying.
+        await using var context = _database.NewContext();
+        var migrator = context.GetService<IMigrator>();
+        await using var engine = AnEngineAgainst(_database.ConnectionString);
+
+        try
+        {
+            await migrator.MigrateAsync("0", TestContext.Current.CancellationToken);
+
+            var exception = await Should.ThrowAsync<InvalidOperationException>(
+                () => engine.EnsureTheSchemaIsCurrentAsync(TestContext.Current.CancellationToken));
+
+            exception.Message.ShouldContain("InitialTradingSchema");
+            exception.Message.ShouldContain("dotnet-ef database update");
+
+            // And the schema is still down: refusing must not be a migration in disguise.
+            (await TablesInTradingSchema(context)).ShouldBe(0);
+        }
+        finally
+        {
+            await migrator.MigrateAsync(cancellationToken: TestContext.Current.CancellationToken);
+        }
+
+        // Current again, so it starts.
+        await engine.EnsureTheSchemaIsCurrentAsync(TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task An_unreachable_database_says_what_to_do_about_it()
+    {
+        // The check is also the engine's first connection. In WSL's mirrored networking a
+        // dead port hangs rather than refuses, so the short timeout is part of the test.
+        await using var engine = AnEngineAgainst(
+            "Host=127.0.0.1;Port=1;Database=tradingdb;Username=engine_svc;Timeout=1");
+
+        var exception = await Should.ThrowAsync<InvalidOperationException>(
+            () => engine.EnsureTheSchemaIsCurrentAsync(TestContext.Current.CancellationToken));
+
+        exception.Message.ShouldContain("docker compose up -d");
+    }
+
+    /// <summary>The database half of Program.cs's container, and nothing else.</summary>
+    private static ServiceProvider AnEngineAgainst(string connectionString)
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Database:ConnectionString"] = connectionString,
+            })
+            .Build();
+
+        var services = new ServiceCollection();
+        services.AddOptions<DatabaseOptions>().Bind(configuration.GetSection(DatabaseOptions.SectionName));
+        services.AddTradingDatabase();
+
+        return services.BuildServiceProvider();
     }
 
     /// <summary>The migrations history is EF's own bookkeeping, not part of the schema.</summary>

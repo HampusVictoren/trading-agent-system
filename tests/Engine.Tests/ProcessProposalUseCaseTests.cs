@@ -1,5 +1,6 @@
 using Engine.Application.Contracts;
 using Engine.Application.Interfaces;
+using Engine.Application.Persistence;
 using Engine.Application.UseCases;
 using Engine.Domain.Aggregates.Portfolio;
 using Engine.Domain.Risk;
@@ -32,6 +33,18 @@ public class ProcessProposalUseCaseTests
         public override DateTimeOffset GetUtcNow() => now;
     }
 
+    /// <summary>Stands in for the database. The use case queues rows; the worker commits them.</summary>
+    private sealed class CapturedDecisions : IDecisionLog
+    {
+        private readonly List<DecisionRecord> _records = [];
+
+        public void Record(DecisionRecord decision) => _records.Add(decision);
+
+        /// <summary>The one row a cycle must produce. Failing here means a cycle wrote none,
+        /// or wrote two.</summary>
+        public DecisionRecord OfTheCycle => _records.ShouldHaveSingleItem();
+    }
+
     private static Portfolio NewPortfolio(decimal cash = 10_000m) => new(new Money(cash, "USD"));
 
     private static TradeSignalDto Signal(
@@ -53,10 +66,11 @@ public class ProcessProposalUseCaseTests
             Run = new RunDto { TeamId = TeamId, TeamVersion = "abc123", Revisions = 0 }
         };
 
-    private static (ProcessProposalUseCase Sut, IAgentClient Client) Build(
+    private static (ProcessProposalUseCase Sut, IAgentClient Client, CapturedDecisions Decisions) Build(
         TradeSignalDto? signal = null, Exception? throws = null)
     {
         var client = Substitute.For<IAgentClient>();
+        var decisions = new CapturedDecisions();
 
         if (throws is not null)
         {
@@ -78,8 +92,9 @@ public class ProcessProposalUseCaseTests
 
         return (
             new ProcessProposalUseCase(
-                client, new PositionSizer(), new RiskEngine(), Policy, options, new FixedClock(Now)),
-            client);
+                client, decisions, new PositionSizer(), new RiskEngine(), Policy, options, new FixedClock(Now)),
+            client,
+            decisions);
     }
 
     private static Task<TradeDecisionResult> Run(
@@ -95,7 +110,7 @@ public class ProcessProposalUseCaseTests
             // so the whole allowance applies. At 100 USD that is five shares - not the one
             // share the old path always bought.
             var portfolio = NewPortfolio();
-            var (sut, _) = Build(Signal());
+            var (sut, _, _) = Build(Signal());
 
             var result = await Run(sut, portfolio);
 
@@ -111,7 +126,7 @@ public class ProcessProposalUseCaseTests
             // Conviction 0.6 is the middle tier, so each cycle uses half the remaining
             // headroom: two shares, then one more.
             var portfolio = NewPortfolio();
-            var (sut, _) = Build(Signal(conviction: 0.6));
+            var (sut, _, _) = Build(Signal(conviction: 0.6));
 
             await Run(sut, portfolio);
             var second = await Run(sut, portfolio);
@@ -127,7 +142,7 @@ public class ProcessProposalUseCaseTests
             // left. The old path had no such limit: it bought one share per cycle for ever,
             // because it measured against cash and never against the position.
             var portfolio = NewPortfolio();
-            var (sut, _) = Build(Signal());
+            var (sut, _, _) = Build(Signal());
 
             await Run(sut, portfolio);
             var second = await Run(sut, portfolio);
@@ -142,7 +157,7 @@ public class ProcessProposalUseCaseTests
             // reference_price comes from the fact sheet on the other side, never from a
             // model. This is the engine end of that: the order is priced from it directly.
             var portfolio = NewPortfolio();
-            var (sut, _) = Build(Signal(price: 250m));
+            var (sut, _, _) = Build(Signal(price: 250m));
 
             var executed = (await Run(sut, portfolio)).ShouldBeOfType<TradeDecisionResult.Executed>();
 
@@ -155,7 +170,7 @@ public class ProcessProposalUseCaseTests
     {
         private static async Task<TradeSignalRequestDto> Sent(Portfolio portfolio)
         {
-            var (sut, client) = Build(Signal());
+            var (sut, client, _) = Build(Signal());
 
             await Run(sut, portfolio);
 
@@ -203,7 +218,7 @@ public class ProcessProposalUseCaseTests
             // The worker generates it and logs it before the call, so a line in the
             // engine's log can be found in the agent service's - which echoes it and puts
             // it in every line it writes while handling the request.
-            var (sut, client) = Build(Signal());
+            var (sut, client, _) = Build(Signal());
 
             await Run(sut, NewPortfolio(), correlationId: "cycle-42");
 
@@ -338,6 +353,140 @@ public class ProcessProposalUseCaseTests
 
             await Should.ThrowAsync<OperationCanceledException>(
                 () => sut.ExecuteAsync(NewPortfolio(), Requested, "cycle-1", cancelled.Token));
+        }
+    }
+
+    /// <summary>
+    /// What the cycle leaves behind. Stage 4 measures agents from these rows, so a column that
+    /// is wrong here is a conclusion that is wrong later - and by then nothing says so.
+    /// </summary>
+    public class TheDecisionThatIsRecorded
+    {
+        [Fact]
+        public async Task Says_what_was_asked_and_what_the_engine_was_willing_to_spend()
+        {
+            var portfolio = NewPortfolio();
+            var (sut, _, decisions) = Build(Signal());
+
+            await Run(sut, portfolio);
+
+            var recorded = decisions.OfTheCycle;
+            recorded.CorrelationId.ShouldBe("cycle-1");
+            recorded.PortfolioId.ShouldBe(portfolio.Id);
+            recorded.Symbol.Value.ShouldBe(Requested);
+            recorded.TeamId.ShouldBe(TeamId);
+            recorded.RequestedAt.ShouldBe(Now);
+
+            // The room the decision was made in. No agent reads either figure, but a decision
+            // is only interpretable next to the limits it was made under.
+            recorded.AvailableRiskBudgetUsd.ShouldBe(10_000m);
+            recorded.MaxPositionPct.ShouldBe(0.05m);
+            recorded.ExistingQuantity.ShouldBeNull();
+        }
+
+        [Fact]
+        public async Task Carries_the_answer_and_the_order_it_led_to()
+        {
+            var portfolio = NewPortfolio();
+            var (sut, _, decisions) = Build(Signal());
+
+            var result = await Run(sut, portfolio);
+
+            var recorded = decisions.OfTheCycle;
+            recorded.Outcome.ShouldBe(DecisionOutcome.Executed);
+            recorded.OutcomeReason.ShouldBeNull();
+            recorded.TeamVersion.ShouldBe("abc123");
+            recorded.Revisions.ShouldBe(0);
+            recorded.Stance.ShouldBe(Engine.Domain.Signals.Stance.Buy);
+            recorded.Conviction.ShouldBe(0.9);
+            recorded.Thesis.ShouldBe("a thesis");
+            recorded.KeyRisks.ShouldBe(["a risk"]);
+            recorded.HorizonDays.ShouldBe(5);
+            recorded.ReferencePrice.ShouldBe(100m);
+            recorded.ReferenceCurrency.ShouldBe("USD");
+            recorded.QuoteAsOf.ShouldBe(Now);
+
+            // The ledger line and the reasoning that produced it, joined.
+            result.ShouldBeOfType<TradeDecisionResult.Executed>();
+            recorded.OrderId.ShouldNotBeNull();
+            recorded.OrderId.ShouldBe(portfolio.NewOrders.ShouldHaveSingleItem().Id);
+        }
+
+        [Fact]
+        public async Task Holds_the_answer_even_when_nothing_was_bought()
+        {
+            // Measuring only the buys that went through measures the wrong population, which
+            // is the whole reason HOLD has to arrive with its conviction intact.
+            var (sut, _, decisions) = Build(Signal(stance: "HOLD", conviction: 0.3));
+
+            await Run(sut, NewPortfolio());
+
+            var recorded = decisions.OfTheCycle;
+            recorded.Outcome.ShouldBe(DecisionOutcome.NoAction);
+            recorded.OutcomeReason.ShouldBe("HOLD");
+            recorded.Stance.ShouldBe(Engine.Domain.Signals.Stance.Hold);
+            recorded.Conviction.ShouldBe(0.3);
+            recorded.OrderId.ShouldBeNull();
+        }
+
+        [Fact]
+        public async Task Keeps_a_risk_rejection_apart_from_a_sizing_one()
+        {
+            // The two say different things - one about the portfolio, one about the team -
+            // and a report that pooled them would hide which was happening.
+            var (sut, _, decisions) = Build(Signal(conviction: 0.1));
+
+            await Run(sut, NewPortfolio());
+
+            decisions.OfTheCycle.Outcome.ShouldBe(DecisionOutcome.NotSized);
+            decisions.OfTheCycle.OutcomeReason.ShouldNotBeNullOrEmpty();
+            decisions.OfTheCycle.Stance.ShouldBe(Engine.Domain.Signals.Stance.Buy);
+        }
+
+        [Fact]
+        public async Task Records_a_cycle_that_never_reached_an_answer()
+        {
+            // A row of nulls is how the measurement sees "we could not ask". Leaving it out
+            // would make the agent service look more reliable the worse it got.
+            var (sut, _, decisions) = Build(throws: new AgentServiceUnavailableException("no answer"));
+
+            await Run(sut, NewPortfolio());
+
+            var recorded = decisions.OfTheCycle;
+            recorded.Outcome.ShouldBe(DecisionOutcome.AgentUnavailable);
+            recorded.OutcomeReason.ShouldBe("no answer");
+            recorded.Stance.ShouldBeNull();
+            recorded.TeamVersion.ShouldBeNull();
+            recorded.ReferencePrice.ShouldBeNull();
+            recorded.KeyRisks.ShouldBeEmpty();
+        }
+
+        [Fact]
+        public async Task Stores_nothing_from_an_answer_that_was_not_the_contract()
+        {
+            // The answer named another instrument, so none of its numbers were checked
+            // against anything. Storing them typed as data would make garbage look measured.
+            var (sut, _, decisions) = Build(Signal(symbol: "TSLA"));
+
+            await Run(sut, NewPortfolio());
+
+            var recorded = decisions.OfTheCycle;
+            recorded.Symbol.Value.ShouldBe(Requested);
+            recorded.Outcome.ShouldBe(DecisionOutcome.InvalidResponse);
+            recorded.OutcomeReason.ShouldNotBeNull().ShouldContain("TSLA");
+        }
+
+        [Fact]
+        public async Task Happens_once_per_cycle_whatever_the_outcome()
+        {
+            // The row is written outside the decision precisely so that none of its early
+            // returns can skip it. OfTheCycle fails if a cycle wrote none, or wrote two.
+            foreach (var signal in new[] { Signal(), Signal(stance: "SELL"), Signal(conviction: 0.1) })
+            {
+                var (sut, _, decisions) = Build(signal);
+                await Run(sut, NewPortfolio());
+                _ = decisions.OfTheCycle;
+            }
         }
     }
 }
