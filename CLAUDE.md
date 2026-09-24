@@ -48,7 +48,9 @@ dotnet dotnet-ef migrations script --project src/engine --idempotent   # read it
 dotnet dotnet-ef migrations has-pending-model-changes --project src/engine
 ```
 
-Two things about generated migrations. `dotnet ef` writes its files with a **UTF-8 BOM**,
+The engine will not start against a database that is behind it, so a new migration has to be
+applied before `dotnet run` works again. Two more things about generated migrations. `dotnet ef`
+writes its files with a **UTF-8 BOM**,
 which `.editorconfig` forbids, so strip it or `dotnet format` fails. And EF 10 refuses to
 `Migrate()` when the model has drifted from the last migration, which means the database
 tests double as a drift guard: change a configuration without adding a migration and every
@@ -104,7 +106,7 @@ The working directory must be `src/agents` for the `app.*` imports to resolve.
 
 **Every request carries a correlation id.** `CorrelationIdMiddleware` reads `X-Correlation-Id`, or invents one, echoes it on the response and puts it in every log line. Logs are JSON, configured in the lifespan, so uvicorn's own lines are formatted too - except the two banner lines it prints before startup. `/health` is liveness and checks nothing else on purpose; `/ready` checks the database and the LLM backend and answers 503 until both do.
 
-The engine reads `AgentService:BaseUrl`, `RequestTimeoutSeconds`, `RiskPolicy` and `Trading` from `appsettings.json`, all validated at startup. **`AgentService:ApiKey` and `Database:ConnectionString` are not there**, because both are secrets: locally they live in the user secrets store, outside the repository, and elsewhere they come from the environment. Neither has a default - an engine that cannot reach its database refuses to start, because from stage 4 a cycle it cannot store is a cycle whose evidence is lost.
+The engine reads `AgentService:BaseUrl`, `RequestTimeoutSeconds`, `RiskPolicy` and `Trading` (including `OpeningBalanceUsd`, the balance the account is opened with on the very first cycle) from `appsettings.json`, all validated at startup. It also **refuses to start when the database is behind the build**, naming the pending migrations and the command that applies them - and it never migrates itself, because applying at startup would move the schema before anyone could decide to. That check is its first connection, so an unreachable database fails there too. **`AgentService:ApiKey` and `Database:ConnectionString` are not there**, because both are secrets: locally they live in the user secrets store, outside the repository, and elsewhere they come from the environment. Neither has a default - an engine that cannot reach its database refuses to start, because from stage 4 a cycle it cannot store is a cycle whose evidence is lost.
 
 ```bash
 # Both sides need the same value. Generate one, then give it to each:
@@ -154,7 +156,7 @@ that is the owner clearing the table on purpose rather than a cycle rewriting hi
 
 ### Request flow
 
-1. `TradingWorker` (`src/engine/Hosting/Workers`) is a `BackgroundService` that holds a single in-memory `Portfolio` (10,000 USD). Every `Trading:CycleIntervalSeconds` it runs `ProcessProposalUseCase` for each ticker in `Trading:Tickers`, with a correlation id it generates and logs first.
+1. `TradingWorker` (`src/engine/Hosting/Workers`) is a `BackgroundService` that holds **no** portfolio. Every `Trading:CycleIntervalSeconds`, for each ticker in `Trading:Tickers`, it opens a scope, reads the portfolio through `IPortfolioRepository`, runs `ProcessProposalUseCase`, and commits through `IUnitOfWork` - so one cycle is one change tracker and one transaction. The account is opened at `Trading:OpeningBalanceUsd` only when nothing is stored. The correlation id is generated and logged first, and the outcome is logged *after* the commit, so a line in the log means a row in the database. A failed commit is an error line and the loop carries on: the buy is in the same transaction as the decision, so nothing was traded.
 2. `PythonAgentClient` posts a `TradeSignalRequestDto` to `POST /v1/signals`. The instrument travels in the body as a typed object, so nothing is interpolated into a path. The correlation id goes on the `X-Correlation-Id` header, taken from the body so the two cannot disagree.
 3. `SignalPipeline.run` (`app/application/pipeline.py`) computes a `FactSheet` from market data — price, P/E, returns over 1/3/12 months, volatility, distance to the 52-week high — and then runs the team's steps in order. Each step is given **only the earlier results its `reads` names**, as a delimited JSON block; there is no shared transcript.
 
@@ -208,6 +210,6 @@ Both services follow a Clean Architecture / DDD layout: `Domain` → `Applicatio
 - **The engine has no market data of its own.** `PositionSizer` is given `PriceSnapshot.Empty`, so a portfolio holding something other than the instrument being analysed cannot be valued and the sizer says which holding stopped it. With one ticker in `Trading:Tickers` the signal's own price is all that is needed. Stage 4's `GET /v1/quotes/{symbol}` closes this.
 - **Timing:** one cycle takes about 7–10 s with `llama3.2`, down from 12–15 s — smaller prompts and no tool call.
 - **Empty packages:** none left. `app/infrastructure/llm/provider.py` and `app/infrastructure/market_data/` were filled in stage 3.
-- **Engine database access:** `TradingDbContext` and the `trading` schema exist, reached through three ports in `Application/Persistence` - `IPortfolioRepository`, `IDecisionLog` and `IUnitOfWork`. One commit per cycle, so the decision, the position change and the ledger line move together. `FindAsync` takes no id because the engine trades one account, and a second row is reported rather than silently picked. Nothing calls any of it yet: the worker still holds its portfolio in a field, and that is the next pull request.
+- **Engine database access:** `TradingDbContext` and the `trading` schema, reached through three ports in `Application/Persistence` - `IPortfolioRepository`, `IDecisionLog` and `IUnitOfWork`. One commit per cycle, so the decision, the position change and the ledger line move together. `FindAsync` takes no id because the engine trades one account, and a second row is reported rather than silently picked. **The portfolio survives a restart**, and there is no shared mutable state left in the worker for a second ticker or a second worker to get wrong.
 - **The engine stores what the engine saw.** `decisions` holds the request, the signal and the outcome - not the agent service's own working. The fact sheet and the intermediate steps are Python's data, stored on Python's side against the same correlation id, so attributing a result to one agent is a join made when the question is asked. Widening the contract with fields the engine never reads would make it the owner of somebody else's internals, which is the shared-database problem over HTTP.
 - **AG2 API version:** AG2 is used through its v1.0+ API (`from ag2 import Agent, tool`, `ag2.config.OpenAIConfig`, `await agent.ask(...)`). The pre-1.0 `autogen`/`ConversableAgent` API is not used here.

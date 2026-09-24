@@ -7,8 +7,8 @@ A running record of what has been done, what was learned along the way, and what
 
 This file answers "where are we, how did we get here, and what is next". When resuming, read *Current state* and *Next steps* first, then the roadmap section for the next stage.
 
-**Last updated:** 2026-09-23, with stage 4's first pull request open. **Stage 3 is done**, and
-the engine's decisions now have somewhere to go.
+**Last updated:** 2026-09-24, after stage 4's second pull request. The engine's decisions now
+have somewhere to go, and the portfolio survives a restart.
 
 ## Resuming checklist
 
@@ -42,14 +42,14 @@ Two things that are easy to misread as broken:
 
 ## Current state
 
-- **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21, **stage 3 done** 2026-09-23. **Stage 4 started** 2026-09-23, one of its six pull requests written. Stages 5-8 exist only as plan.
-- **`master` is at PR #31.** Nothing reaches it without the three required checks passing, so what is there is green by construction.
-- **One open pull request:** `stage-4-persistence`, four commits, stage 4's first of six. **Branches:** `master` and `stage-4-persistence`.
+- **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21, **stage 3 done** 2026-09-23. **Stage 4 started** 2026-09-23, two of its six pull requests done. Stages 5-8 exist only as plan.
+- **`master` is at PR #33.** Nothing reaches it without the three required checks passing, so what is there is green by construction.
+- **Branches:** `master` plus whatever branch is being worked on.
 - **There is one path now.** `POST /v1/signals` is the only endpoint that costs money, the engine calls it every cycle, and the old three-agent chain, `InvestmentProposal`, `ValidateTrade`, `RiskViolationException` and the FastMCP server are gone. Running the engine today produces real quantities at real prices, with the position cap holding across cycles.
 - **Every environment variable was renamed on 2026-09-23.** The local `src/agents/.env` was renamed in place and still works; a fresh clone follows `.env.example`. Nothing outside this repo reads them.
-- **The `trading` schema exists and is empty.** `portfolios`, `positions`, `orders` and `decisions` were created in the real `trading-db` on 2026-09-23, owned by `engine_svc`, with both append-only triggers in place. Nothing writes to them yet: the worker still holds its portfolio in a field, which is the open pull request's successor.
+- **The `trading` schema is live and has real rows in it.** A run on 2026-09-24 opened the account at 10 000 USD, bought one AAPL at 337.445, and a second engine process picked the same portfolio up rather than opening another. Delete them with `TRUNCATE trading.decisions, trading.orders, trading.positions, trading.portfolios RESTART IDENTITY CASCADE` if a clean baseline matters - the append-only triggers deliberately do not block that.
 - **The engine now needs `Database:ConnectionString`** or it refuses to start. It is in the user secrets store on this machine, set 2026-09-23. `dotnet user-secrets list --project src/engine` prints it, so do not run that where anyone can see the screen.
-- **Migrations are applied by hand.** `dotnet ef database update` was run once; nothing applies them at startup. That is a decision still to take - see *Next steps*.
+- **Migrations are applied by hand, and the engine refuses to start without them.** Decided 2026-09-24: `dotnet dotnet-ef database update` stays a deploy step, but startup names the pending migrations and the command instead of failing on a missing column mid-cycle.
 - **What is now impossible** rather than merely unlikely: the agents cannot name an amount (the contract has no `amount_usd`, and a test refuses one that reappears); an answer that is not the contract cannot deserialise into nulls; a position cannot be sized against cash instead of net asset value; and an order cannot be placed on a quote that is stale or dated in the future.
 
 ## Next steps
@@ -87,7 +87,7 @@ all land in PR 4, and are repeated here so they are not re-derived from scratch.
 | # | What | Why it is its own |
 |---|---|---|
 | 1 ✅ | `trading` schema through EF Core: `portfolios`, `positions`, `orders` (append-only), `decisions`. `IPortfolioRepository`/`IUnitOfWork`, a reconstitution constructor on `Portfolio`. Testcontainers, and the migration tested **both ways**. | The shape is the decision. Everything after it writes rows in this form. |
-| 2 | `TradingWorker` loads the portfolio per cycle and saves the decision. | This is where restart-survival becomes visible - and **the thread-safety problem disappears structurally** rather than being guarded against. |
+| 2 ✅ | `TradingWorker` loads the portfolio per cycle and saves the decision. | This is where restart-survival becomes visible - and **the thread-safety problem disappears structurally** rather than being guarded against. |
 | 3 | `GET /v1/quotes/{symbol}` on the agent service, deterministic and with no LLM, plus the engine's client for it. | It is what an outcome is measured against, and it also closes the gap left in stage 3: `PositionSizer` gets `PriceSnapshot.Empty` today, so a portfolio holding more than one instrument cannot be valued. |
 | 4 | The outcome function: return over a horizon, comparison against an index, hit per stance, a horizon landing on a non-trading day. Pure functions, TDD. | Findings E and F land here. Indata and expected figure are the specification, which is exactly where writing the test first pays. |
 | 5 | The scheduled job and `trading.signal_outcomes`: the fixed horizons (1, 5, 20 trading days) and the model's own, **for every signal** - including HOLD, risk rejections and everything that was never bought. A SQL view for the minimum report. | Measuring only the trades that went through measures the wrong population. |
@@ -101,50 +101,41 @@ the fixed horizons is part of the stage's definition of done.
 
 Before stage 5, turn finding D's currency mismatch into an outcome rather than a throw.
 
-### Next up: PR 2 - the worker on the repository
+### Next up: PR 3 - the quote endpoint
 
-Everything it needs is in place; this is wiring plus three choices. Start with the checkpoint,
-not with code.
+`GET /v1/quotes/{symbol}` on the agent service, deterministic and with no LLM, plus the
+engine's client for it. It is what an outcome will be measured against in PR 4, and it closes
+the gap stage 3 left: `PositionSizer` is handed `PriceSnapshot.Empty`, so a portfolio holding
+anything other than the instrument being analysed cannot be valued and the sizer says which
+holding stopped it.
 
 **Three things to settle first.**
 
-1. **Who applies migrations.** Nothing does today - `dotnet ef database update` was run by
-   hand. A `Migrate()` at startup is convenient for one local node and wrong for several, so
-   the honest options are a setting that is off by default, or leaving it a deploy step and
-   saying so in CLAUDE.md. Recommendation: leave it a deploy step for now, and revisit in
-   stage 6 where containerisation makes it a real question.
-2. **Where the opening balance comes from.** `new Portfolio(new Money(10000m, "USD"))` is
-   hard-coded in the worker and is about to be used exactly once in the account's life.
-   Recommendation: `Trading:OpeningBalanceUsd`, required like everything else, used only when
-   `FindAsync` returns null.
-3. **What happens when the commit fails.** A duplicate correlation id or a concurrency
-   conflict means the decision was not stored, while the portfolio in memory has already been
-   mutated. Recommendation: log it at error level and let the next cycle reload - the
-   aggregate is re-read every cycle anyway, which is the whole point of the change.
+1. **Where the symbol travels.** The roadmap says `GET /v1/quotes/{symbol}`, but finding B was
+   about a symbol interpolated into a path, and the signal contract moved it into a body for
+   exactly that reason. `Ticker` now has the format rule on the engine's side and the schema
+   has it on Python's, so a path parameter is defensible - but it is a decision, not a
+   default. Recommendation: path parameter, validated against the same pattern on both sides,
+   with a test that a traversal attempt is a 422 rather than a lookup.
+2. **One symbol or many.** A portfolio with *n* holdings costs *n* round trips per cycle to
+   value. Recommendation: start with one symbol, because the portfolio holds one instrument
+   today and a batch endpoint designed before there is a second is designed from guesswork.
+   Note it as the first thing to revisit when `Trading:Tickers` grows.
+3. **Whether a quote needs the API key.** It costs no LLM call, but it does cost a yfinance
+   call and it exposes the market-data integration. Recommendation: same `X-Api-Key` as
+   `/v1/signals` - an endpoint that is cheap to call is the one worth rate-limiting first.
 
-**The shape of the change.**
+**The shape of the change.** Python: a route over the existing `CachingMarketData`, returning
+the same `Quote` the fact sheet is built from, with `instrument_not_found` and
+`market_data_unavailable` reusing the error vocabulary already in `app/api/errors.py`. A
+`contracts/quote.schema.json` read by both sides' tests, like the signal contract. Engine: a
+client behind a port, and `ProcessProposalUseCase` building a real `PriceSnapshot` from the
+portfolio's holdings instead of passing `PriceSnapshot.Empty`.
 
-- `ProcessProposalUseCase` gains `IDecisionLog` and builds the `DecisionRecord`. It is the
-  only place that holds the request, the signal and the outcome at the same time, so building
-  the row anywhere else means passing all three somewhere else first.
-  `TradeDecisionResult.Outcome` and `.OutcomeReason` already exist for exactly this, and
-  `ExecuteBuy` already returns the `Order` whose id the row needs.
-- `TradingWorker` stops holding a `Portfolio` field. Per cycle: resolve a scope, `FindAsync`,
-  create-and-`Add` if null, run the use case, `SaveChangesAsync`. One scope per (cycle,
-  ticker) is already what the worker does, so one `DbContext` and one transaction per decision
-  comes for free.
-- The correlation id is already generated in the worker and already reaches the use case.
-
-**What its tests have to prove.** A full cycle against the container with a stubbed
-`IAgentClient`: one decision row, one order row, one position row, the cash reduced; then a
-second cycle in a *new* scope that reads the first one's state back rather than starting over.
-And a failed call writing a decision row with the signal columns null, because a cycle that
-never reached an answer still says something about the system.
-
-**One thing to watch.** The in-memory aggregate is mutated before the commit, so a failed
-commit leaves it wrong. That is safe only because it is re-read every cycle - and it is worth
-a test that says so, since it is the property that makes the thread-safety problem disappear
-rather than move.
+**What its tests have to prove.** That a portfolio holding two instruments can be valued and
+sized - the case `A_portfolio_holding_something_the_engine_cannot_price_is_not_sized` currently
+pins as *not* working. And that a quote the engine cannot get is an outcome rather than an
+exception, because a market-data outage must not look like a risk decision.
 
 ## Open findings
 
@@ -345,10 +336,9 @@ function and therefore an ideal test-first target.
 - **`PositionSizer` and `RiskEngine.Evaluate` are registered but nothing resolves them.** Deliberate: registering them means the options-to-domain mapping is covered by `ValidateOnStart` now, and stage 3 becomes wiring rather than new code.
 - **`MemoryStore` still is not wired into the flow.** The lifespan builds one and nothing uses it. The roadmap puts a `search_history_tool` on `RiskManager` and a `save` after each cycle in stages 2-3.
 - **One row with ticker `TEST`** sits in `agent.agent_memories` from the smoke test on 2026-09-20. Harmless; delete it if a clean table matters.
-- **Nothing applies migrations.** `dotnet ef database update` was run by hand on 2026-09-23. A `Migrate()` at startup is convenient for one local node and wrong for several; decide it at PR 2's checkpoint, or defer it to stage 6 where containerisation makes it a real question.
-- **The opening balance is hard-coded** as `new Portfolio(new Money(10000m, "USD"))` in `TradingWorker`, and is about to be used exactly once in the account's life. It wants to be configuration before the first row is written, not after.
+- **The first account was opened on 2026-09-24** at 10 000 USD, and `trading` now holds real rows from a live run against `llama3.2`. They are a smoke test, not a baseline: the baseline starts when the outcome job in PR 5 exists.
 - **`orders.placed_at` is a shadow property** filled by the database's `now()`. It is audit metadata today; stage 5 counts a holding period from the last purchase, and that is when it becomes domain data and has to come from the engine's injected clock instead.
-- **Nothing translates a duplicate `correlation_id`.** `UnitOfWork` turns EF's concurrency exception into `ConcurrentChangeException`, but a unique-index violation still surfaces as `DbUpdateException`. PR 2 is where it becomes clear what the worker should do about it.
+- **Nothing translates a duplicate `correlation_id`.** `UnitOfWork` turns EF's concurrency exception into `ConcurrentChangeException`, but a unique-index violation still surfaces as `DbUpdateException` and lands in the worker's general handler with a stack trace. That is arguably right - the ids are fresh Guids, so a duplicate is a bug - but it has never been seen, so it has never been read.
 
 ---
 
@@ -583,7 +573,7 @@ dropping `Ticker`'s format rule 7, treating HOLD as an unsized buy 2.
 vanished on restart. The five decisions that had to be taken first are recorded under *Next
 steps* rather than here, because they are still being spent.
 
-- **PR `stage-4-persistence`** (four commits, open at the time of writing): the `trading`
+- **PR #32 `stage-4-persistence`** (`82ee168`, four commits): the `trading`
   schema through EF Core 10 and Npgsql - `portfolios`, `positions`, `orders`, `decisions` -
   plus `IPortfolioRepository`, `IDecisionLog` and `IUnitOfWork` over it. Nothing calls any of
   it yet; the shape was the point.
@@ -631,6 +621,37 @@ steps* rather than here, because they are still being spent.
   with no access to the schema - and the engine starts and runs a cycle with the new required
   setting in place.
 
+- **PR `stage-4-worker`** (three commits, 2026-09-24): the worker stops holding a portfolio.
+  Each cycle reads it through the repository, changes it and commits it inside one scope.
+
+  - **Three decisions, all taken the recommended way.** Migrations stay a deploy step, but
+    the engine refuses to start when the database is behind the build - applying at startup
+    would move the schema before anyone could decide to, and the migration was tested in both
+    directions precisely so that undoing it stays possible. The opening balance becomes
+    `Trading:OpeningBalanceUsd`, because it is used once and then sets the size of every trade
+    that follows. A failed commit is an error line and the loop carries on.
+  - **A failed commit loses nothing but an LLM call.** The buy is in the same transaction as
+    the decision, so a commit that fails means no trade happened - there is no evidence hole,
+    which is what made "carry on" the honest answer rather than the convenient one.
+  - **The row is written outside the decision.** `DecideAsync` has six early returns; writing
+    the record in its caller is what makes it impossible for one of them to skip it. Mutating
+    the write to fire only when there was a signal turns exactly one test red.
+  - **The thread-safety problem is gone rather than guarded.** There is no shared mutable
+    state left for a second ticker or a second worker to get wrong.
+
+  *Mutation testing:* worker reopens the account every cycle **2** (both restart tests);
+  decision recorded only when a signal existed **1**.
+
+  *Verified live, not only in tests.* Both services up, `llama3.2` answering: the account was
+  opened at 10 000 USD, AAPL bought at 337.445, and the next two cycles recorded as `NotSized`
+  because the remaining budget did not reach one share. A second engine process then found the
+  same portfolio - one row, same balance, decisions growing from three to five - rather than
+  opening another. 208 .NET tests and 241 Python green, format and gitleaks clean.
+
+  *Still open:* nothing translates a duplicate `correlation_id`; the ids are fresh Guids, so
+  one would be a bug rather than a condition, and it falls into the worker's general handler
+  with a stack trace.
+
 ---
 
 ## Lessons and gotchas
@@ -653,6 +674,7 @@ Things that cost time or were not obvious. Most are also recorded where they app
 - System.Text.Json refuses an out-of-order type discriminator with `NotSupportedException`, not `JsonException`. `AllowOutOfOrderMetadataProperties` fixes it, and an example with the discriminator last is what stops the setting being deleted by accident.
 - `[JsonUnmappedMemberHandling(Disallow)]` on a polymorphic variant does not reject the discriminator itself.
 - Mutating code to check a test can fail does not work with `if (false)`: CS0162 is a warning, and warnings are errors here. Change a comparison instead.
+- `dotnet format --verify-no-changes` reports a failure on stdout *and* through its exit code. Piping it into `tail` or `head` throws the exit code away, so a `&&` chain after it keeps going and a formatting error reaches a commit. Check `$?` rather than reading the output.
 - A mutation has to stay *syntactically valid* to mean anything. Commenting out the first line of a multi-line SQL statement broke the whole migration and turned every database test red at 0 ms, which says nothing about the tests. Making the trigger function a no-op said everything.
 
 **EF Core 10 and Npgsql**
