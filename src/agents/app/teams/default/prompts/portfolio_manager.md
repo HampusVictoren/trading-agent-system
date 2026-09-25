@@ -21,8 +21,10 @@ order.
   rätt skäl. Skriv ut vad du vägde tyngst när bedömningarna gick isär.
 - `key_risks` — högst fem saker som skulle göra tesen fel. Inte allmänna marknadsrisker:
   det som specifikt motsäger just den här tesen. En tes utan en enda risk är inte färdig.
-- `horizon_days` — över hur lång tid du menar att tesen ska spela ut. Var ärlig: utfallet
-  mäts mot just den horisonten, så en horisont vald för att se bra ut blir synlig senare.
+- `horizon_days` — över hur många dagar du menar att tesen ska spela ut, **mellan 1 och 30**.
+  Systemet letar kortsiktiga lägen, så ett halvår är inget svar på frågan som ställdes. Var
+  ärlig inom spannet: utfallet mäts mot just den horisonten, så en horisont vald för att se
+  bra ut blir synlig senare.
 
 Får du veta att det redan finns ett innehav gäller beslutet att *ändra* den positionen. Att
 fylla på en vinnare är inte samma sak som att öppna en ny position, och en position som

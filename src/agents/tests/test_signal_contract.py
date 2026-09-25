@@ -13,6 +13,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.domain.signals import (
+    MAX_HORIZON_DAYS,
     MAX_RISK_LENGTH,
     MAX_RISKS,
     MAX_THESIS_LENGTH,
@@ -118,6 +119,12 @@ class TestTheModelsAndTheSchemaAgree:
         assert properties["key_risks"]["maxItems"] == MAX_RISKS
         assert properties["key_risks"]["items"]["maxLength"] == MAX_RISK_LENGTH
 
+    def test_the_horizon_reaches_exactly_as_far_on_both_sides(self):
+        # Not free text, so it gets its own test. The number is in three places - here, the
+        # schema, and the engine's TradeSignalMapper - and the engine's suite reads the same
+        # file, so all three are held together rather than pairwise.
+        assert schema()["properties"]["horizon_days"]["maximum"] == MAX_HORIZON_DAYS
+
 
 class TestTheAgentsAreNotAskedForFacts:
     """What the model may decide, and what it may not, is the point of the TradeView split."""
@@ -209,3 +216,20 @@ class TestAnAnswerThatIsNotTheContractIsRefused:
 
         with pytest.raises(ValidationError):
             TradeSignal.model_validate(payload)
+
+    def test_a_horizon_past_the_cap_is_refused(self):
+        # The cap exists because the model reached for a year: of 36 signals stored before
+        # it, 26 asked for 180 days or more, which is a measurement that lands in 2027 and a
+        # time-limit exit that never fires. The prompt now names the range; this is what
+        # holds when the prompt is ignored, which it has been before.
+        payload = example("signal-buy.json") | {"horizon_days": MAX_HORIZON_DAYS + 1}
+
+        with pytest.raises(ValidationError):
+            TradeSignal.model_validate(payload)
+
+    def test_the_cap_itself_is_still_an_answer(self):
+        # The boundary in the direction that must keep working: off by one here would
+        # silently narrow what the model may say.
+        payload = example("signal-buy.json") | {"horizon_days": MAX_HORIZON_DAYS}
+
+        assert TradeSignal.model_validate(payload).horizon_days == MAX_HORIZON_DAYS

@@ -23,6 +23,18 @@ MAX_THESIS_LENGTH = 2000
 MAX_RISK_LENGTH = 300
 MAX_RISKS = 5
 
+# How far ahead a view may reach, in calendar days. 30 rather than a year, for three
+# reasons that all point the same way. The system looks for short-term opportunities, so a
+# six-month thesis is not an answer to the question that was asked. 30 calendar days is
+# roughly the 20 trading days of the longest fixed horizon, so the model's own horizon is
+# measured in the same window as the ones it is compared against rather than in 2027. And
+# stage 5's time-limit exit sells when this many days have passed since the buy - a horizon
+# of 365 is a rule that never fires.
+#
+# It is a cap, not a default: within the range the model still chooses, and being wrong
+# about timing is something the measurement is meant to show.
+MAX_HORIZON_DAYS = 30
+
 
 class Stance(StrEnum):
     """The direction the agents argue for. The engine decides whether anything is traded."""
@@ -100,7 +112,7 @@ class TradeView(BaseModel):
         list[Annotated[str, Field(min_length=1, max_length=MAX_RISK_LENGTH)]],
         Field(max_length=MAX_RISKS),
     ]
-    horizon_days: Annotated[int, Field(ge=1, le=365)]
+    horizon_days: Annotated[int, Field(ge=1, le=MAX_HORIZON_DAYS)]
 
 
 class TradeSignal(TradeView):

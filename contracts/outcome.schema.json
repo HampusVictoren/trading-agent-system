@@ -38,7 +38,7 @@
           "enum": ["TradingDays", "CalendarDays"]
         },
         "horizon_days": {
-          "description": "How many, in that unit. Five trading days and five calendar days are different measurements, which is why the unit travels with the number.",
+          "description": "How many, in that unit. Five trading days and five calendar days are different measurements, which is why the unit travels with the number. Deliberately uncapped, unlike horizon_days in trade-signal.schema.json: decisions stored before that cap existed asked for up to 365 days, and a measurement is reported at the horizon the decision actually asked for rather than at one it is retrofitted to.",
           "type": "integer",
           "minimum": 1
         },

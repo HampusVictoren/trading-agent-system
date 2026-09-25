@@ -25,6 +25,10 @@ public class TradeSignalContractTests
     private static TradeSignalDto? Signal(string json) =>
         JsonSerializer.Deserialize<TradeSignalDto>(json, ContractSerialization.Options);
 
+    private static JsonDocument Schema() =>
+        JsonDocument.Parse(File.ReadAllText(
+            Path.Combine(ContractsDirectory, "trade-signal.schema.json")));
+
     [Fact]
     public void The_checked_in_examples_are_where_the_test_expects_them()
     {
@@ -143,8 +147,7 @@ public class TradeSignalContractTests
     {
         // Without this the schema file is documentation that can quietly go stale. Stage 3
         // closes the loop from the other side, where Python dumps its schema and compares.
-        using var schema = JsonDocument.Parse(File.ReadAllText(
-            Path.Combine(ContractsDirectory, "trade-signal.schema.json")));
+        using var schema = Schema();
 
         var required = schema.RootElement.GetProperty("required")
             .EnumerateArray().Select(field => field.GetString()!).OrderBy(name => name);
@@ -221,5 +224,56 @@ public class TradeSignalContractTests
 
         Should.Throw<AgentResponseInvalidException>(() => TradeSignalMapper.ToDomain(dto))
             .Message.ShouldContain(expected);
+    }
+
+    [Theory]
+    [InlineData(0, "not a period")]
+    [InlineData(31, "past the 30 day limit")]
+    public void A_horizon_outside_the_contracts_range_is_refused(int days, string expected)
+    {
+        // The cap is new, and it exists because the model reached for a year: of 36 signals
+        // stored before it, 26 asked for 180 days or more. That is a measurement landing in
+        // 2027 and, from stage 5, a time-limit exit that never fires.
+        var dto = Signal(Example("signal-buy.json"))! with { HorizonDays = days };
+
+        Should.Throw<AgentResponseInvalidException>(() => TradeSignalMapper.ToDomain(dto))
+            .Message.ShouldContain(expected);
+    }
+
+    [Fact]
+    public void The_horizon_at_the_cap_is_still_accepted()
+    {
+        // The boundary in the direction that must keep working. Without it, > could become
+        // >= and narrow what the agents may answer with nothing going red.
+        var dto = Signal(Example("signal-buy.json"))! with
+        {
+            HorizonDays = TradeSignalMapper.MaxHorizonDays
+        };
+
+        TradeSignalMapper.ToDomain(dto).HorizonDays.ShouldBe(TradeSignalMapper.MaxHorizonDays);
+    }
+
+    [Fact]
+    public void Every_cap_the_engine_enforces_is_the_one_the_contract_states()
+    {
+        // Each of these numbers is written in three places - pydantic, the schema, and the
+        // mapper - and until now only the first two were held together, by the agent
+        // service's own suite. Nothing compared the engine's copy to anything.
+        //
+        // Drift is quiet rather than loud: the agent service validates its own answer
+        // first, so a cap the engine set lower would show up as the agents "answering with
+        // something unusable" - a 502 that reads as a model problem, at the seam furthest
+        // from the number that is actually wrong.
+        using var schema = Schema();
+        var properties = schema.RootElement.GetProperty("properties");
+
+        properties.GetProperty("thesis").GetProperty("maxLength").GetInt32()
+            .ShouldBe(TradeSignalMapper.MaxThesisLength);
+        properties.GetProperty("key_risks").GetProperty("maxItems").GetInt32()
+            .ShouldBe(TradeSignalMapper.MaxRisks);
+        properties.GetProperty("key_risks").GetProperty("items").GetProperty("maxLength").GetInt32()
+            .ShouldBe(TradeSignalMapper.MaxRiskLength);
+        properties.GetProperty("horizon_days").GetProperty("maximum").GetInt32()
+            .ShouldBe(TradeSignalMapper.MaxHorizonDays);
     }
 }
