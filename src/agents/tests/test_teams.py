@@ -155,3 +155,25 @@ class TestAllRoles:
         second = team(step("market_analyst", TradeView), team_id="other")
 
         assert all_roles([DEFAULT_TEAM, second]) == frozenset(DEFAULT_TEAM.roles)
+
+
+class TestMemoryIsMatchedOnTheAnalystsReading:
+    """A step is embedded by its MarketRead and recalled with today's. A step that cannot
+    see that reading has no query to recall with, so the specification refuses it rather
+    than the pipeline discovering it at run time."""
+
+    def test_a_step_given_memory_without_the_reading_is_refused(self):
+        with pytest.raises(ValueError, match="memory is matched on"):
+            step("risk_manager", RiskAssessment, reads=(FactSheet,), sees_memory=True)
+
+    def test_a_step_given_memory_with_the_reading_is_fine(self):
+        allowed = step(
+            "risk_manager", RiskAssessment, reads=(FactSheet, MarketRead), sees_memory=True
+        )
+
+        assert allowed.sees_memory
+
+    def test_the_baseline_team_reads_no_memory_at_all(self):
+        # The baseline is of the thin three-step team. Adding memory to it would change
+        # team_version and restart the measurement the whole stage exists to collect.
+        assert not any(s.sees_memory for s in DEFAULT_TEAM.steps)

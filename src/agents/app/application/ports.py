@@ -55,7 +55,7 @@ class AnalysisJournal(Protocol):
     lost, and the log line says so at the moment it happens.
     """
 
-    async def record(self, run: AnalysisRun) -> None: ...
+    async def record(self, run: AnalysisRun) -> int: ...
 
 
 @runtime_checkable
@@ -68,3 +68,20 @@ class OutcomeStore(Protocol):
     """
 
     async def store(self, outcomes: list[MeasuredOutcome]) -> None: ...
+
+
+@runtime_checkable
+class Memory(Protocol):
+    """Past analyses of the same instrument that the engine has already measured.
+
+    Both halves are best-effort by design, and for the same reason the journal is: a
+    trading cycle is waiting for an answer, and neither remembering nor recalling is worth
+    an analysis. `recall` therefore returns a sentence rather than raising - the text it
+    returns is read by a model, so "memory could not be fetched" has to be sayable in it.
+    """
+
+    async def remember(self, analysis_run_id: int, text: str) -> None: ...
+
+    async def recall(
+        self, symbol: str, query: str, correlation_id: str, limit: int = ...
+    ) -> str: ...

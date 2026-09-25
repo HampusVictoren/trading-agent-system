@@ -18,10 +18,11 @@ from pydantic import BaseModel
 
 from app.application.errors import AgentResponseInvalid, InstrumentNotSupported, UnknownTeam
 from app.application.journal import AnalysisRun, RecordedStep
-from app.application.ports import AnalysisJournal, MarketDataProvider, StepRunner
+from app.application.ports import AnalysisJournal, MarketDataProvider, Memory, StepRunner
 from app.application.teams import StepSpec, TeamSpec
 from app.domain.facts import FactSheet, build_fact_sheet
 from app.domain.signals import RunInfo, SignalRequest, TradeSignal, TradeView
+from app.domain.steps import MarketRead
 
 logger = logging.getLogger(__name__)
 
@@ -35,12 +36,32 @@ INSTRUMENT_LABEL = "Instrument"
 POSITION_LABEL = "Nuvarande innehav"
 NO_POSITION = "inget"
 
+# Memory travels inside the data block like everything else, under a key of its own. The
+# other keys are schema names and happen to be English because they are type names; this
+# one is prose written for a model, so it follows the rule the prompts follow.
+MEMORY_KEY = "Minne"
+
 # No review rounds yet. The field is in the contract from the start because adding one
 # later would be a contract change; stage 4's outcomes decide whether rounds are worth it.
 REVISIONS = 0
 
 
-def build_message(step: StepSpec, request: SignalRequest, context: Mapping[str, BaseModel]) -> str:
+def describe_reading(read: MarketRead) -> str:
+    """The text a run is embedded by, and recalled with.
+
+    One function for both ends on purpose. Memory is only meaningful if the vector written
+    after a run and the query asked before the next one are the same kind of text - and a
+    symmetry kept by two call sites is a symmetry that lasts until somebody edits one.
+    """
+    return f"{read.trend} {read.valuation}: {' '.join(read.observations)}"
+
+
+def build_message(
+    step: StepSpec,
+    request: SignalRequest,
+    context: Mapping[str, BaseModel],
+    memory: str | None = None,
+) -> str:
     """Everything the step is told, and nothing else.
 
     The prompt file holds the instructions; this holds the run. Keeping them apart is what
@@ -56,7 +77,15 @@ def build_message(step: StepSpec, request: SignalRequest, context: Mapping[str, 
             else f"{POSITION_LABEL}: {position.quantity} st till snittkurs {position.average_price}"
         )
 
-    payload = {name: model.model_dump(mode="json") for name, model in context.items()}
+    payload: dict[str, object] = {
+        name: model.model_dump(mode="json") for name, model in context.items()
+    }
+
+    # Inside the delimiters, not before them. It is our own model's past prose, which is
+    # still text a model wrote - the one place it could carry an instruction is the one
+    # place the prompts say instructions are not obeyed.
+    if memory is not None:
+        payload[MEMORY_KEY] = memory
     # sort_keys so the same context always produces the same message, which a test can
     # compare against; ensure_ascii=False so Swedish text stays readable and cheap.
     lines += [DATA_OPEN, json.dumps(payload, sort_keys=True, ensure_ascii=False), DATA_CLOSE]
@@ -80,6 +109,9 @@ class SignalPipeline:
 
     # Written to after the answer is built, and never able to withhold one. See _journal.
     journal: AnalysisJournal
+
+    # Read before a step that asks for it, written after the run. Best-effort at both ends.
+    memory: Memory
 
     async def run(self, request: SignalRequest) -> TradeSignal:
         team = self.teams.get(request.team_id)
@@ -106,8 +138,11 @@ class SignalPipeline:
 
         for ordinal, step in enumerate(team.spec.steps):
             context = {schema.__name__: outputs[schema] for schema in step.reads}
+            recalled = await self._recall(step, request, outputs)
             result = await team.runner.run_step(
-                step.role, build_message(step, request, context), step.output_schema
+                step.role,
+                build_message(step, request, context, recalled),
+                step.output_schema,
             )
             outputs[step.output_schema] = result
             recorded.append(RecordedStep(ordinal=ordinal, role=step.role, output=result))
@@ -129,9 +164,36 @@ class SignalPipeline:
             run=RunInfo(team_id=team.spec.id, team_version=team.version, revisions=REVISIONS),
         )
 
-        await self._journal(request, team, facts, tuple(recorded))
+        await self._journal(request, team, facts, tuple(recorded), outputs)
 
         return signal
+
+    async def _recall(
+        self,
+        step: StepSpec,
+        request: SignalRequest,
+        outputs: Mapping[type[BaseModel], BaseModel],
+    ) -> str | None:
+        """What this step is told about the last time the market looked like this.
+
+        None for a step that does not ask, so the message is byte-for-byte what it was
+        before memory existed - which is what keeps `default` comparable to itself across
+        this change, and its team_version honest.
+
+        TeamSpec has already refused a step that asks for memory without reading
+        MarketRead, so the lookup below cannot miss.
+        """
+        if not step.sees_memory:
+            return None
+
+        read = outputs[MarketRead]
+        assert isinstance(read, MarketRead)  # noqa: S101 - TeamSpec guarantees it
+
+        return await self.memory.recall(
+            request.instrument.symbol,
+            describe_reading(read),
+            correlation_id=request.correlation_id,
+        )
 
     async def _journal(
         self,
@@ -139,6 +201,7 @@ class SignalPipeline:
         team: TeamRuntime,
         facts: FactSheet,
         steps: tuple[RecordedStep, ...],
+        outputs: Mapping[type[BaseModel], BaseModel],
     ) -> None:
         """Stores the run, and is never allowed to withhold the answer.
 
@@ -154,7 +217,7 @@ class SignalPipeline:
         and the reason is in this service's log under the same id.
         """
         try:
-            await self.journal.record(
+            run_id = await self.journal.record(
                 AnalysisRun(
                     correlation_id=request.correlation_id,
                     team_id=team.spec.id,
@@ -165,6 +228,15 @@ class SignalPipeline:
                     steps=steps,
                 )
             )
+
+            # Every team contributes to memory, including one that never reads it - so a
+            # team switched on later has something to recall from its first cycle rather
+            # than from its first measured horizon a week afterwards. A team with no
+            # MarketRead would contribute nothing; there is no such team, and building for
+            # one would be generalising from a single case.
+            read = outputs.get(MarketRead)
+            if isinstance(read, MarketRead):
+                await self.memory.remember(run_id, describe_reading(read))
         except Exception:
             # Deliberately not raised. An answer the engine can act on is worth more than
             # a complete journal, and the engine cannot tell a storage failure here from

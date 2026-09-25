@@ -80,6 +80,7 @@ def _build_pipeline(
     models: ModelConfigs,
     market: CachingMarketData,
     journal: PostgresJournal,
+    memory: AnalysisMemory,
 ) -> SignalPipeline:
     """Every team, validated and ready, before the service reports itself up.
 
@@ -99,7 +100,7 @@ def _build_pipeline(
         )
         logger.info("Team '%s' is version %s with steps %s", team_id, version, spec.roles)
 
-    return SignalPipeline(teams, market, journal)
+    return SignalPipeline(teams, market, journal, memory)
 
 
 @asynccontextmanager
@@ -133,11 +134,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 ttl_s=settings.market_data_ttl_s,
             )
 
+            memory = AnalysisMemory(pool, embeddings)
+
             app.state.resources = Resources(
                 models=models,
-                pipeline=_build_pipeline(settings, models, market, PostgresJournal(pool)),
+                pipeline=_build_pipeline(settings, models, market, PostgresJournal(pool), memory),
                 market=market,
-                memory=AnalysisMemory(pool, embeddings),
+                memory=memory,
                 outcomes=PostgresOutcomeStore(pool),
                 http_client=http_client,
                 llm_base_url=_probe_url(settings),

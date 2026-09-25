@@ -47,6 +47,13 @@ class StepSpec:
     # alone, so a step that wants more has to say so where anyone can read it.
     reads: tuple[type[BaseModel], ...] = (FactSheet,)
 
+    # Whether this step is shown past analyses of the same instrument. A flag rather
+    # than an entry in `reads`, because `reads` names schemas produced *inside* this run
+    # and memory comes from outside it - a different kind of input, and worth being able
+    # to see as one. Validated below against MarketRead, which is what memory is matched
+    # on: a step that cannot see today's reading has no query to recall with.
+    sees_memory: bool = False
+
     # Whether the portfolio's existing holding reaches this step. A flag rather than a
     # hardcoded role name, so the flow stays readable in the spec. The risk budget is
     # deliberately not here: under decision 1 no agent produces an amount, so a budget is
@@ -60,6 +67,15 @@ class StepSpec:
     def __post_init__(self) -> None:
         if not self.role or self.role != self.role.strip():
             raise ValueError(f"a step's role must be a name, not {self.role!r}")
+
+        # Memory is matched on the analyst's reading, at both ends: a run is embedded by
+        # its MarketRead and recalled with today's. A step given memory without being able
+        # to see that reading would be asking a question it cannot phrase.
+        if self.sees_memory and MarketRead not in self.reads:
+            raise ValueError(
+                f"step '{self.role}' is given memory but does not read "
+                f"{MarketRead.__name__}, which is what memory is matched on"
+            )
 
 
 @dataclass(frozen=True)

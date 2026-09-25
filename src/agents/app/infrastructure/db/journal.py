@@ -26,8 +26,8 @@ class PostgresJournal:
     def __init__(self, pool: asyncpg.Pool) -> None:
         self._pool = pool
 
-    async def record(self, run: AnalysisRun) -> None:
-        """Writes the run and its steps, or neither.
+    async def record(self, run: AnalysisRun) -> int:
+        """Writes the run and its steps, or neither, and returns the row's id.
 
         One transaction, because a run without its steps is a row that says an analysis
         happened and cannot say what it concluded - which reads as a team that produced
@@ -65,3 +65,8 @@ class PostgresJournal:
                     for step in run.steps
                 ],
             )
+
+        # The id, so the caller can hang derived data off the run - today an embedding,
+        # written outside this transaction because it is not evidence and must not be able
+        # to take the journal down with it.
+        return int(run_id)
