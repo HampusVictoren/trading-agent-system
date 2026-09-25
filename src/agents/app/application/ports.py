@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from app.application.journal import AnalysisRun
 from app.domain.facts import MarketSnapshot
+from app.domain.outcomes import MeasuredOutcome
 
 
 @runtime_checkable
@@ -55,3 +56,15 @@ class AnalysisJournal(Protocol):
     """
 
     async def record(self, run: AnalysisRun) -> None: ...
+
+
+@runtime_checkable
+class OutcomeStore(Protocol):
+    """Keeps a copy of what the engine measured, so memory can say what happened.
+
+    Unlike the journal, a failure here is reported. The engine is telling this service
+    something it already has written down and can send again - so a 500 that makes it
+    retry is better than a success that quietly loses a measurement.
+    """
+
+    async def store(self, outcomes: list[MeasuredOutcome]) -> None: ...

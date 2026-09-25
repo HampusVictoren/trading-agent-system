@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/HampusVictoren/trading-agent-system/contracts/outcome.schema.json",
+  "title": "Measured outcomes",
+  "description": "What the engine posts to POST /v1/outcomes after a measurement sweep. The engine owns the measurement - trading.signal_outcomes is the record, and this is a copy sent so that the agents' memory can say what happened afterwards rather than only what was said at the time. The database is never the integration point between the two services; this is how the same fact reaches both schemas. Posting is idempotent: an outcome already stored is accepted and ignored, so a sweep that is retried does not have to know what landed the first time.",
+  "type": "object",
+  "unevaluatedProperties": false,
+  "required": ["outcomes"],
+  "properties": {
+    "outcomes": {
+      "description": "One entry per signal per horizon. Capped because a request is a unit of work with a timeout, not a bulk load; a sweep with more than this to report sends more than one request.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 500,
+      "items": { "$ref": "#/$defs/outcome" }
+    }
+  },
+  "$defs": {
+    "outcome": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": [
+        "correlation_id",
+        "horizon_unit",
+        "horizon_days",
+        "status",
+        "benchmark_symbol"
+      ],
+      "properties": {
+        "correlation_id": {
+          "description": "Which analysis this measures. The engine keys its own row on the decision's id; on the wire it is the correlation id, because that is the one identifier both services wrote down.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "horizon_unit": {
+          "description": "Spelled as the engine stores it in trading.signal_outcomes rather than in this contract's usual upper case, so the two copies of a row compare directly without a mapping in anyone's head. Trading days are counted in bars; calendar days are the unit the model's own horizon_days is in.",
+          "enum": ["TradingDays", "CalendarDays"]
+        },
+        "horizon_days": {
+          "description": "How many, in that unit. Five trading days and five calendar days are different measurements, which is why the unit travels with the number.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "status": {
+          "description": "Measured means the numbers are here. NotMeasurable means there is a hole that waiting will not fill - it is reported rather than left out, because a signal that is quietly never measured is one missing from the population any report speaks about.",
+          "enum": ["Measured", "NotMeasurable"]
+        },
+        "reason": {
+          "description": "Why it can never be measured. Present only for NotMeasurable.",
+          "type": ["string", "null"],
+          "maxLength": 200
+        },
+        "benchmark_symbol": {
+          "description": "What the signal was compared against. Stored rather than assumed, because it is configuration today and a report has to stay readable after somebody changes it.",
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9.\\-]{0,9}$"
+        },
+        "measured_on": {
+          "description": "The day the horizon landed on. Null when nothing was measured.",
+          "type": ["string", "null"],
+          "format": "date"
+        },
+        "measured_price": {
+          "description": "The instrument's close on that day.",
+          "type": ["number", "null"],
+          "exclusiveMinimum": 0
+        },
+        "instrument_return": {
+          "description": "Fraction, not per cent. Null rather than zero for a row that was not measured: a return of zero is a real answer and a report must not average it in with the ones that never happened.",
+          "type": ["number", "null"]
+        },
+        "benchmark_return": { "type": ["number", "null"] },
+        "excess_return": {
+          "description": "Instrument minus benchmark, before costs.",
+          "type": ["number", "null"]
+        },
+        "cost_fraction": {
+          "description": "Commission and spread charged as a round trip on the instrument leg only. Stored so that changing the fee schedule later re-scores the history rather than discarding it.",
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "net_edge": {
+          "description": "Excess return after costs, signed by the stance: a SELL that fell further than the index has a positive edge.",
+          "type": ["number", "null"]
+        },
+        "hit": {
+          "description": "Whether the signal was right, by the definition in the engine's OutcomeCalculator: BUY beats the index net of costs, SELL does worse than it, HOLD stays inside the band.",
+          "type": ["boolean", "null"]
+        }
+      }
+    }
+  }
+}

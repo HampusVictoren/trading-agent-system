@@ -1,0 +1,36 @@
+{
+  "outcomes": [
+    {
+      "correlation_id": "0199b0d4-1f2e-7a63-9c40-5d8a2f1b6e77",
+      "horizon_unit": "TradingDays",
+      "horizon_days": 5,
+      "status": "Measured",
+      "reason": null,
+      "benchmark_symbol": "SPY",
+      "measured_on": "2026-10-01",
+      "measured_price": 344.12,
+      "instrument_return": 0.019795,
+      "benchmark_return": 0.004311,
+      "excess_return": 0.015484,
+      "cost_fraction": 0.0006,
+      "net_edge": 0.014884,
+      "hit": true
+    },
+    {
+      "correlation_id": "0199b0d4-1f2e-7a63-9c40-5d8a2f1b6e77",
+      "horizon_unit": "CalendarDays",
+      "horizon_days": 30,
+      "status": "Measured",
+      "reason": null,
+      "benchmark_symbol": "SPY",
+      "measured_on": "2026-10-24",
+      "measured_price": 331.08,
+      "instrument_return": -0.018862,
+      "benchmark_return": 0.011204,
+      "excess_return": -0.030066,
+      "cost_fraction": 0.0006,
+      "net_edge": -0.030666,
+      "hit": false
+    }
+  ]
+}

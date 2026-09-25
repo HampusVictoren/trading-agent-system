@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Path, Query
 
 from app.api.security import require_api_key
 from app.dependencies import Resources, get_resources
+from app.domain.outcomes import OutcomeReport
 from app.domain.quotes import InstrumentHistory, InstrumentQuote
 from app.domain.signals import (
     MAX_SYMBOL_LENGTH,
@@ -101,3 +102,29 @@ async def get_history(
         instrument=EquityInstrument(type="equity", symbol=symbol),
         bars=tuple(bar for bar in snapshot.history if bar.on >= since),
     )
+
+
+@router.post("/v1/outcomes")
+async def record_outcomes(
+    report: OutcomeReport,
+    resources: Annotated[Resources, Depends(get_resources)],
+) -> dict[str, int]:
+    """What the engine measured, on its way to becoming what the agents remember.
+
+    The engine owns the measurement: its OutcomeCalculator defines a hit, and
+    trading.signal_outcomes is the record. This is the copy, sent over HTTP because the
+    database is never the integration point between the two services - two schemas, two
+    roles, one correlation id that both happen to write down.
+
+    A failure is not swallowed. The journal cannot be allowed to withhold an answer,
+    because a trading cycle is waiting for one; this is the opposite case. The engine is
+    reporting something it has already stored and can send again, so a 500 that makes it
+    retry beats a success that quietly loses a measurement.
+
+    Storing is idempotent, which is what makes that retry safe: an outcome already here is
+    accepted and ignored, so the engine does not have to know what landed the first time.
+    The count in the answer is what was accepted, not what was new.
+    """
+    await resources.outcomes.store(report.outcomes)
+
+    return {"accepted": len(report.outcomes)}
