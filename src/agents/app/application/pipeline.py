@@ -10,16 +10,20 @@ service already has a status code for.
 """
 
 import json
+import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 
 from pydantic import BaseModel
 
 from app.application.errors import AgentResponseInvalid, InstrumentNotSupported, UnknownTeam
-from app.application.ports import MarketDataProvider, StepRunner
+from app.application.journal import AnalysisRun, RecordedStep
+from app.application.ports import AnalysisJournal, MarketDataProvider, StepRunner
 from app.application.teams import StepSpec, TeamSpec
 from app.domain.facts import FactSheet, build_fact_sheet
 from app.domain.signals import RunInfo, SignalRequest, TradeSignal, TradeView
+
+logger = logging.getLogger(__name__)
 
 # The prompts tell the model that everything between these is data rather than
 # instructions. Kept here because the delimiter is part of that agreement.
@@ -74,6 +78,9 @@ class SignalPipeline:
     teams: Mapping[str, TeamRuntime]
     market: MarketDataProvider
 
+    # Written to after the answer is built, and never able to withhold one. See _journal.
+    journal: AnalysisJournal
+
     async def run(self, request: SignalRequest) -> TradeSignal:
         team = self.teams.get(request.team_id)
         if team is None:
@@ -94,14 +101,16 @@ class SignalPipeline:
         # TeamSpec has already refused two steps producing the same type, so nothing here
         # can be overwritten.
         outputs: dict[type[BaseModel], BaseModel] = {FactSheet: facts}
+        recorded: list[RecordedStep] = []
         result: BaseModel | None = None
 
-        for step in team.spec.steps:
+        for ordinal, step in enumerate(team.spec.steps):
             context = {schema.__name__: outputs[schema] for schema in step.reads}
             result = await team.runner.run_step(
                 step.role, build_message(step, request, context), step.output_schema
             )
             outputs[step.output_schema] = result
+            recorded.append(RecordedStep(ordinal=ordinal, role=step.role, output=result))
 
         if not isinstance(result, TradeView):
             # TeamSpec makes this unreachable, and it stays because the alternative to an
@@ -112,10 +121,56 @@ class SignalPipeline:
 
         # The agents' half, joined with the half code is responsible for. The price comes
         # from the fact sheet, never from the model: the engine sizes the order from it.
-        return TradeSignal.from_view(
+        signal = TradeSignal.from_view(
             result,
             instrument=request.instrument,
             reference_price=facts.price,
             quote_as_of=facts.as_of,
             run=RunInfo(team_id=team.spec.id, team_version=team.version, revisions=REVISIONS),
         )
+
+        await self._journal(request, team, facts, tuple(recorded))
+
+        return signal
+
+    async def _journal(
+        self,
+        request: SignalRequest,
+        team: TeamRuntime,
+        facts: FactSheet,
+        steps: tuple[RecordedStep, ...],
+    ) -> None:
+        """Stores the run, and is never allowed to withhold the answer.
+
+        Only successful runs reach here, which makes the population "analyses that produced
+        a signal". The engine's own `decisions` is wider - it has a row for a cycle this
+        service failed - so a correlation id present there and missing here is either a
+        failure the engine already recorded or a journal write that did not land. The log
+        line below is what tells the two apart.
+
+        The write happens after the signal is built rather than before the steps, so a
+        half-finished run does not look like a team that answered with nothing. The cost is
+        that a failure mid-team leaves no trace here; the engine records that it happened,
+        and the reason is in this service's log under the same id.
+        """
+        try:
+            await self.journal.record(
+                AnalysisRun(
+                    correlation_id=request.correlation_id,
+                    team_id=team.spec.id,
+                    team_version=team.version,
+                    instrument_type=request.instrument.type,
+                    symbol=request.instrument.symbol,
+                    facts=facts,
+                    steps=steps,
+                )
+            )
+        except Exception:
+            # Deliberately not raised. An answer the engine can act on is worth more than
+            # a complete journal, and the engine cannot tell a storage failure here from
+            # the agents failing - it would read as "no decision this cycle".
+            logger.error(
+                "Analysis %s was not journalled, so its working is lost",
+                request.correlation_id,
+                exc_info=True,
+            )
