@@ -139,6 +139,21 @@ each analysis was told, and `agent.signal_outcomes` knows how it turned out.
 | What memory contains | **Past reasoning *and* the measured outcome** | Reasoning alone teaches a model to agree with itself: a wrong thesis it repeated three times reads as a well-founded one. Only what happened afterwards can make the next decision better |
 | Where memory is wired in | **A second team. `default` is left alone** | Memory is something added, and the roadmap says the baseline is of the thin three-step team. Keeping `default` untouched means `Trading:TeamId` switches between them and `default` vs `default-memory` becomes the first real experiment the measurement machinery enables |
 
+**Carried in from the review of 6a** (2026-09-25, an external review; verdict "approve with
+nits", no blockers). Two of its findings were fixed in 6a - a stale test docstring, and the
+batch cap that existed in three places with nothing binding them. Three are deferred here,
+because they all touch files 6b opens anyway:
+
+| | What | Why it waits |
+|---|---|---|
+| `Remaining` is not a count | `ReportOutcomesUseCase` reads `MaxPerRequest + 1` rows, so a backlog of 5 000 is reported as "1 still waiting". The name and the type say *count*; the value is a flag | Rename to `MoreWaiting`, and add a drain loop **with a tick budget** - one batch per 24-hour sweep means a large backlog takes days, and an unbounded loop would make one tick arbitrarily long |
+| No status conditions in the contract | `Measured` with no figures, or `NotMeasurable` with `hit: true`, both validate today | The obvious rule is wrong: **`net_edge` is null for HOLD**, because a HOLD has no edge to compute, only a band it stays inside. The real invariant is narrower, and it currently lives only in prose and in one `switch` in `OutcomeCalculator` |
+| `MeasurementWorker` has no test | A comment claims delivery is attempted *even when the sweep failed*, since the backlog is not only what today measured. That branch is tested nowhere and was not exercised live either | An untested error path in a background service that swallows exceptions. Raised above the reviewer's "low" for that reason |
+
+Also noted and left: a repeated `correlation_id` in the journal logs "its working is lost"
+when the working is in fact already there. Nearly unreachable - the engine's resilience
+policy does not retry `POST /v1/signals` - so it is a one-line fix when the file is next open.
+
 **What 6b has to build:** a way for a step to be given something that is not an earlier step's
 output. `StepSpec.reads` names schemas produced inside the run; memory comes from outside it,
 so it needs a flag of its own next to `sees_position`, and a port so the pipeline still does
@@ -863,6 +878,20 @@ steps* rather than here, because they are still being spent.
   the `numeric` columns instead of converting them to text first changes nothing either,
   because the engine rounds to six decimals and the columns hold six. That defence was
   deleted rather than kept.
+
+  *Reviewed externally, 2026-09-25*, verdict "approve with nits" and no blockers. Two
+  findings were fixed on the branch. The first was a **stale docstring** in
+  `test_outcome_store.py` still explaining the float-to-text conversion that the mutation
+  test had caused to be deleted - which is worse than no explanation, because the docstring
+  is what a reader reaches first. The second the review did not raise and is the more serious
+  of the two: **the batch cap 500 existed in three places** - the engine's constant, the
+  agent service's, and the contract's `maxItems` - with each side testing only its own copy.
+  Drift there is not a slow recovery but a **stop**: the engine would send the same oversized
+  batch every sweep, take a 422, mark nothing and repeat, silently apart from one error line a
+  day. Both constants are now asserted against the checked-in contract, which is the same
+  guard `trading.hit_rate`'s conviction thresholds already had and this duplication had not.
+  Lowering `maxItems` turns both suites red, which is how it was checked. Three findings are
+  deferred to 6b and written up under *Next up*.
 
   *Verified live:* the engine and the agent service both running, against the real database.
   One sweep **measured 21** signals at one trading day, 63 not due, and delivered all 21 -

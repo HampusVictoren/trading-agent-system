@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Engine.Application.Contracts;
 using Engine.Application.Persistence;
+using Engine.Application.UseCases;
 using Engine.Domain.Outcomes;
 using Shouldly;
 
@@ -15,6 +16,10 @@ public class OutcomeReportContractTests
 {
     private static string Example(string name) =>
         File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "contracts", "examples", name));
+
+    private static JsonDocument Contract() =>
+        JsonDocument.Parse(
+            File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "contracts", "outcome.schema.json")));
 
     private static OutcomeReportDto? Parse(string json) =>
         JsonSerializer.Deserialize<OutcomeReportDto>(json, ContractSerialization.Options);
@@ -114,6 +119,29 @@ public class OutcomeReportContractTests
         json.ShouldContain("\"benchmark_symbol\"");
         json.ShouldContain("\"net_edge\"");
         json.ShouldContain("\"measured_on\":\"2026-10-01\"");
+    }
+
+    [Fact]
+    public void The_batch_the_engine_sends_is_capped_at_what_the_contract_accepts()
+    {
+        // The number 500 is written in three places - here, in the agent service's
+        // MAX_OUTCOMES_PER_REQUEST, and in the contract - and until now each side only
+        // tested its own copy, so the two could drift without anything going red.
+        //
+        // Drift is not a slow recovery, it is a stop. If the other side's cap were the
+        // lower one, every sweep would send the same oversized batch, get a 422, mark
+        // nothing delivered and do it again - silently, apart from one error line a day.
+        // The same reasoning guards trading.hit_rate's conviction thresholds, which repeat
+        // ConvictionTier's constants in SQL.
+        using var contract = Contract();
+
+        var maxItems = contract.RootElement
+            .GetProperty("properties")
+            .GetProperty("outcomes")
+            .GetProperty("maxItems")
+            .GetInt32();
+
+        maxItems.ShouldBe(ReportOutcomesUseCase.MaxPerRequest);
     }
 
     [Fact]

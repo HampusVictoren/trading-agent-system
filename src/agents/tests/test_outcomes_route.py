@@ -154,6 +154,21 @@ def test_a_batch_larger_than_the_cap_is_refused(outcomes):
     store.store.assert_not_awaited()
 
 
+def test_the_batch_cap_is_the_one_the_contract_states():
+    """The other half of a constant that exists three times.
+
+    500 is written here, in the engine's ReportOutcomesUseCase.MaxPerRequest, and in the
+    contract. Each side used to test only its own copy, so the two could drift and both
+    suites would stay green - and drift is not a slow recovery but a stop: the engine would
+    send the same oversized batch every sweep, get a 422, mark nothing delivered and repeat.
+
+    Binding both constants to the checked-in contract is what ties them to each other.
+    """
+    schema = json.loads((CONTRACTS / "outcome.schema.json").read_text(encoding="utf-8"))
+
+    assert schema["properties"]["outcomes"]["maxItems"] == MAX_OUTCOMES_PER_REQUEST
+
+
 def test_the_contract_and_the_model_require_the_same_fields():
     """Neither side generates the other, so this is what catches a field that became
     required in one place only."""

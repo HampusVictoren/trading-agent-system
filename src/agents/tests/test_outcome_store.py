@@ -50,10 +50,17 @@ async def pool(migrated: str) -> AsyncIterator[asyncpg.Pool]:
 
 
 async def test_every_figure_comes_back_as_the_engine_sent_it(pool: asyncpg.Pool) -> None:
-    """The reason the decimal columns are written as text. asyncpg would send a Python
-    float as float8, and Postgres rounds float8 to numeric on the way in - so the copy
-    would differ from the engine's row in the last digits, which is the one thing a copy
-    must not do."""
+    """A copy that disagrees with the original in the last digits is worse than no copy.
+
+    The figures travel as Python floats into numeric columns, and this is what says that is
+    safe: the engine rounds every return to six decimals before it sends one, and these
+    columns hold six - eight for a price. A float carries far more significant digits than
+    that, so nothing the contract can express is lost on the way in.
+
+    An earlier version converted each number to text first to avoid a float8 rounding step.
+    A mutation test showed nothing depended on it, so the conversion was removed; this test
+    is what would notice if the premise behind removing it ever stopped holding.
+    """
     await PostgresOutcomeStore(pool).store([MEASURED])
 
     row = await pool.fetchrow("SELECT * FROM agent.signal_outcomes")
