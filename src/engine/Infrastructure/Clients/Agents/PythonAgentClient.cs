@@ -16,6 +16,8 @@ public class PythonAgentClient : IAgentClient
 
     private const string QuotesPath = "v1/quotes";
 
+    private const string OutcomesPath = "v1/outcomes";
+
     private readonly HttpClient _httpClient;
 
     public PythonAgentClient(HttpClient httpClient)
@@ -163,6 +165,42 @@ public class PythonAgentClient : IAgentClient
         {
             throw new AgentResponseInvalidException(
                 $"The agent service answered for history on {symbol} with something other than the agreed JSON.", ex);
+        }
+    }
+
+    /// <summary>
+    /// Posts a batch of measurements. The answer's body is not read: the engine has nothing
+    /// to do with the count, and a 2xx is the whole of what it needs to know.
+    /// </summary>
+    public async Task PostOutcomesAsync(
+        OutcomeReportDto report, string correlationId, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            using var message = new HttpRequestMessage(HttpMethod.Post, OutcomesPath)
+            {
+                Content = JsonContent.Create(report, options: ContractSerialization.Options)
+            };
+
+            message.Headers.Add(CorrelationIdHeader, correlationId);
+
+            var response = await _httpClient.SendAsync(message, cancellationToken);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new AgentServiceUnavailableException(
+                    $"The agent service answered {(int)response.StatusCode} for "
+                    + $"{report.Outcomes.Count} outcomes.");
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw; // We are shutting down, which is not a failure of the agent service.
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TimeoutRejectedException or OperationCanceledException)
+        {
+            throw new AgentServiceUnavailableException(
+                $"The agent service did not answer for {report.Outcomes.Count} outcomes.", ex);
         }
     }
 

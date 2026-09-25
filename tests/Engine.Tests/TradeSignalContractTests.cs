@@ -30,7 +30,7 @@ public class TradeSignalContractTests
     {
         // A copy that silently stops being copied would make every test below vacuous.
         Directory.EnumerateFiles(Path.Combine(ContractsDirectory, "examples"), "*.json")
-            .Count().ShouldBe(7);
+            .Count().ShouldBe(9);
     }
 
     [Fact]

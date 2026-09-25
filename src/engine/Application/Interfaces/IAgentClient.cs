@@ -37,4 +37,16 @@ public interface IAgentClient
     /// </summary>
     Task<HistoryDto?> GetHistoryAsync(
         string symbol, DateOnly from, string correlationId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Tells the agent service what a sweep measured. The engine keeps the record; this is
+    /// the copy that lets the agents' memory say how a past thesis turned out.
+    /// </summary>
+    /// <remarks>
+    /// The only call the engine makes that is not part of answering a question. It may fail
+    /// without costing a decision - nothing is waiting on it - which is why a failure is an
+    /// exception the caller logs and retries next sweep rather than one that stops a cycle.
+    /// </remarks>
+    Task PostOutcomesAsync(
+        OutcomeReportDto report, string correlationId, CancellationToken cancellationToken = default);
 }
