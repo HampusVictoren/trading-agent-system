@@ -58,6 +58,7 @@ Two things that are easy to misread as broken:
 - **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21, **stage 3 done** 2026-09-23. **Stage 4 started** 2026-09-23 and is where the work is now. PR 5 and PR 6 were each split in two, so the stage is eight pull requests: **seven are merged or written** and one - memory in the loop - is left. Stages 5-8 exist only as plan.
 - **`master` is at PR #39**, stage 4's PR 6a, merged 2026-09-25. The stacked pair that the last entry warned about landed in the right order and both branches are gone on both sides. Nothing reaches `master` without the three required checks passing, so what is there is green by construction.
 - **One branch is open:** `stage-4-memory`, PR 6b - the memory the agents read, and the second team that reads it.
+- **`6c6da0e6edad` and `b1234878670a` are the same team.** Write that down anywhere it might be read, because it cannot be recovered from the data: the two hashes describe byte-identical behaviour, and measurements under them may be pooled. The rows are *not* rewritten to say so - `decisions` is append-only precisely so a stored version cannot be edited afterwards, and a history that can be corrected is not evidence.
 - **`default`'s `team_version` moved once, on 2026-09-25**, from `6c6da0e6edad` to `b1234878670a`, without a word of the team changing. Adding `sees_memory` to the hash payload wrote `sees_memory: false` onto every step; the payload is now sparse so it cannot happen again, but the hash cannot be restored. The 21 measurements already taken keep the old value - it is stored on each decision row - and everything from here accumulates under the new one. A day of one-trading-day measurements is the cheapest this will ever cost.
 - **There is one path now.** `POST /v1/signals` is the only endpoint that costs money, the engine calls it every cycle, and the old three-agent chain, `InvestmentProposal`, `ValidateTrade`, `RiskViolationException` and the FastMCP server are gone. Running the engine today produces real quantities at real prices, with the position cap holding across cycles.
 - **Every environment variable was renamed on 2026-09-23.** The local `src/agents/.env` was renamed in place and still works; a fresh clone follows `.env.example`. Nothing outside this repo reads them.
@@ -381,8 +382,7 @@ function and therefore an ideal test-first target.
 - **Uvicorn prints two lines before startup that are not JSON**, because `configure_logging()` runs in the lifespan. Moving it to import time would catch them but would also reconfigure logging in the middle of pytest. The real fix is a `--log-config` at deploy time, which belongs to stage 6.
 - **The contract carries no currency.** Every price in it is USD and so is the portfolio. Fine until stage 5 widens the universe, and noted in `TradeSignalMapper`. It goes with finding D's remaining half.
 - **`PositionSizer` and `RiskEngine.Evaluate` are registered but nothing resolves them.** Deliberate: registering them means the options-to-domain mapping is covered by `ValidateOnStart` now, and stage 3 becomes wiring rather than new code.
-- **`MemoryStore` still is not wired into the flow.** The lifespan builds one and nothing uses it. The roadmap puts a `search_history_tool` on `RiskManager` and a `save` after each cycle in stages 2-3.
-- **One row with ticker `TEST`** sits in `agent.agent_memories` from the smoke test on 2026-09-20. Harmless; delete it if a clean table matters.
+- **Memory is wired in as of PR 6b**, and `agent_memories` is gone with the `TEST` row that used to sit in it. `AnalysisMemory` reads the journal rather than a store of its own, and only the part of it the engine has measured.
 - **The first account was opened on 2026-09-24** at 10 000 USD, and `trading` now holds real rows from a live run against `llama3.2`. They are a smoke test, not a baseline: the baseline starts when the outcome job in PR 5 exists.
 - **`orders.placed_at` is a shadow property** filled by the database's `now()`. It is audit metadata today; stage 5 counts a holding period from the last purchase, and that is when it becomes domain data and has to come from the engine's injected clock instead.
 - **Quotes share the analysis client's resilience policy**, which does not retry a failing response. That rule was written for a call costing 12-15 s of LLM time and is stricter than an idempotent GET needs; the cost of leaving it is one cycle without a price for one holding, and the cost of a second typed client is a second place for the key and the timeouts to drift. Revisit if missing quotes ever show up in the decision rows.
@@ -934,6 +934,48 @@ steps* rather than here, because they are still being spent.
   *Mutation testing:* the measured-only join turned into a LEFT JOIN **1**; the memory key
   added unconditionally **1** (four tests, two of which predate memory); `sees_memory`
   deleted from the version payload **1**; the payload made dense again **1**.
+
+  *Reviewed externally, 2026-09-25*, verdict "accept with nits" and no blockers. Five things
+  fixed on the branch, and one deferred.
+
+  - **The journal's error line was lying.** `remember` shared the journal's `try`, so a
+    failed embedding - an embedding model reached over the network, which fails routinely -
+    logged "was not journalled, so its working is lost" although the row was sitting there.
+    That line is not decoration: it is how a hole in the journal is found at all, by a
+    correlation id the engine has in `decisions` with no run on this side. Reporting an
+    embedding failure as one sent a reader looking for something that was not missing. Two
+    `try` blocks now, with two severities - error for evidence, warning for derived data
+    that can be rebuilt.
+  - **`recall`'s promise was wider than its code.** The docstring said a memory that cannot
+    be fetched must not end an analysis; the `try` covered the fetch and not the formatting
+    of what came back. No reachable crash today - `thesis` is required on `TradeView` - but
+    the rows being formatted are written by *older versions of this service*, which is
+    precisely the material that stops matching the code that reads it. The whole of it is
+    inside the `try` now, and a test stores a TradeView with no thesis to prove it.
+  - **The model column was stored and not used.** The migration explains that two embedding
+    models in one index give a similarity score that means nothing - and then `recall` did
+    not filter on it. A motivation written down and its consequence not implemented, which
+    is the same shape as the batch cap in 6a.
+  - `Resources.memory` was typed as the concrete class while the two fields around it used
+    their ports. The port gained `ping`, which the readiness probe needs: whether a store
+    can be reached is a fact about the capability, not about the class behind it.
+  - Two stale documentation claims, one of which the review missed: `CLAUDE.md` still named
+    `agent.agent_memories` as the agents' memory, and this file still listed a `TEST` row in
+    a table that no longer exists.
+
+  *Deferred:* a backfill job for embeddings. The table exists so vectors can be rebuilt when
+  the model changes, and nothing can rebuild them. It buys nothing today - the eight runs
+  that lack vectors also lack measured outcomes, and `recall` needs both - so it is a task
+  of its own rather than a line in this pull request.
+
+  *Mutation testing:* the model filter removed **1**; the formatting moved back outside the
+  `try` **1**; both failure paths logging the same sentence **1**.
+
+  *Worth stating about what memory will actually do:* it is filtered by instrument, and only
+  measured analyses count. At stage 5's scale - thirty to fifty instruments, each analysed
+  about once a trading day - each instrument accumulates measured analyses slowly, so memory
+  stays near-empty per instrument for weeks. The code landing is not the same thing as the
+  feedback loop starting.
 
   *Verified live:* both teams built at startup with distinct versions, the engine run once
   under `Trading__TeamId=default-memory`, 8 runs stored under `default-memory` /

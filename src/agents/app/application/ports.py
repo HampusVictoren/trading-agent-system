@@ -85,3 +85,9 @@ class Memory(Protocol):
     async def recall(
         self, symbol: str, query: str, correlation_id: str, limit: int = ...
     ) -> str: ...
+
+    # What the readiness probe asks. It belongs on the port rather than beside it: whether
+    # a store can be reached is something a caller may need to know about the capability,
+    # not about which class happens to implement it. Unlike the two above, this one raises
+    # - a probe that answered "fine" whatever happened would not be a probe.
+    async def ping(self) -> None: ...

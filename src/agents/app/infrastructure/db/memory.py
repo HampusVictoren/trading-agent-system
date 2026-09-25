@@ -57,6 +57,11 @@ _REMEMBER = """
 # The LATERAL is what makes "only measured" a join rather than a filter applied afterwards:
 # a run with nothing measured produces a NULL aggregate and is dropped by the ON clause, so
 # it never takes one of the three places.
+#
+# The model is a filter and not only a column. Two embedding models in one index produce
+# distances that cannot be compared - the vectors are not in the same space - so a row
+# written by a previous model would be ranked against today's query as if it meant
+# something. It is why the model is stored per row; this is where that matters.
 _RECALL = """
     SELECT r.created_at,
            s.output ->> 'stance' AS stance,
@@ -77,9 +82,11 @@ _RECALL = """
         FROM agent.signal_outcomes o
         WHERE o.correlation_id = r.correlation_id AND o.status = 'Measured'
     ) m ON m.horizons IS NOT NULL
-    WHERE r.symbol = $2 AND r.correlation_id <> $3
+    WHERE r.symbol = $2
+      AND e.model = $3
+      AND r.correlation_id <> $4
     ORDER BY e.embedding <=> $1
-    LIMIT $4
+    LIMIT $5
 """
 
 # Agent-facing text, so Swedish, like the prompt files. A model reads every line below.
@@ -135,9 +142,14 @@ class AnalysisMemory:
         """The closest past analyses *that have been measured*, written for a model to read.
 
         A failure becomes a sentence rather than an exception: the agents' own errors are
-        handled at the route, and a memory that cannot be fetched must not end an analysis
-        that would otherwise have succeeded. The sentence says so plainly, so a model is not
-        left to infer that nothing has ever happened.
+        handled at the route, and a memory that cannot be read must not end an analysis that
+        would otherwise have succeeded. The sentence says so plainly, so a model is not left
+        to infer that nothing has ever happened.
+
+        *Read*, not *fetched*: the whole of it is inside the try, formatting included. A
+        promise stated more widely than the code keeps it is one that rots - and the rows
+        being formatted were written by an older version of this service, which is exactly
+        the material that stops matching the code that reads it.
 
         The current run is excluded by its correlation id. It has no measured outcome yet,
         so it could not match today - but it will once a horizon passes, and a run that
@@ -147,15 +159,17 @@ class AnalysisMemory:
             embedding = await self.embed(query)
 
             async with self._pool.acquire() as conn:
-                rows = await conn.fetch(_RECALL, embedding, symbol, correlation_id, limit)
+                rows = await conn.fetch(
+                    _RECALL, embedding, symbol, EMBEDDING_MODEL, correlation_id, limit
+                )
+
+            if not rows:
+                return NOTHING_MEASURED.format(symbol=symbol)
+
+            return "\n".join(self._describe(row) for row in rows)
         except Exception:
             logger.warning("Could not read memory for %s", symbol, exc_info=True)
             return UNAVAILABLE
-
-        if not rows:
-            return NOTHING_MEASURED.format(symbol=symbol)
-
-        return "\n".join(self._describe(row) for row in rows)
 
     @staticmethod
     def _describe(row: asyncpg.Record) -> str:

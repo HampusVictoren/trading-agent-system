@@ -6,6 +6,7 @@ layer and can be checked without a model. tests/test_ag2_runner.py covers the ot
 """
 
 import json
+import logging
 from datetime import UTC, datetime
 
 import pytest
@@ -504,12 +505,44 @@ class TestMemory:
         assert memory.remembered == [(1, describe_reading(A_READ))]
 
     async def test_a_memory_that_cannot_be_written_does_not_cost_the_answer(self):
-        class Failing(RecallingMemory):
-            async def remember(self, analysis_run_id, text) -> None:
-                raise RuntimeError("the embedding backend went away")
-
-        pipeline, _ = a_pipeline(memory=Failing())
+        pipeline, _ = a_pipeline(memory=self.Failing())
 
         signal = await pipeline.run(a_request())
 
         assert signal.stance is Stance.BUY
+
+    class Failing(RecallingMemory):
+        async def remember(self, analysis_run_id, text) -> None:
+            raise RuntimeError("the embedding backend went away")
+
+    async def test_a_failed_embedding_is_not_reported_as_a_lost_journal(self, caplog):
+        """The journal's error line is how a hole in the journal is found at all: a
+        correlation id the engine has in `decisions` with no run on this side. An embedding
+        that failed is not such a hole - the row is sitting right there - and saying it is
+        sends a reader looking for something that is not missing."""
+        pipeline, _ = a_pipeline(memory=self.Failing())
+
+        with caplog.at_level(logging.DEBUG):
+            await pipeline.run(a_request())
+
+        assert "was not journalled" not in caplog.text
+        assert "journalled but not embedded" in caplog.text
+
+    async def test_a_failed_journal_is_not_embedded_against_a_row_that_is_not_there(self):
+        """There is no id to hang a vector off, and the foreign key would refuse it."""
+        memory = RecallingMemory()
+        journal = RecordingJournal(failure=RuntimeError("no database"))
+        pipeline, _ = a_pipeline(journal=journal, memory=memory)
+
+        signal = await pipeline.run(a_request())
+
+        assert signal.stance is Stance.BUY
+        assert memory.remembered == []
+
+    async def test_a_failed_journal_still_says_the_working_is_lost(self, caplog):
+        pipeline, _ = a_pipeline(journal=RecordingJournal(failure=RuntimeError("no database")))
+
+        with caplog.at_level(logging.DEBUG):
+            await pipeline.run(a_request())
+
+        assert "was not journalled" in caplog.text

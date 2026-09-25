@@ -6,8 +6,7 @@ import httpx2
 from fastapi import Request
 
 from app.application.pipeline import SignalPipeline
-from app.application.ports import MarketDataProvider, OutcomeStore
-from app.infrastructure.db.memory import AnalysisMemory
+from app.application.ports import MarketDataProvider, Memory, OutcomeStore
 from app.infrastructure.llm.provider import ModelConfigs
 
 
@@ -27,8 +26,9 @@ class Resources:
     market: MarketDataProvider
 
     # Semantic memory over this service's own journal, and only over the part of it the
-    # engine has measured. See app/infrastructure/db/memory.py.
-    memory: AnalysisMemory
+    # engine has measured. The port rather than the class, like the two fields around
+    # it: what a route is handed is a capability, not an implementation.
+    memory: Memory
 
     # Written by the engine after a measurement sweep, read by memory. Separate from the
     # journal because one is this service's own working and the other is a copy of

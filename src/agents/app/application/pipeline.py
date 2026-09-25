@@ -164,7 +164,9 @@ class SignalPipeline:
             run=RunInfo(team_id=team.spec.id, team_version=team.version, revisions=REVISIONS),
         )
 
-        await self._journal(request, team, facts, tuple(recorded), outputs)
+        run_id = await self._journal(request, team, facts, tuple(recorded))
+        if run_id is not None:
+            await self._remember(request, run_id, outputs)
 
         return signal
 
@@ -201,9 +203,8 @@ class SignalPipeline:
         team: TeamRuntime,
         facts: FactSheet,
         steps: tuple[RecordedStep, ...],
-        outputs: Mapping[type[BaseModel], BaseModel],
-    ) -> None:
-        """Stores the run, and is never allowed to withhold the answer.
+    ) -> int | None:
+        """Stores the run and returns its id, or None when it could not be stored.
 
         Only successful runs reach here, which makes the population "analyses that produced
         a signal". The engine's own `decisions` is wider - it has a row for a cycle this
@@ -217,7 +218,7 @@ class SignalPipeline:
         and the reason is in this service's log under the same id.
         """
         try:
-            run_id = await self.journal.record(
+            return await self.journal.record(
                 AnalysisRun(
                     correlation_id=request.correlation_id,
                     team_id=team.spec.id,
@@ -228,21 +229,50 @@ class SignalPipeline:
                     steps=steps,
                 )
             )
-
-            # Every team contributes to memory, including one that never reads it - so a
-            # team switched on later has something to recall from its first cycle rather
-            # than from its first measured horizon a week afterwards. A team with no
-            # MarketRead would contribute nothing; there is no such team, and building for
-            # one would be generalising from a single case.
-            read = outputs.get(MarketRead)
-            if isinstance(read, MarketRead):
-                await self.memory.remember(run_id, describe_reading(read))
         except Exception:
             # Deliberately not raised. An answer the engine can act on is worth more than
             # a complete journal, and the engine cannot tell a storage failure here from
             # the agents failing - it would read as "no decision this cycle".
             logger.error(
                 "Analysis %s was not journalled, so its working is lost",
+                request.correlation_id,
+                exc_info=True,
+            )
+            return None
+
+    async def _remember(
+        self,
+        request: SignalRequest,
+        run_id: int,
+        outputs: Mapping[type[BaseModel], BaseModel],
+    ) -> None:
+        """Embeds the run, so the next analysis of this instrument can recall it.
+
+        Every team contributes, including one that never reads memory - so a team switched
+        on later has something to recall from its first cycle rather than from its first
+        measured horizon a week afterwards. A team with no MarketRead contributes nothing;
+        there is no such team, and building for one would be generalising from a single case.
+
+        Its own try, and its own severity, because it fails for its own reasons - it calls
+        an embedding model over the network - and because sharing the journal's made the
+        journal's log line lie. That line is how a hole in the journal is found at all: a
+        correlation id the engine has in `decisions` with no run on this side. An embedding
+        that failed is not such a hole, and reporting it as one sends a reader looking for
+        a missing row that is sitting right there.
+
+        A warning rather than an error, because nothing is lost that cannot be rebuilt.
+        That is the whole reason the embedding lives in a table of its own.
+        """
+        read = outputs.get(MarketRead)
+        if not isinstance(read, MarketRead):
+            return
+
+        try:
+            await self.memory.remember(run_id, describe_reading(read))
+        except Exception:
+            logger.warning(
+                "Analysis %s was journalled but not embedded, so it cannot be recalled "
+                "until something rebuilds it",
                 request.correlation_id,
                 exc_info=True,
             )

@@ -236,3 +236,55 @@ async def test_the_model_that_produced_a_vector_is_stored_beside_it(pool: asyncp
     await _remembered(pool, memory, run, "uppgång")
 
     assert await pool.fetchval("SELECT model FROM agent.analysis_embeddings") == "nomic-embed-text"
+
+
+async def test_a_vector_from_another_model_is_not_ranked_against_todays_query(
+    pool: asyncpg.Pool,
+) -> None:
+    """Two embedding models do not share a space, so a distance between them is not a
+    distance. The model is stored per row for this reason, and this is the filter that
+    makes storing it mean something - without it, every row survives a model change and
+    gets ranked as if it still said what it used to."""
+    memory = AnalysisMemory(pool, FakeEmbeddings())
+    run = a_run("c-1", Stance.BUY, "Tes om uppgång.")
+    await PostgresJournal(pool).record(run)
+    await _remembered(pool, memory, run, "uppgång")
+    await PostgresOutcomeStore(pool).store([an_outcome("c-1", excess=0.02, hit=True)])
+
+    # The table is deliberately not append-only, which is what lets this stand in for
+    # "these rows were written by the model we used to run".
+    await pool.execute("UPDATE agent.analysis_embeddings SET model = 'an-older-model'")
+
+    assert await memory.recall("AAPL", "uppgång", correlation_id="c-now") == (
+        NOTHING_MEASURED.format(symbol="AAPL")
+    )
+
+
+async def test_a_row_this_version_cannot_read_becomes_the_sentence_not_a_crash(
+    pool: asyncpg.Pool,
+) -> None:
+    """The rows being formatted were written by older versions of this service, which is
+    exactly the material that stops matching the code that reads it. Here a TradeView
+    stored without a thesis - what a future schema change would leave behind - which used
+    to reach the caller as a TypeError and end an analysis that had already succeeded."""
+    memory = AnalysisMemory(pool, FakeEmbeddings())
+
+    run_id = await pool.fetchval(
+        """
+        INSERT INTO agent.analysis_runs
+            (correlation_id, team_id, team_version, instrument_type, symbol, fact_sheet)
+        VALUES ('c-old', 'default', 'older', 'equity', 'AAPL', '{}'::jsonb)
+        RETURNING id
+        """
+    )
+    await pool.execute(
+        """
+        INSERT INTO agent.step_outputs (run_id, ordinal, role, schema_name, output)
+        VALUES ($1, 0, 'portfolio_manager', 'TradeView', '{"stance": "BUY"}'::jsonb)
+        """,
+        run_id,
+    )
+    await memory.remember(run_id, "uppgång")
+    await PostgresOutcomeStore(pool).store([an_outcome("c-old", excess=0.02, hit=True)])
+
+    assert await memory.recall("AAPL", "uppgång", correlation_id="c-now") == UNAVAILABLE
