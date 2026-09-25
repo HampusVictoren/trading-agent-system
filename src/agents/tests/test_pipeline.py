@@ -6,12 +6,20 @@ layer and can be checked without a model. tests/test_ag2_runner.py covers the ot
 """
 
 import json
+import logging
 from datetime import UTC, datetime
 
 import pytest
 
 from app.application.errors import InstrumentNotSupported, MarketDataUnavailable, UnknownTeam
-from app.application.pipeline import DATA_CLOSE, DATA_OPEN, SignalPipeline, TeamRuntime
+from app.application.pipeline import (
+    DATA_CLOSE,
+    DATA_OPEN,
+    MEMORY_KEY,
+    SignalPipeline,
+    TeamRuntime,
+    describe_reading,
+)
 from app.application.teams import DEFAULT_TEAM, StepSpec, TeamSpec
 from app.domain.facts import FactSheet, MarketSnapshot, PriceBar, Quote
 from app.domain.signals import (
@@ -64,15 +72,32 @@ class RecordingJournal:
         self.failure = failure
         self.runs = []
 
-    async def record(self, run) -> None:
+    async def record(self, run) -> int:
         if self.failure is not None:
             raise self.failure
         self.runs.append(run)
+        return len(self.runs)
 
     @property
     def only(self):
         assert len(self.runs) == 1, f"expected one run, got {len(self.runs)}"
         return self.runs[0]
+
+
+class RecallingMemory:
+    """Answers with fixed text and keeps what it was asked and told."""
+
+    def __init__(self, recalled: str = "Inget mätt än.") -> None:
+        self.recalled = recalled
+        self.queries: list[tuple[str, str, str]] = []
+        self.remembered: list[tuple[int, str]] = []
+
+    async def recall(self, symbol, query, correlation_id, limit=3) -> str:
+        self.queries.append((symbol, query, correlation_id))
+        return self.recalled
+
+    async def remember(self, analysis_run_id, text) -> None:
+        self.remembered.append((analysis_run_id, text))
 
 
 class StubMarket:
@@ -115,12 +140,15 @@ def a_request(**overrides) -> SignalRequest:
 
 
 def a_pipeline(
-    runner=None, market=None, team=DEFAULT_TEAM, journal=None
+    runner=None, market=None, team=DEFAULT_TEAM, journal=None, memory=None
 ) -> tuple[SignalPipeline, RecordingRunner]:
     runner = runner or RecordingRunner()
     runtime = TeamRuntime(spec=team, version=VERSION, runner=runner)
     pipeline = SignalPipeline(
-        {team.id: runtime}, market or StubMarket(), journal or RecordingJournal()
+        {team.id: runtime},
+        market or StubMarket(),
+        journal or RecordingJournal(),
+        memory or RecallingMemory(),
     )
     return pipeline, runner
 
@@ -396,3 +424,125 @@ class TestWhatIsWrittenDown:
             await pipeline.run(a_request())
 
         assert journal.runs == []
+
+
+class TestMemory:
+    """Who is shown past analyses, and what the two ends of memory agree on."""
+
+    @staticmethod
+    def a_remembering_team() -> TeamSpec:
+        """The default team with one flag changed, so a difference in a message below is
+        memory and not some other thing about the team."""
+        steps = tuple(
+            StepSpec(
+                role=step.role,
+                prompt_file=step.prompt_file,
+                output_schema=step.output_schema,
+                reads=step.reads,
+                sees_memory=step.role == "risk_manager",
+                sees_position=step.sees_position,
+            )
+            for step in DEFAULT_TEAM.steps
+        )
+        return TeamSpec(id="default", instrument_types=frozenset({"equity"}), steps=steps)
+
+    async def test_a_step_that_does_not_ask_is_told_nothing(self):
+        # The message has to be byte-for-byte what it was before memory existed, or
+        # `default` stops being comparable to itself across this change.
+        memory = RecallingMemory()
+        pipeline, runner = a_pipeline(memory=memory)
+
+        await pipeline.run(a_request())
+
+        for role in DEFAULT_TEAM.roles:
+            assert MEMORY_KEY not in runner.data_given_to(role)
+        assert memory.queries == []
+
+    async def test_the_step_that_asks_is_given_past_analyses(self):
+        memory = RecallingMemory(recalled="[2026-09-20] BUY - utfall mot index: 5 hd -3,1 %")
+        pipeline, runner = a_pipeline(team=self.a_remembering_team(), memory=memory)
+
+        await pipeline.run(a_request())
+
+        assert runner.data_given_to("risk_manager")[MEMORY_KEY] == memory.recalled
+        # Inside the delimiters, like everything else a model is handed.
+        assert memory.recalled in runner.message_to("risk_manager").split(DATA_OPEN, 1)[1]
+        # And nobody else sees it.
+        assert MEMORY_KEY not in runner.data_given_to("market_analyst")
+        assert MEMORY_KEY not in runner.data_given_to("portfolio_manager")
+
+    async def test_memory_is_asked_about_this_instrument_with_todays_reading(self):
+        memory = RecallingMemory()
+        pipeline, _ = a_pipeline(team=self.a_remembering_team(), memory=memory)
+
+        await pipeline.run(a_request())
+
+        symbol, query, correlation_id = memory.queries[0]
+        assert symbol == "AAPL"
+        assert correlation_id == "c-1"
+        assert query == describe_reading(A_READ)
+
+    async def test_what_is_written_is_what_the_next_run_will_ask_with(self):
+        """The symmetry memory depends on. A vector written from one kind of text and
+        queried with another is a number that looks like a similarity and is not one."""
+        memory = RecallingMemory()
+        pipeline, _ = a_pipeline(team=self.a_remembering_team(), memory=memory)
+
+        await pipeline.run(a_request())
+
+        _, query, _ = memory.queries[0]
+        _, written = memory.remembered[0]
+        assert written == query
+
+    async def test_a_team_that_never_reads_memory_still_feeds_it(self):
+        """So a team switched on later has something to recall from its first cycle, rather
+        than from its first measured horizon a week afterwards."""
+        memory = RecallingMemory()
+        pipeline, _ = a_pipeline(memory=memory)
+
+        await pipeline.run(a_request())
+
+        assert memory.remembered == [(1, describe_reading(A_READ))]
+
+    async def test_a_memory_that_cannot_be_written_does_not_cost_the_answer(self):
+        pipeline, _ = a_pipeline(memory=self.Failing())
+
+        signal = await pipeline.run(a_request())
+
+        assert signal.stance is Stance.BUY
+
+    class Failing(RecallingMemory):
+        async def remember(self, analysis_run_id, text) -> None:
+            raise RuntimeError("the embedding backend went away")
+
+    async def test_a_failed_embedding_is_not_reported_as_a_lost_journal(self, caplog):
+        """The journal's error line is how a hole in the journal is found at all: a
+        correlation id the engine has in `decisions` with no run on this side. An embedding
+        that failed is not such a hole - the row is sitting right there - and saying it is
+        sends a reader looking for something that is not missing."""
+        pipeline, _ = a_pipeline(memory=self.Failing())
+
+        with caplog.at_level(logging.DEBUG):
+            await pipeline.run(a_request())
+
+        assert "was not journalled" not in caplog.text
+        assert "journalled but not embedded" in caplog.text
+
+    async def test_a_failed_journal_is_not_embedded_against_a_row_that_is_not_there(self):
+        """There is no id to hang a vector off, and the foreign key would refuse it."""
+        memory = RecallingMemory()
+        journal = RecordingJournal(failure=RuntimeError("no database"))
+        pipeline, _ = a_pipeline(journal=journal, memory=memory)
+
+        signal = await pipeline.run(a_request())
+
+        assert signal.stance is Stance.BUY
+        assert memory.remembered == []
+
+    async def test_a_failed_journal_still_says_the_working_is_lost(self, caplog):
+        pipeline, _ = a_pipeline(journal=RecordingJournal(failure=RuntimeError("no database")))
+
+        with caplog.at_level(logging.DEBUG):
+            await pipeline.run(a_request())
+
+        assert "was not journalled" in caplog.text

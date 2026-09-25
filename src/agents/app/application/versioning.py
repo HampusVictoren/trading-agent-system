@@ -14,7 +14,7 @@ import json
 from collections.abc import Mapping
 from typing import Any
 
-from app.application.teams import TeamSpec
+from app.application.teams import StepSpec, TeamSpec
 from app.settings import LlmSettings, ModelSpec
 
 # Long enough that the handful of versions this will ever have cannot collide, short
@@ -36,6 +36,18 @@ def _model_identity(spec: ModelSpec) -> dict[str, Any]:
     }
 
 
+def _handovers(step: StepSpec) -> dict[str, bool]:
+    """The flags this step actually sets, and none it leaves alone.
+
+    Sparse on purpose. Listing every flag with its default would tie the version to the
+    *shape of this payload* rather than to the team: adding a flag nobody uses would
+    re-hash every team that exists, splitting each one's measurements in two for a change
+    that altered nothing a model reads. That happened once, when sees_memory was added -
+    which is how the rule got written down.
+    """
+    return {name: True for name in ("sees_memory", "sees_position") if getattr(step, name)}
+
+
 def version_payload(spec: TeamSpec, prompts: Mapping[str, str], llm: LlmSettings) -> dict[str, Any]:
     """Everything the version covers, as data. Separate from the hash so a test can read it."""
     return {
@@ -51,7 +63,10 @@ def version_payload(spec: TeamSpec, prompts: Mapping[str, str], llm: LlmSettings
                 # everything. This also covers FactSheet, which no step produces.
                 "output_schema": step.output_schema.model_json_schema(),
                 "reads": [schema.model_json_schema() for schema in step.reads],
-                "sees_position": step.sees_position,
+                # What this step is handed beyond its `reads`. A flag that is set
+                # changes what the model sees and is the version's business; one left at
+                # its default is not. See _handovers.
+                **_handovers(step),
                 "model": _model_identity(llm.for_role(step.role)),
             }
             for step in spec.steps

@@ -8,7 +8,7 @@ A hybrid, modular automated trading agent that runs entirely locally:
 - The **.NET 10 engine** (`src/engine`) is deterministic and rule-based. It owns scheduling, the portfolio (cash, positions), the `RiskEngine` that checks proposals against hard rules, and order execution.
 - The **Python agent service** (`src/agents`) is a FastAPI app. It exposes `POST /v1/signals` and runs a team of AG2 v1.0+ agents over a computed fact sheet, returning a validated `TradeSignal`: a direction and a conviction, never an amount. It also takes `POST /v1/outcomes`, which is how the engine's measurements reach this side — the database is never the integration point between the two services.
 - **Market data** comes from yfinance behind a `MarketDataProvider` port, with a TTL cache and a timeout, and is turned into a `FactSheet` by pure functions before any agent runs. The same provider answers `GET /v1/quotes/{symbol}` and `GET /v1/quotes/{symbol}/history?from=`, which is how the engine prices holdings it is not analysing and how it measures an outcome - one market-data integration, in one service.
-- **PostgreSQL + pgvector** (Docker) holds both services' state, in a schema each: `trading` has the portfolio, the append-only order ledger and every decision the engine has ever made (EF Core), and `agent` has the agents' semantic memory (`agent.agent_memories`).
+- **PostgreSQL + pgvector** (Docker) holds both services' state, in a schema each: `trading` has the portfolio, the append-only order ledger and every decision the engine has ever made (EF Core), and `agent` has this service's own journal of every analysis (`agent.analysis_runs`, `agent.step_outputs`), its copy of what the engine measured (`agent.signal_outcomes`) and the pgvector memory over the two (`agent.analysis_embeddings`).
 - **Ollama** is the LLM backend for both text generation (`llama3.2`) and embeddings (`nomic-embed-text`). The plan is to add Claude or Grok later.
 
 Everything in this repo is written in **English** — code, comments, log messages, exception messages, commit messages and documentation. There are exactly two exceptions:
@@ -84,20 +84,22 @@ uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 curl -X POST http://127.0.0.1:8000/v1/signals -H "X-Api-Key: $KEY" -H "Content-Type: application/json" \
   -d @../../contracts/examples/request.json
 
-# Smoke-test memory. MemoryStore takes a pool and an embeddings client, both built by the
-# FastAPI lifespan in app/main.py; a script builds its own the same way.
+# Smoke-test memory. AnalysisMemory takes a pool and an embeddings client, both built by the
+# FastAPI lifespan in app/main.py; a script builds its own the same way. `recall` needs no
+# data to exercise every part of it - with an empty journal it answers the sentence that
+# says nothing has been measured yet, having already embedded the query and run the SQL.
 uv run python -c "import asyncio, asyncpg, httpx2
 from openai import AsyncOpenAI
 from pgvector.asyncpg import register_vector
-from app.infrastructure.db.memory import MemoryStore
+from app.infrastructure.db.memory import AnalysisMemory
 from app.settings import get_settings
 async def main():
     s = get_settings()
     async with httpx2.AsyncClient(trust_env=False) as http, asyncpg.create_pool(
             dsn=s.database_url.get_secret_value(), init=register_vector) as pool:
-        store = MemoryStore(pool, AsyncOpenAI(base_url=str(s.embeddings_base_url),
+        memory = AnalysisMemory(pool, AsyncOpenAI(base_url=str(s.embeddings_base_url),
             api_key=s.embeddings_api_key.get_secret_value(), http_client=http))
-        await store.save('TEST','HOLD','Röktest'); print(await store.search('TEST','röktest'))
+        print(await memory.recall('AAPL', 'stabil uppgång', correlation_id='smoke-test'))
 asyncio.run(main())"
 
 # .NET engine (net10.0 Worker SDK)
@@ -155,7 +157,7 @@ dotnet user-secrets set "Database:ConnectionString" \
 | Schema | Owner | Holds |
 |---|---|---|
 | `trading` | `engine_svc` | `portfolios`, `positions`, `orders`, `decisions`, `signal_outcomes`, `outcome_deliveries` and the `hit_rate` view, through EF Core |
-| `agent` | `agent_svc` | `agent_memories` — pgvector semantic memory — plus `analysis_runs`, `step_outputs` and `signal_outcomes`, through Alembic |
+| `agent` | `agent_svc` | `analysis_runs`, `step_outputs`, `signal_outcomes` and `analysis_embeddings` — the journal and the pgvector memory over it, through Alembic |
 
 Each role owns its schema, so its migration tool can create tables there, and has **no access to the other's** — not even to see what tables exist. Neither can create anything in `public`. Only the two roles and the superuser may connect. The `vector` extension stays in `public`, because `pgvector.asyncpg.register_vector` looks it up there.
 
@@ -191,7 +193,9 @@ idempotent on the other side.
 
 `signal_outcomes` is this service's copy of what the engine measured, posted to `POST /v1/outcomes` after a sweep. The engine owns the measurement; the copy exists so memory can say what happened afterwards rather than only what was argued at the time. It has **no foreign key** to `analysis_runs` — the engine measures decisions this service never produced a signal for — and the write is `ON CONFLICT DO NOTHING`, so a sweep that is retried does not have to know what landed. Append-only too: a correction is a new measurement in the engine and a new row here, never an edit.
 
-`agent.agent_memories` has a `bigint` identity key, a `NOT NULL` 768-dimensional `embedding`, and an HNSW index with `vector_cosine_ops`. `MemoryStore.search` ranks rows by cosine distance (`<=>`), filtered by ticker. Always schema-qualify table names.
+`analysis_embeddings` is the memory, and it is **one vector per journalled analysis** rather than a store of its own: `agent_memories` was retired because three of its four columns already existed in the journal, and the one thing it lacked — the `correlation_id` — is what memory needs to join an analysis to what happened afterwards. It is a table beside `analysis_runs` rather than a column on it, because an embedding is **derived data, not evidence**: the journal is append-only, and embeddings have to be rebuildable when the model changes. The model's name is stored on every row, since a mixture of two models in one index is a similarity score that means nothing. The index is HNSW with `vector_cosine_ops`, matching the `<=>` that `AnalysisMemory.recall` orders by. Always schema-qualify table names.
+
+**What reaches an agent is only what has been measured.** `recall` joins through `signal_outcomes` with an inner `LATERAL`, so an analysis the engine has not yet scored takes none of the three places. That makes memory empty — and say so — until a horizon has passed, which is the honest state and the point: reasoning without an outcome teaches a model to agree with itself, and a thesis it repeated three times reads as a well-founded one. What is embedded is the analyst's `MarketRead`, not the thesis, because the query available when the risk manager runs is today's `MarketRead` — matching a reading against a reading asks "when things looked like this before, what did we conclude and how did it go?".
 
 ## Architecture
 
@@ -204,7 +208,7 @@ idempotent on the other side.
    | Step | reads | produces |
    |---|---|---|
    | `market_analyst` | `FactSheet` | `MarketRead` (trend, valuation, up to three notes) |
-   | `risk_manager` | `FactSheet`, `MarketRead` | `RiskAssessment` (downside, veto, up to three risks) |
+   | `risk_manager` | `FactSheet`, `MarketRead` (+ memory, on `default-memory`) | `RiskAssessment` (downside, veto, up to three risks) |
    | `portfolio_manager` | `MarketRead`, `RiskAssessment` | `TradeView` (stance, conviction, thesis, risks, horizon) |
 
    The portfolio manager never sees the fact sheet, and `TradeView` has no price field, so the pipeline supplies the instrument from the request and the price from the fact sheet. **There is no fallback HOLD**: a failure that looks like a decision is one the engine cannot tell apart from a real one.
@@ -247,10 +251,11 @@ Both services follow a Clean Architecture / DDD layout: `Domain` → `Applicatio
 
 ### Intended design vs. current code
 
-- **Teams are data.** `app/application/teams.py` holds `TeamSpec` as an ordered list of `StepSpec`, validated in `__post_init__` — so an invalid team cannot be constructed and importing the module is the startup validation. `team_version` is a sha256 over the steps, the schemas' contents, the prompt files' contents and each role's resolved model: **include what changes what the model says, exclude what changes how it is reached.** Which team runs is `Trading:TeamId` in the engine's configuration, which is what makes stage 4's comparison possible.
+- **Teams are data.** `app/application/teams.py` holds `TeamSpec` as an ordered list of `StepSpec`, validated in `__post_init__` — so an invalid team cannot be constructed and importing the module is the startup validation. `team_version` is a sha256 over the steps, the schemas' contents, the prompt files' contents, both handover flags and each role's resolved model: **include what changes what the model says, exclude what changes how it is reached.** Which team runs is `Trading:TeamId` in the engine's configuration, which is what makes stage 4's comparison possible.
+- **There are two teams**, and the second is the first experiment the measurement machinery enables. `default` is the thin three-step team the baseline is of. `default-memory` is the same team with one thing added: its risk manager is shown how similar readings of the instrument turned out. Two of its three steps read **`default`'s own prompt files**, not copies, so the only difference between the two teams is the risk manager's instructions and what it is handed — a difference in outcomes then has one candidate explanation instead of three. `Trading:TeamId` stays `default` until the baseline has measured horizons worth comparing against.
 - **No tools.** The new team has none: everything it needs is computed into the `FactSheet`, which is decision 5. The FastMCP server was deleted with the old path — it was only ever used in-process, and its `{"error": ...}` return shape read to a model as a successful call. Tools return when something needs data that cannot be computed in advance, and `StepSpec` will need a port of its own so AG2 stays out of the application layer.
 - **The schema bounds a handover's size, not its content.** A live trace showed the portfolio manager quoting figures it never received: the analyst had repeated them in its free-text `observations`, although its prompt asks it not to. What holds structurally is the part that matters — `TradeView` has no price field. Which fields a team hands over is what stage 4 measures.
-- **Memory:** `MemoryStore` works, including writes and search against `trading-db`, and the lifespan builds one - but no route uses it yet. The plan is a `search_history_tool` on the risk manager and a `save` call after each analysis cycle.
+- **Memory is the journal, filtered to what has been measured.** `AnalysisMemory.recall` joins `analysis_embeddings` → `analysis_runs` → `signal_outcomes` and shows a step up to three past analyses of the same instrument, each with its stance, its thesis and how it went against the index. An analysis the engine has not yet scored takes none of those places, so **memory is empty, and says so, until a horizon has passed** — reasoning without an outcome teaches a model to agree with itself. A step asks for it with `StepSpec.sees_memory`, a flag rather than an entry in `reads`, because `reads` names schemas produced inside the run and memory comes from outside it. `TeamSpec` refuses a step that asks for memory without reading `MarketRead`, since that reading is the query. **Every team feeds memory**, including `default`, which never reads it — so a team switched on later has something to recall from its first cycle rather than from its first measured horizon a week afterwards. Both halves are best-effort: a trading cycle is waiting for an answer, and neither remembering nor recalling is worth one.
 - **LLM provider:** switching providers *is* an environment variable now. `app/infrastructure/llm/provider.py` maps a `ModelSpec` to AG2's `ModelConfig` across five providers. Only the OpenAI family has actually been run: AG2 exports a placeholder for every extra that is not installed, and constructing one raises `ImportError: ... Install with "ag2[anthropic]"` - a startup failure with an install hint, since configurations are built in the lifespan. Two arguments do not survive every branch: `AnthropicConfig` has no `seed` (the settings refuse one), and `OllamaConfig` has no `timeout` (the factory warns at startup, and `openai_compatible` against Ollama's `/v1` is the route that keeps it).
 - **Model quality:** `llama3.2` (3B) often gives weak or contradictory reasoning, even though the JSON is valid. A larger local model or Claude/Grok would do better.
 - **No agent is told about money.** The request carries `available_risk_budget_usd` and `max_position_pct` — stage 4 wants to know what the engine was willing to spend — but neither reaches a prompt. Under decision 1 no agent produces an amount, so a budget is a figure it cannot act on, and a figure in a prompt is one a model starts reasoning about.

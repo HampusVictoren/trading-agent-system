@@ -10,7 +10,15 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel
 
-from app.application.teams import DEFAULT_TEAM, TEAMS, StepSpec, TeamSpec, all_roles
+from app.application.teams import (
+    DEFAULT_TEAM,
+    MEMORY_TEAM,
+    TEAMS,
+    StepSpec,
+    TeamSpec,
+    all_roles,
+    load_prompts,
+)
 from app.domain.facts import FactSheet
 from app.domain.signals import TradeView
 from app.domain.steps import MarketRead, RiskAssessment
@@ -155,3 +163,68 @@ class TestAllRoles:
         second = team(step("market_analyst", TradeView), team_id="other")
 
         assert all_roles([DEFAULT_TEAM, second]) == frozenset(DEFAULT_TEAM.roles)
+
+
+class TestMemoryIsMatchedOnTheAnalystsReading:
+    """A step is embedded by its MarketRead and recalled with today's. A step that cannot
+    see that reading has no query to recall with, so the specification refuses it rather
+    than the pipeline discovering it at run time."""
+
+    def test_a_step_given_memory_without_the_reading_is_refused(self):
+        with pytest.raises(ValueError, match="memory is matched on"):
+            step("risk_manager", RiskAssessment, reads=(FactSheet,), sees_memory=True)
+
+    def test_a_step_given_memory_with_the_reading_is_fine(self):
+        allowed = step(
+            "risk_manager", RiskAssessment, reads=(FactSheet, MarketRead), sees_memory=True
+        )
+
+        assert allowed.sees_memory
+
+    def test_the_baseline_team_reads_no_memory_at_all(self):
+        # The baseline is of the thin three-step team. Adding memory to it would change
+        # team_version and restart the measurement the whole stage exists to collect.
+        assert not any(s.sees_memory for s in DEFAULT_TEAM.steps)
+
+
+class TestTheMemoryTeam:
+    """`default-memory` is `default` with one thing added, and nothing else different.
+
+    That is what makes comparing their outcomes an experiment rather than an observation:
+    if three things differed, a difference in hit rate would have three candidate causes.
+    """
+
+    def test_it_is_registered_beside_the_baseline_team(self):
+        assert TEAMS["default-memory"] is MEMORY_TEAM
+        assert TEAMS["default"] is DEFAULT_TEAM
+
+    def test_only_the_risk_manager_is_given_memory(self):
+        given = [s.role for s in MEMORY_TEAM.steps if s.sees_memory]
+
+        assert given == ["risk_manager"]
+
+    def test_it_has_the_same_steps_in_the_same_order(self):
+        assert MEMORY_TEAM.roles == DEFAULT_TEAM.roles
+        assert [s.output_schema for s in MEMORY_TEAM.steps] == [
+            s.output_schema for s in DEFAULT_TEAM.steps
+        ]
+        assert [s.reads for s in MEMORY_TEAM.steps] == [s.reads for s in DEFAULT_TEAM.steps]
+
+    def test_the_two_unchanged_steps_read_the_very_same_prompt_file(self):
+        # The same file, not a copy of it. Two copies are two files free to drift, and the
+        # drift would land inside the one comparison this team exists to make.
+        unchanged = {"market_analyst", "portfolio_manager"}
+        for memory_step, baseline_step in zip(MEMORY_TEAM.steps, DEFAULT_TEAM.steps, strict=True):
+            if memory_step.role in unchanged:
+                assert memory_step.prompt_file == baseline_step.prompt_file
+
+    def test_the_risk_manager_has_a_prompt_of_its_own_that_explains_the_memory(self):
+        prompts = load_prompts(MEMORY_TEAM)
+        instructions = prompts["risk_manager"]
+
+        assert instructions != load_prompts(DEFAULT_TEAM)["risk_manager"]
+        # The two things a model gets wrong about this block if nobody says them: that the
+        # figure is measured against the index, and that an empty memory is ignorance
+        # rather than good news.
+        assert "mot index" in instructions
+        assert "tomt minne" in instructions.lower()

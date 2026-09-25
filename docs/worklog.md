@@ -7,13 +7,14 @@ A running record of what has been done, what was learned along the way, and what
 
 This file answers "where are we, how did we get here, and what is next". When resuming, read *Current state* and *Next steps* first, then the roadmap section for the next stage.
 
-**Last updated:** 2026-09-25. **We are in stage 4**, the one the project exists for, and as
-of today it has **measured something**: 21 signals scored at one trading day, and
+**Last updated:** 2026-09-25, with PR 6b open - the last pull request of the stage. **We
+are in stage 4**, the one the project exists for, and as of today it has **measured
+something**: 21 signals scored at one trading day, and
 `trading.hit_rate` has rows in it for the first time. The machinery is now complete end to
 end - decisions are stored, the portfolio survives a restart, a sweep scores every signal
 whose horizon has passed, and the engine posts what it measured to the agent service, which
-keeps its own copy. What is left is **memory in the loop** (PR 6b) and then **the baseline,
-which is a matter of waiting** and the one thing that cannot be built.
+keeps its own copy. What is left, once 6b lands, is **the baseline - which is a matter
+of waiting** and the one thing that cannot be built.
 
 ## Resuming checklist
 
@@ -55,13 +56,17 @@ Two things that are easy to misread as broken:
 ## Current state
 
 - **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21, **stage 3 done** 2026-09-23. **Stage 4 started** 2026-09-23 and is where the work is now. PR 5 and PR 6 were each split in two, so the stage is eight pull requests: **seven are merged or written** and one - memory in the loop - is left. Stages 5-8 exist only as plan.
-- **`master` is at PR #38**, stage 4's PR 5b, merged 2026-09-25. The stacked pair that the last entry warned about landed in the right order and both branches are gone on both sides. Nothing reaches `master` without the three required checks passing, so what is there is green by construction.
-- **One branch is open:** `stage-4-agent-schema`, PR 6a - Alembic, the analysis journal, `POST /v1/outcomes` and the engine's delivery of measurements to it.
+- **`master` is at PR #39**, stage 4's PR 6a, merged 2026-09-25. The stacked pair that the last entry warned about landed in the right order and both branches are gone on both sides. Nothing reaches `master` without the three required checks passing, so what is there is green by construction.
+- **One branch is open:** `stage-4-memory`, PR 6b - the memory the agents read, and the second team that reads it.
+- **`6c6da0e6edad` and `b1234878670a` are the same team.** Write that down anywhere it might be read, because it cannot be recovered from the data: the two hashes describe byte-identical behaviour, and measurements under them may be pooled. The rows are *not* rewritten to say so - `decisions` is append-only precisely so a stored version cannot be edited afterwards, and a history that can be corrected is not evidence.
+- **`default`'s `team_version` moved once, on 2026-09-25**, from `6c6da0e6edad` to `b1234878670a`, without a word of the team changing. Adding `sees_memory` to the hash payload wrote `sees_memory: false` onto every step; the payload is now sparse so it cannot happen again, but the hash cannot be restored. The 21 measurements already taken keep the old value - it is stored on each decision row - and everything from here accumulates under the new one. A day of one-trading-day measurements is the cheapest this will ever cost.
 - **There is one path now.** `POST /v1/signals` is the only endpoint that costs money, the engine calls it every cycle, and the old three-agent chain, `InvestmentProposal`, `ValidateTrade`, `RiskViolationException` and the FastMCP server are gone. Running the engine today produces real quantities at real prices, with the position cap holding across cycles.
 - **Every environment variable was renamed on 2026-09-23.** The local `src/agents/.env` was renamed in place and still works; a fresh clone follows `.env.example`. Nothing outside this repo reads them.
 - **Measurement has produced its first numbers.** A sweep on 2026-09-25 **measured 21** signals at one trading day, left 63 horizons not due, abandoned none, and delivered all 21 to the agent service. `trading.hit_rate` has four rows. They mean nothing yet, and it is worth saying so plainly: one trading day is noise, and all sixteen BUYs "hit" because both names happened to rise that day. The two HOLDs that missed did so with an excess of 3.5 %, which is the band doing its job rather than the model doing well.
 - **Both schemas now hold a copy of the same measurement**, joined by nothing: 21 rows in `trading.signal_outcomes`, 21 in `trading.outcome_deliveries`, 21 in `agent.signal_outcomes`. The correlation id is the only thing they share, and it crosses over HTTP.
 - **Python writes down what its agents were given.** `agent.analysis_runs` and `agent.step_outputs` hold the fact sheet an analysis started from and each step's answer - 8 runs and 24 step rows after one engine session, which is three steps per run exactly as the team specifies.
+- **Memory is wired in and correctly empty.** 8 runs are embedded; none of them has a measured outcome yet, so `recall` answers *"Inga tidigare analyser av AAPL har hunnit mätas färdigt."* - which is the designed behaviour rather than a fault. Worth knowing: **the first 21 measurements can never become memory**, because the analyses behind them predate the journal. Memory starts from the runs journalled since PR 6a, and the first becomes recallable when its one-trading-day horizon is measured.
+- **There are two teams now.** `default` (`b1234878670a`) is the baseline and reads no memory. `default-memory` (`79dfb7307b57`) is the same team with its risk manager shown past measured analyses. `Trading:TeamId` stays `default`; the memory team was run once by environment override to prove it works, which is where those 8 embedded runs came from.
 - **The model asks for horizons of a year.** Of 21 signals, nine say 365 days and seven say 180, although the prompt asks for a short-term thesis. The fixed horizons of 1, 5 and 20 trading days still make a baseline possible, but the model's *own* horizon will not be measurable until 2027 and is close to useless as a measure of whether it can judge time. That is a prompt problem, found before a single measurement - which is what stage 4 is for.
 - **The engine trades two instruments.** `Trading:Tickers` is AAPL and MSFT, so a cycle is two analyses and the quote endpoint is used in a real run rather than only by tests.
 - **The `trading` schema is live and has real rows in it.** Runs on 2026-09-24 opened the account at 10 000 USD and bought one AAPL at 337.445 and one MSFT at 497.56, with a second engine process picking the same portfolio up rather than opening another. The local database has **all three** engine migrations and **all three** Alembic revisions applied, so it is ahead of `master` until PR 6a lands. Delete the rows with `TRUNCATE trading.signal_outcomes, trading.decisions, trading.orders, trading.positions, trading.portfolios RESTART IDENTITY CASCADE` if a clean baseline matters; the append-only triggers deliberately do not block that.
@@ -112,7 +117,7 @@ all land in PR 4, and are repeated here so they are not re-derived from scratch.
 | 5a ✅ | The history endpoint, the engine's client for it, and the `Outcome` configuration. | Split out because the whole of PR 5 was five commits: this half is *how the engine gets bars*, and it runs on its own. |
 | 5b ✅ | The scheduled job and `trading.signal_outcomes`: the fixed horizons (1, 5, 20 trading days) and the model's own, **for every signal** - including HOLD, risk rejections and everything that was never bought. A SQL view for the minimum report. | Measuring only the trades that went through measures the wrong population. |
 | 6a ✅ | Alembic for the `agent` schema, `agent.analysis_runs` + `step_outputs`, `POST /v1/outcomes` with `agent.signal_outcomes` behind it, and the engine's delivery of measurements with `trading.outcome_deliveries` to make it retry itself. | **The database is never the integration point** - that is what separates "two schemas" from the shared-database anti-pattern. Split out because none of it changes what a model sees: `team_version` is untouched, so the baseline is not disturbed. |
-| 6b | Memory in the loop: a `sees_memory` step flag, a second `TeamSpec` that uses it, and past outcomes joined into what the risk manager reads. | This *does* change what a model sees, so it is a new `team_version` - and it stays out of `default` on purpose, so the baseline keeps accumulating while the two can be compared. |
+| 6b ✅ | Memory in the loop: `agent.analysis_embeddings` replacing `agent_memories`, a `sees_memory` step flag, and `default-memory` - the baseline team with its risk manager shown past **measured** analyses. | This *does* change what a model sees, so it is a new `team_version` - and it stays out of `default` on purpose, so the baseline keeps accumulating while the two can be compared. |
 
 The pool leak in `memory.py` that the roadmap lists under PR 6 was already fixed: all three
 methods use `async with self._pool.acquire()`. Found by reading, not by testing.
@@ -125,42 +130,34 @@ the fixed horizons is part of the stage's definition of done.
 
 Before stage 5, turn finding D's currency mismatch into an outcome rather than a throw.
 
-### Next up: PR 6b - memory in the loop, and then waiting
+### Next up: the baseline, which is only waiting
 
-The last pull request of the stage. Everything it needs now exists: the journal knows what
-each analysis was told, and `agent.signal_outcomes` knows how it turned out.
+**Stage 4's code is done** once PR 6b lands. Nothing else in the stage is a pull request;
+what remains is letting the thin team run until the 5- and 20-trading-day horizons have
+measurements worth grouping.
 
-**The four decisions were taken 2026-09-25**, all four the recommended way:
+**What 6b settled** (decisions taken 2026-09-25, all four the recommended way, then a fifth
+forced by a live run):
 
 | Decision | Taken | Why |
 |---|---|---|
-| Split PR 6 | **Two pull requests.** 6a is storage and is invisible to the model; 6b changes what a model reads | 6a touches no prompt, so `team_version` is unchanged and the baseline is not disturbed by the plumbing that makes it measurable |
-| What Python stores per analysis | **The fact sheet *and* every step's answer**, in `analysis_runs` + `step_outputs` | Replay alone needs only the fact sheet, but attribution needs the steps - and "which step changed its mind" cannot be reconstructed afterwards from an answer |
-| What memory contains | **Past reasoning *and* the measured outcome** | Reasoning alone teaches a model to agree with itself: a wrong thesis it repeated three times reads as a well-founded one. Only what happened afterwards can make the next decision better |
-| Where memory is wired in | **A second team. `default` is left alone** | Memory is something added, and the roadmap says the baseline is of the thin three-step team. Keeping `default` untouched means `Trading:TeamId` switches between them and `default` vs `default-memory` becomes the first real experiment the measurement machinery enables |
+| Where the embedding lives | **`agent.analysis_embeddings`, keyed on a journalled run. `agent_memories` retired** | Three of its four columns were already in the journal, and the one thing it lacked - the correlation id - is what joins an analysis to what happened afterwards. A table beside `analysis_runs` rather than a column on it, because an embedding is derived data and the journal is append-only |
+| Which step reads memory | **The risk manager** | It already reads two things, so a third does not change its shape, and a past miss is risk information. It reaches the portfolio manager anyway, as a line in `risks`, without that step gaining its first input from outside the run |
+| Unmeasured memories | **Not shown at all** | Reasoning without an outcome teaches a model to agree with itself. For the first days *every* memory is unmeasured, so showing them would be pure self-confirmation exactly while the baseline forms. Memory is empty, and says so |
+| What is embedded | **The analyst's `MarketRead`, at both ends** | The query available when the risk manager runs is today's reading, so matching a reading against a reading asks "when things looked like this before, how did it go?". One function does both ends, so the symmetry cannot be edited apart |
+| Handover flags in `team_version` | **Sparse: a flag appears only when set** | Found by reading the startup log: adding `sees_memory` to the payload moved `default`'s hash although nothing about it had changed. The rule is "include what changes what the model says", and a flag nobody set changes nothing |
 
-**Carried in from the review of 6a** (2026-09-25, an external review; verdict "approve with
-nits", no blockers). Two of its findings were fixed in 6a - a stale test docstring, and the
-batch cap that existed in three places with nothing binding them. Three are deferred here,
-because they all touch files 6b opens anyway:
+**Carried in from the review of 6a**, and still open - all three were deferred here and remain
+for a follow-up, since 6b turned out to touch the memory path rather than the delivery path:
 
-| | What | Why it waits |
+| | What | Note |
 |---|---|---|
-| `Remaining` is not a count | `ReportOutcomesUseCase` reads `MaxPerRequest + 1` rows, so a backlog of 5 000 is reported as "1 still waiting". The name and the type say *count*; the value is a flag | Rename to `MoreWaiting`, and add a drain loop **with a tick budget** - one batch per 24-hour sweep means a large backlog takes days, and an unbounded loop would make one tick arbitrarily long |
-| No status conditions in the contract | `Measured` with no figures, or `NotMeasurable` with `hit: true`, both validate today | The obvious rule is wrong: **`net_edge` is null for HOLD**, because a HOLD has no edge to compute, only a band it stays inside. The real invariant is narrower, and it currently lives only in prose and in one `switch` in `OutcomeCalculator` |
-| `MeasurementWorker` has no test | A comment claims delivery is attempted *even when the sweep failed*, since the backlog is not only what today measured. That branch is tested nowhere and was not exercised live either | An untested error path in a background service that swallows exceptions. Raised above the reviewer's "low" for that reason |
+| `Remaining` is not a count | `ReportOutcomesUseCase` reads `MaxPerRequest + 1` rows, so a backlog of 5 000 reports "1 still waiting" | Rename to `MoreWaiting`, and drain with a tick budget |
+| No status conditions in the contract | `Measured` with no figures, or `NotMeasurable` with `hit: true`, both validate | The obvious rule is wrong: **`net_edge` is null for HOLD**, because a HOLD has no edge to compute, only a band it stays inside |
+| `MeasurementWorker` has no test | A comment claims delivery is attempted even when the sweep failed; that branch is tested nowhere | An untested error path in a service that swallows exceptions |
 
-Also noted and left: a repeated `correlation_id` in the journal logs "its working is lost"
-when the working is in fact already there. Nearly unreachable - the engine's resilience
-policy does not retry `POST /v1/signals` - so it is a one-line fix when the file is next open.
-
-**What 6b has to build:** a way for a step to be given something that is not an earlier step's
-output. `StepSpec.reads` names schemas produced inside the run; memory comes from outside it,
-so it needs a flag of its own next to `sees_position`, and a port so the pipeline still does
-not import `MemoryStore`. Then a prompt file, a second `TeamSpec`, and `save` after a run.
-
-**The rule the whole stage keeps:** the database is never the integration point. Two schemas,
-two roles, and everything that crosses between them crosses over HTTP.
+Also still open: a repeated `correlation_id` in the journal logs "its working is lost" when
+the working is already there. Nearly unreachable, one line to fix.
 
 ### And then the part that is not code
 
@@ -385,8 +382,7 @@ function and therefore an ideal test-first target.
 - **Uvicorn prints two lines before startup that are not JSON**, because `configure_logging()` runs in the lifespan. Moving it to import time would catch them but would also reconfigure logging in the middle of pytest. The real fix is a `--log-config` at deploy time, which belongs to stage 6.
 - **The contract carries no currency.** Every price in it is USD and so is the portfolio. Fine until stage 5 widens the universe, and noted in `TradeSignalMapper`. It goes with finding D's remaining half.
 - **`PositionSizer` and `RiskEngine.Evaluate` are registered but nothing resolves them.** Deliberate: registering them means the options-to-domain mapping is covered by `ValidateOnStart` now, and stage 3 becomes wiring rather than new code.
-- **`MemoryStore` still is not wired into the flow.** The lifespan builds one and nothing uses it. The roadmap puts a `search_history_tool` on `RiskManager` and a `save` after each cycle in stages 2-3.
-- **One row with ticker `TEST`** sits in `agent.agent_memories` from the smoke test on 2026-09-20. Harmless; delete it if a clean table matters.
+- **Memory is wired in as of PR 6b**, and `agent_memories` is gone with the `TEST` row that used to sit in it. `AnalysisMemory` reads the journal rather than a store of its own, and only the part of it the engine has measured.
 - **The first account was opened on 2026-09-24** at 10 000 USD, and `trading` now holds real rows from a live run against `llama3.2`. They are a smoke test, not a baseline: the baseline starts when the outcome job in PR 5 exists.
 - **`orders.placed_at` is a shadow property** filled by the database's `now()`. It is audit metadata today; stage 5 counts a holding period from the last purchase, and that is when it becomes domain data and has to come from the engine's injected clock instead.
 - **Quotes share the analysis client's resilience policy**, which does not retry a failing response. That rule was written for a call costing 12-15 s of LLM time and is stricter than an idempotent GET needs; the cost of leaving it is one cycle without a price for one holding, and the cost of a second typed client is a second place for the key and the timeouts to drift. Revisit if missing quotes ever show up in the decision rows.
@@ -899,6 +895,96 @@ steps* rather than here, because they are still being spent.
   `agent.signal_outcomes`, and `trading.hit_rate` populated for the first time. Python's
   journal picked up 8 runs and 24 step outputs from the same session. 302 .NET tests and 309
   Python green, all of them re-run in a throwaway worktree of tracked files only.
+
+- **PR 6b - the memory, and the team that reads it** (branch `stage-4-memory`, 2026-09-25).
+  The last pull request of the stage.
+
+  - **`agent_memories` is retired.** It held a ticker, a stance, a piece of reasoning and a
+    vector; three of those had been in the journal since 6a, and the one thing it lacked -
+    the correlation id - is what joins an analysis to what happened afterwards. Replaced by
+    `agent.analysis_embeddings`: one vector per journalled run. A table beside
+    `analysis_runs` rather than a column on it, because an embedding is **derived data, not
+    evidence** - the journal is append-only and embeddings have to be rebuildable when the
+    model changes. The model's name is stored on every row, since two models in one index
+    is a similarity score that means nothing.
+  - **Only measured analyses reach an agent.** `recall` joins through `signal_outcomes` with
+    an inner `LATERAL`, so a run nobody has scored takes none of the three places. Memory is
+    therefore empty - and says so - until a horizon passes. That was the decision, and the
+    reason is that reasoning without an outcome teaches a model to agree with itself.
+  - **What is embedded is the analyst's reading, at both ends.** One function, used to embed
+    a finished run and to query with today's reading, so the symmetry cannot be edited
+    apart. A vector written from one kind of text and queried with another is a number that
+    looks like a similarity and is not one.
+  - **`sees_memory` on `StepSpec`**, a flag rather than an entry in `reads`, because `reads`
+    names schemas produced inside the run and memory comes from outside it. `TeamSpec`
+    refuses a step that asks for memory without reading `MarketRead` - it would have no
+    query to recall with.
+  - **`default-memory`**, the baseline team with one thing added. Two of its three steps read
+    **`default`'s own prompt files**, not copies, so a difference in outcomes has one
+    candidate explanation instead of three.
+
+  *A hole found by starting the service and reading the log:* `default`'s `team_version` had
+  changed although nothing about the team had. Adding `sees_memory` to the hash payload wrote
+  `sees_memory: false` onto every step of every team. The payload is now **sparse** - a
+  handover flag appears only when it is set - so adding a flag nobody uses re-hashes nothing.
+  The old hash cannot be restored, because the original payload carried `sees_position:
+  false` on two steps; reproducing it would mean keeping one flag always-present as a
+  historical exception, and that comment would be an apology rather than a reason.
+
+  *Mutation testing:* the measured-only join turned into a LEFT JOIN **1**; the memory key
+  added unconditionally **1** (four tests, two of which predate memory); `sees_memory`
+  deleted from the version payload **1**; the payload made dense again **1**.
+
+  *Reviewed externally, 2026-09-25*, verdict "accept with nits" and no blockers. Five things
+  fixed on the branch, and one deferred.
+
+  - **The journal's error line was lying.** `remember` shared the journal's `try`, so a
+    failed embedding - an embedding model reached over the network, which fails routinely -
+    logged "was not journalled, so its working is lost" although the row was sitting there.
+    That line is not decoration: it is how a hole in the journal is found at all, by a
+    correlation id the engine has in `decisions` with no run on this side. Reporting an
+    embedding failure as one sent a reader looking for something that was not missing. Two
+    `try` blocks now, with two severities - error for evidence, warning for derived data
+    that can be rebuilt.
+  - **`recall`'s promise was wider than its code.** The docstring said a memory that cannot
+    be fetched must not end an analysis; the `try` covered the fetch and not the formatting
+    of what came back. No reachable crash today - `thesis` is required on `TradeView` - but
+    the rows being formatted are written by *older versions of this service*, which is
+    precisely the material that stops matching the code that reads it. The whole of it is
+    inside the `try` now, and a test stores a TradeView with no thesis to prove it.
+  - **The model column was stored and not used.** The migration explains that two embedding
+    models in one index give a similarity score that means nothing - and then `recall` did
+    not filter on it. A motivation written down and its consequence not implemented, which
+    is the same shape as the batch cap in 6a.
+  - `Resources.memory` was typed as the concrete class while the two fields around it used
+    their ports. The port gained `ping`, which the readiness probe needs: whether a store
+    can be reached is a fact about the capability, not about the class behind it.
+  - Two stale documentation claims, one of which the review missed: `CLAUDE.md` still named
+    `agent.agent_memories` as the agents' memory, and this file still listed a `TEST` row in
+    a table that no longer exists.
+
+  *Deferred:* a backfill job for embeddings. The table exists so vectors can be rebuilt when
+  the model changes, and nothing can rebuild them. It buys nothing today - the eight runs
+  that lack vectors also lack measured outcomes, and `recall` needs both - so it is a task
+  of its own rather than a line in this pull request.
+
+  *Mutation testing:* the model filter removed **1**; the formatting moved back outside the
+  `try` **1**; both failure paths logging the same sentence **1**.
+
+  *Worth stating about what memory will actually do:* it is filtered by instrument, and only
+  measured analyses count. At stage 5's scale - thirty to fifty instruments, each analysed
+  about once a trading day - each instrument accumulates measured analyses slowly, so memory
+  stays near-empty per instrument for weeks. The code landing is not the same thing as the
+  feedback loop starting.
+
+  *Verified live:* both teams built at startup with distinct versions, the engine run once
+  under `Trading__TeamId=default-memory`, 8 runs stored under `default-memory` /
+  `79dfb7307b57` and 8 embeddings written. `recall` through the real path - real pgvector,
+  real Ollama embedding - answered *"Inga tidigare analyser av AAPL har hunnit mätas
+  färdigt."*, which is right: none of the embedded runs has a measured outcome yet. And a
+  fact worth knowing, from a diagnostic query rather than a guess - **the first 21
+  measurements can never become memory**, because the analyses behind them predate the
+  journal. Memory starts from the runs journalled since 6a.
 
 ---
 
