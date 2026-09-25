@@ -1,6 +1,9 @@
 namespace Engine.Application.Persistence;
 
 using Engine.Domain.Aggregates.Portfolio;
+using Engine.Domain.Outcomes;
+using Engine.Domain.Signals;
+using Engine.Domain.ValueObjects;
 
 /// <summary>
 /// The stored portfolio. The engine runs exactly one, so there is no id to pass: a second
@@ -29,6 +32,43 @@ public interface IPortfolioRepository
 public interface IDecisionLog
 {
     void Record(DecisionRecord decision);
+}
+
+/// <summary>
+/// A stored decision that still has something to measure, with what has already been
+/// measured about it. Which horizons are *wanted* is configuration, so it is worked out
+/// above this rather than here.
+/// </summary>
+/// <param name="SignalDate">
+/// The market day the view was formed on, taken from the quote's timestamp in UTC. For a US
+/// market that is unambiguous - quotes arrive between 13:30 and 20:00 UTC, all on the same
+/// calendar date - and it is worth revisiting when the universe widens in stage 5.
+/// </param>
+/// <param name="ModelHorizonDays">The horizon the model asked for, in calendar days.</param>
+public sealed record SignalAwaitingMeasurement(
+    long DecisionId,
+    Ticker Symbol,
+    Stance Stance,
+    decimal ReferencePrice,
+    DateOnly SignalDate,
+    int ModelHorizonDays,
+    IReadOnlySet<(HorizonUnit Unit, int Days)> AlreadyMeasured);
+
+/// <summary>
+/// Where a measurement goes, and what is left to measure. Reading and writing sit on one
+/// port because they are two halves of one sweep.
+/// </summary>
+public interface IOutcomeLog
+{
+    /// <summary>
+    /// Every decision that produced a signal, with the horizons already written for it. A
+    /// decision that never reached an answer is not a signal and is filtered out here rather
+    /// than retried every night.
+    /// </summary>
+    Task<IReadOnlyList<SignalAwaitingMeasurement>> AwaitingMeasurementAsync(
+        CancellationToken cancellationToken = default);
+
+    void Record(SignalOutcomeRecord outcome);
 }
 
 /// <summary>

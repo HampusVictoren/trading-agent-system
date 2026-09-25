@@ -179,11 +179,16 @@ public class TradingSchemaTests : IAsyncLifetime
 
             (await TablesInTradingSchema(context)).ShouldBe(0);
             (await FunctionsInTradingSchema(context)).ShouldBe(0);
+            (await ViewsInTradingSchema(context)).ShouldBe(0);
 
             await migrator.MigrateAsync(cancellationToken: TestContext.Current.CancellationToken);
 
-            (await TablesInTradingSchema(context)).ShouldBe(4);
+            (await TablesInTradingSchema(context)).ShouldBe(5);
             (await FunctionsInTradingSchema(context)).ShouldBe(1);
+
+            // The report view depends on two tables, so it has to be dropped before them and
+            // rebuilt after. A down migration that forgot it would fail on DROP TABLE.
+            (await ViewsInTradingSchema(context)).ShouldBe(1);
         }
         finally
         {
@@ -261,6 +266,13 @@ public class TradingSchemaTests : IAsyncLifetime
             """
             SELECT count(*)::int AS "Value" FROM pg_tables
             WHERE schemaname = 'trading' AND tablename NOT LIKE '\_\_%'
+            """).SingleAsync(TestContext.Current.CancellationToken);
+
+    /// <summary>The report view, which the down migration has to remove before the tables.</summary>
+    private static async Task<int> ViewsInTradingSchema(TradingDbContext context) =>
+        await context.Database.SqlQueryRaw<int>(
+            """
+            SELECT count(*)::int AS "Value" FROM pg_views WHERE schemaname = 'trading'
             """).SingleAsync(TestContext.Current.CancellationToken);
 
     private static async Task<int> FunctionsInTradingSchema(TradingDbContext context) =>

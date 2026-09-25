@@ -13,6 +13,12 @@ namespace Engine.Domain.Outcomes;
 /// than six weeks. Reading it as trading days would silently reinterpret the one answer that
 /// exists to show whether the model can judge time.
 /// </remarks>
+public enum HorizonUnit
+{
+    TradingDays,
+    CalendarDays
+}
+
 public abstract record Horizon
 {
     private Horizon() { }
@@ -20,10 +26,16 @@ public abstract record Horizon
     /// <summary>How many, in this horizon's own unit.</summary>
     public abstract int Days { get; }
 
+    /// <summary>Which unit that is. Stored beside the count, because five trading days and
+    /// five calendar days are different measurements and a single number cannot say which.</summary>
+    public abstract HorizonUnit Unit { get; }
+
     /// <summary>A count of bars: days the market was actually open.</summary>
     public sealed record TradingDays : Horizon
     {
         public override int Days { get; }
+
+        public override HorizonUnit Unit => HorizonUnit.TradingDays;
 
         public TradingDays(int days) => Days = AtLeastOne(days);
     }
@@ -33,8 +45,18 @@ public abstract record Horizon
     {
         public override int Days { get; }
 
+        public override HorizonUnit Unit => HorizonUnit.CalendarDays;
+
         public CalendarDays(int days) => Days = AtLeastOne(days);
     }
+
+    /// <summary>Rebuilds a horizon from the two columns it is stored as.</summary>
+    public static Horizon Of(HorizonUnit unit, int days) => unit switch
+    {
+        HorizonUnit.TradingDays => new TradingDays(days),
+        HorizonUnit.CalendarDays => new CalendarDays(days),
+        _ => throw new ArgumentOutOfRangeException(nameof(unit), unit, "Unknown horizon unit.")
+    };
 
     private static int AtLeastOne(int days) => days >= 1
         ? days

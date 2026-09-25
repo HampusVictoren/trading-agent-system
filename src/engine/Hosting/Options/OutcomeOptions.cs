@@ -56,6 +56,16 @@ public sealed class OutcomeOptions
     [MinLength(1)]
     public int[] FixedHorizonTradingDays { get; init; } = [];
 
+    /// <summary>
+    /// How often the measurement sweep runs. The shortest fixed horizon is a trading day, so
+    /// nothing becomes measurable faster than once a day - and a sweep is cheap enough that
+    /// the interval is about politeness to the market data provider rather than cost.
+    /// </summary>
+    [Range(1, 168)]
+    public int SweepIntervalHours { get; init; }
+
+    public TimeSpan SweepInterval => TimeSpan.FromHours(SweepIntervalHours);
+
     /// <summary>The same figures in the domain's own terms, which guards them a second time.</summary>
     public OutcomePolicy ToOutcomePolicy() =>
         new(CommissionBps!.Value, SpreadBps!.Value, HoldBandPct);

@@ -31,6 +31,8 @@ public sealed class TradingDbContext : DbContext
 
     public DbSet<DecisionRecord> Decisions => Set<DecisionRecord>();
 
+    public DbSet<SignalOutcomeRecord> SignalOutcomes => Set<SignalOutcomeRecord>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema(Schema);
