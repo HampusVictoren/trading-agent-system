@@ -11,7 +11,7 @@ import sys
 import pytest
 from pydantic import BaseModel
 
-from app.application.teams import DEFAULT_TEAM, StepSpec, TeamSpec, load_prompts
+from app.application.teams import DEFAULT_TEAM, MEMORY_TEAM, StepSpec, TeamSpec, load_prompts
 from app.application.versioning import VERSION_LENGTH, compute_team_version, version_payload
 from app.domain.signals import TradeView
 from app.domain.steps import MarketRead, Trend
@@ -204,3 +204,33 @@ def test_the_real_team_has_a_version():
     # Reads the checked-in prompt files, so an edit to one of them shows up as a new
     # version without anyone doing anything.
     assert len(compute_team_version(DEFAULT_TEAM, load_prompts(DEFAULT_TEAM), an_llm())) == 12
+
+
+class TestTheVersionIgnoresWhatNobodySet:
+    """A flag left at its default is not part of the team.
+
+    Listing every flag with its value would tie the version to the *shape of the payload*
+    rather than to the team: adding a flag nobody uses would re-hash every team there is,
+    splitting each one's measurements in two for a change that altered nothing a model
+    reads. That is not hypothetical - it happened when sees_memory was added, and moved the
+    baseline team's version on the day the baseline started.
+    """
+
+    @staticmethod
+    def handovers(payload: dict) -> list[dict]:
+        return [
+            {k: v for k, v in step.items() if k.startswith("sees")} for step in payload["steps"]
+        ]
+
+    def test_a_flag_left_alone_is_not_in_the_payload(self):
+        payload = version_payload(DEFAULT_TEAM, PROMPTS, an_llm())
+
+        # Only the portfolio manager sets one; the other two steps say nothing at all.
+        assert self.handovers(payload) == [{}, {}, {"sees_position": True}]
+
+    def test_a_flag_that_is_set_is_in_the_payload(self):
+        prompts = {role: f"instructions for {role}" for role in MEMORY_TEAM.roles}
+
+        payload = version_payload(MEMORY_TEAM, prompts, an_llm())
+
+        assert self.handovers(payload) == [{}, {"sees_memory": True}, {"sees_position": True}]
