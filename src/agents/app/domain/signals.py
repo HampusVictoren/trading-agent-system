@@ -41,6 +41,11 @@ SYMBOL_PATTERN = r"^[A-Z][A-Z0-9.-]{0,9}$"
 # on length before the regex is ever run.
 MAX_SYMBOL_LENGTH = 10
 
+# Both services store the correlation id and the team id in a varchar(64) - the engine in
+# `trading.decisions`, this one in `agent.analysis_runs`. Capping the contract at the same
+# width is what stops a value that one side accepts and the other refuses with a 500.
+MAX_IDENTIFIER_LENGTH = 64
+
 
 class EquityInstrument(BaseModel):
     # frozen, because an instrument is an identity rather than a state; extra="forbid" so a
@@ -157,11 +162,11 @@ class SignalRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     instrument: Instrument
-    team_id: Annotated[str, Field(min_length=1)]
+    team_id: Annotated[str, Field(min_length=1, max_length=MAX_IDENTIFIER_LENGTH)]
     as_of: AwareDatetime
     # Required and nullable, not optional: "no position" is something the engine states,
     # not something it may leave out.
     existing_position: ExistingPosition | None
     available_risk_budget_usd: Annotated[float, Field(ge=0)]
     max_position_pct: Annotated[float, Field(gt=0, le=1)]
-    correlation_id: Annotated[str, Field(min_length=1)]
+    correlation_id: Annotated[str, Field(min_length=1, max_length=MAX_IDENTIFIER_LENGTH)]

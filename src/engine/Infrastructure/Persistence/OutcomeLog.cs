@@ -59,4 +59,42 @@ public sealed class OutcomeLog : IOutcomeLog
 
     /// <summary>Queues the row. It reaches the database when the sweep commits.</summary>
     public void Record(SignalOutcomeRecord outcome) => _context.SignalOutcomes.Add(outcome);
+
+    /// <remarks>
+    /// A left join expressed as "no delivery exists", which is what makes the absence of a
+    /// row mean undelivered. The decision is joined for one column - the correlation id -
+    /// because that is the identifier the agent service knows this measurement by; its own
+    /// primary key means nothing on the other side.
+    /// </remarks>
+    public async Task<IReadOnlyList<OutcomeAwaitingDelivery>> AwaitingDeliveryAsync(
+        int limit, CancellationToken cancellationToken = default)
+    {
+        return await (
+            from outcome in _context.SignalOutcomes
+            join decision in _context.Decisions on outcome.DecisionId equals decision.Id
+            where !_context.OutcomeDeliveries.Any(delivery => delivery.SignalOutcomeId == outcome.Id)
+            orderby outcome.Id
+            select new OutcomeAwaitingDelivery(
+                outcome.Id,
+                decision.CorrelationId,
+                outcome.HorizonUnit,
+                outcome.HorizonDays,
+                outcome.Status,
+                outcome.Reason,
+                outcome.BenchmarkSymbol,
+                outcome.MeasuredOn,
+                outcome.MeasuredPrice,
+                outcome.InstrumentReturn,
+                outcome.BenchmarkReturn,
+                outcome.ExcessReturn,
+                outcome.CostFraction,
+                outcome.NetEdge,
+                outcome.Hit))
+            .Take(limit)
+            .ToListAsync(cancellationToken);
+    }
+
+    /// <summary>Queues the marker. It reaches the database on the next commit.</summary>
+    public void MarkDelivered(long signalOutcomeId) =>
+        _context.OutcomeDeliveries.Add(new OutcomeDelivery { SignalOutcomeId = signalOutcomeId });
 }

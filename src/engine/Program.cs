@@ -45,6 +45,7 @@ builder.Services.Configure<TelemetryOptions>(options =>
 
 builder.Services.AddTransient<ProcessProposalUseCase>();
 builder.Services.AddTransient<MeasureOutcomesUseCase>();
+builder.Services.AddTransient<ReportOutcomesUseCase>();
 
 builder.Services.AddHostedService<TradingWorker>();
 builder.Services.AddHostedService<MeasurementWorker>();

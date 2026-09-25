@@ -123,7 +123,8 @@
         "team_id": {
           "description": "Which team setup to run. The engine sends 'default' until stage 3 makes teams selectable.",
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "maxLength": 64
         },
         "as_of": { "type": "string", "format": "date-time" },
         "existing_position": { "$ref": "#/$defs/existing_position" },
@@ -138,7 +139,12 @@
           "exclusiveMinimum": 0,
           "maximum": 1
         },
-        "correlation_id": { "type": "string", "minLength": 1 }
+        "correlation_id": {
+          "description": "One analysis, one id. Both services store it in a varchar(64), which is what the cap is.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        }
       }
     }
   }

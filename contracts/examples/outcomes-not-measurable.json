@@ -1,0 +1,20 @@
+{
+  "outcomes": [
+    {
+      "correlation_id": "0199b0d4-3c71-7f18-8e55-9a0c4d2e7b31",
+      "horizon_unit": "TradingDays",
+      "horizon_days": 20,
+      "status": "NotMeasurable",
+      "reason": "No bar on or before the horizon date for the benchmark.",
+      "benchmark_symbol": "SPY",
+      "measured_on": null,
+      "measured_price": null,
+      "instrument_return": null,
+      "benchmark_return": null,
+      "excess_return": null,
+      "cost_fraction": null,
+      "net_edge": null,
+      "hit": null
+    }
+  ]
+}

@@ -7,11 +7,13 @@ A running record of what has been done, what was learned along the way, and what
 
 This file answers "where are we, how did we get here, and what is next". When resuming, read *Current state* and *Next steps* first, then the roadmap section for the next stage.
 
-**Last updated:** 2026-09-24, with two pull requests open. **We are in stage 4**, the one the
-project exists for. Its machinery is complete on those branches: decisions are stored, the
-portfolio survives a restart, and a sweep measures every signal whose horizon has passed.
-What is left is one pull request on Python's side - and then **the baseline, which is a matter
-of waiting** and the one thing that cannot be built.
+**Last updated:** 2026-09-25. **We are in stage 4**, the one the project exists for, and as
+of today it has **measured something**: 21 signals scored at one trading day, and
+`trading.hit_rate` has rows in it for the first time. The machinery is now complete end to
+end - decisions are stored, the portfolio survives a restart, a sweep scores every signal
+whose horizon has passed, and the engine posts what it measured to the agent service, which
+keeps its own copy. What is left is **memory in the loop** (PR 6b) and then **the baseline,
+which is a matter of waiting** and the one thing that cannot be built.
 
 ## Resuming checklist
 
@@ -52,16 +54,17 @@ Two things that are easy to misread as broken:
 
 ## Current state
 
-- **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21, **stage 3 done** 2026-09-23. **Stage 4 started** 2026-09-23 and is where the work is now. PR 5 was split in two, so the stage is seven pull requests: four are merged, **two are written and open**, and one - Python's half - has not been started. Stages 5-8 exist only as plan.
-- **`master` is at PR #36**, which is stage 4's PR 4. Nothing reaches it without the three required checks passing, so what is there is green by construction.
-- **Two pull requests are open, and one is stacked on the other.** `stage-4-measure` (the history endpoint, the client, the `Outcome` configuration) targets `master`; `stage-4-outcome-job` (the sweep, the table, the view) targets *`stage-4-measure`*, so its diff shows only its own four commits. GitHub retargets the second to `master` when the first merges. **Merge them in that order**, then delete both branches on each side - this is a deliberate exception to the one-working-branch rule, and it ends when they land.
-- **Everything below describes the code on those branches**, not what is on `master`. `master` alone has no quote history, no `signal_outcomes` and no sweep.
+- **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21, **stage 3 done** 2026-09-23. **Stage 4 started** 2026-09-23 and is where the work is now. PR 5 and PR 6 were each split in two, so the stage is eight pull requests: **seven are merged or written** and one - memory in the loop - is left. Stages 5-8 exist only as plan.
+- **`master` is at PR #38**, stage 4's PR 5b, merged 2026-09-25. The stacked pair that the last entry warned about landed in the right order and both branches are gone on both sides. Nothing reaches `master` without the three required checks passing, so what is there is green by construction.
+- **One branch is open:** `stage-4-agent-schema`, PR 6a - Alembic, the analysis journal, `POST /v1/outcomes` and the engine's delivery of measurements to it.
 - **There is one path now.** `POST /v1/signals` is the only endpoint that costs money, the engine calls it every cycle, and the old three-agent chain, `InvestmentProposal`, `ValidateTrade`, `RiskViolationException` and the FastMCP server are gone. Running the engine today produces real quantities at real prices, with the position cap holding across cycles.
 - **Every environment variable was renamed on 2026-09-23.** The local `src/agents/.env` was renamed in place and still works; a fresh clone follows `.env.example`. Nothing outside this repo reads them.
-- **Measurement runs, and has nothing to measure yet.** A sweep on 2026-09-24 found 68 horizons across 17 signals, every one of them not due: all the signals were made that same day. It made exactly three history calls - AAPL, MSFT and SPY - which is the "one per symbol plus one for the benchmark" property working on real data.
+- **Measurement has produced its first numbers.** A sweep on 2026-09-25 **measured 21** signals at one trading day, left 63 horizons not due, abandoned none, and delivered all 21 to the agent service. `trading.hit_rate` has four rows. They mean nothing yet, and it is worth saying so plainly: one trading day is noise, and all sixteen BUYs "hit" because both names happened to rise that day. The two HOLDs that missed did so with an excess of 3.5 %, which is the band doing its job rather than the model doing well.
+- **Both schemas now hold a copy of the same measurement**, joined by nothing: 21 rows in `trading.signal_outcomes`, 21 in `trading.outcome_deliveries`, 21 in `agent.signal_outcomes`. The correlation id is the only thing they share, and it crosses over HTTP.
+- **Python writes down what its agents were given.** `agent.analysis_runs` and `agent.step_outputs` hold the fact sheet an analysis started from and each step's answer - 8 runs and 24 step rows after one engine session, which is three steps per run exactly as the team specifies.
 - **The model asks for horizons of a year.** Of 21 signals, nine say 365 days and seven say 180, although the prompt asks for a short-term thesis. The fixed horizons of 1, 5 and 20 trading days still make a baseline possible, but the model's *own* horizon will not be measurable until 2027 and is close to useless as a measure of whether it can judge time. That is a prompt problem, found before a single measurement - which is what stage 4 is for.
 - **The engine trades two instruments.** `Trading:Tickers` is AAPL and MSFT, so a cycle is two analyses and the quote endpoint is used in a real run rather than only by tests.
-- **The `trading` schema is live and has real rows in it.** Runs on 2026-09-24 opened the account at 10 000 USD and bought one AAPL at 337.445 and one MSFT at 497.56, with a second engine process picking the same portfolio up rather than opening another. The local database has **both** migrations applied, including `signal_outcomes` and the `hit_rate` view - so it is ahead of `master` until the two open pull requests land. Delete the rows with `TRUNCATE trading.signal_outcomes, trading.decisions, trading.orders, trading.positions, trading.portfolios RESTART IDENTITY CASCADE` if a clean baseline matters; the append-only triggers deliberately do not block that.
+- **The `trading` schema is live and has real rows in it.** Runs on 2026-09-24 opened the account at 10 000 USD and bought one AAPL at 337.445 and one MSFT at 497.56, with a second engine process picking the same portfolio up rather than opening another. The local database has **all three** engine migrations and **all three** Alembic revisions applied, so it is ahead of `master` until PR 6a lands. Delete the rows with `TRUNCATE trading.signal_outcomes, trading.decisions, trading.orders, trading.positions, trading.portfolios RESTART IDENTITY CASCADE` if a clean baseline matters; the append-only triggers deliberately do not block that.
 - **The engine now needs `Database:ConnectionString`** or it refuses to start. It is in the user secrets store on this machine, set 2026-09-23. `dotnet user-secrets list --project src/engine` prints it, so do not run that where anyone can see the screen.
 - **Migrations are applied by hand, and the engine refuses to start without them.** Decided 2026-09-24: `dotnet dotnet-ef database update` stays a deploy step, but startup names the pending migrations and the command instead of failing on a missing column mid-cycle.
 - **What is now impossible** rather than merely unlikely: the agents cannot name an amount (the contract has no `amount_usd`, and a test refuses one that reappears); an answer that is not the contract cannot deserialise into nulls; a position cannot be sized against cash instead of net asset value; and an order cannot be placed on a quote that is stale or dated in the future.
@@ -98,7 +101,7 @@ all land in PR 4, and are repeated here so they are not re-derived from scratch.
 | Hit definition | **SPY, fixed ±2 %**, per stance, as a pure function; raw returns stored beside it | The band and the benchmark are parameters, so storing the raw returns means changing either one later does not throw away old measurements. A volatility-scaled band stays available as a refinement |
 | Row version | Postgres **`xmin`** | Npgsql supports it, there is no column anyone can forget to bump, and `Portfolio` gains no field that is not domain |
 
-### The work, as six pull requests
+### The work, as eight pull requests
 
 | # | What | Why it is its own |
 |---|---|---|
@@ -108,7 +111,11 @@ all land in PR 4, and are repeated here so they are not re-derived from scratch.
 | 4 ✅ | The outcome function: return over a horizon, comparison against an index, hit per stance, a horizon landing on a non-trading day. Pure functions, TDD. | Findings E and F land here. Indata and expected figure are the specification, which is exactly where writing the test first pays. |
 | 5a ✅ | The history endpoint, the engine's client for it, and the `Outcome` configuration. | Split out because the whole of PR 5 was five commits: this half is *how the engine gets bars*, and it runs on its own. |
 | 5b ✅ | The scheduled job and `trading.signal_outcomes`: the fixed horizons (1, 5, 20 trading days) and the model's own, **for every signal** - including HOLD, risk rejections and everything that was never bought. A SQL view for the minimum report. | Measuring only the trades that went through measures the wrong population. |
-| 6 | Python's side: Alembic for the `agent` schema, the pool leak in `memory.py`, memory wired into the pipeline, each signal's `FactSheet` stored, and `POST /v1/outcomes` so the engine can tell Python what happened. | **The database is never the integration point** - that is what separates "two schemas" from the shared-database anti-pattern. |
+| 6a ✅ | Alembic for the `agent` schema, `agent.analysis_runs` + `step_outputs`, `POST /v1/outcomes` with `agent.signal_outcomes` behind it, and the engine's delivery of measurements with `trading.outcome_deliveries` to make it retry itself. | **The database is never the integration point** - that is what separates "two schemas" from the shared-database anti-pattern. Split out because none of it changes what a model sees: `team_version` is untouched, so the baseline is not disturbed. |
+| 6b | Memory in the loop: a `sees_memory` step flag, a second `TeamSpec` that uses it, and past outcomes joined into what the risk manager reads. | This *does* change what a model sees, so it is a new `team_version` - and it stays out of `default` on purpose, so the baseline keeps accumulating while the two can be compared. |
+
+The pool leak in `memory.py` that the roadmap lists under PR 6 was already fixed: all three
+methods use `async with self._pool.acquire()`. Found by reading, not by testing.
 
 **After PR 5, the baseline is a deliverable, not a by-product.** The thin three-step team has to
 run long enough to produce measured outcomes at the fixed horizons before anything is added to
@@ -118,29 +125,50 @@ the fixed horizons is part of the stage's definition of done.
 
 Before stage 5, turn finding D's currency mismatch into an outcome rather than a throw.
 
-### Next up: PR 6 - Python's side, and then waiting
+### Next up: PR 6b - memory in the loop, and then waiting
 
-The last pull request of the stage, and the smallest: Alembic for the `agent` schema so
-`agent_memories` becomes a real migration rather than a line in `01-schema.sh`, the pool leak
-in `memory.py`, the memory wired into the pipeline at last, each signal's `FactSheet` stored
-against its correlation id, and `POST /v1/outcomes` so the engine can tell Python what
-happened.
+The last pull request of the stage. Everything it needs now exists: the journal knows what
+each analysis was told, and `agent.signal_outcomes` knows how it turned out.
 
-**The rule it exists to keep:** the database is never the integration point. Two schemas, two
-roles, and everything that crosses between them crosses over HTTP. Storing the fact sheet on
-Python's side against the same correlation id is what makes attribution a join done when the
-question is asked, rather than a contract widened with fields the engine never reads.
+**The four decisions were taken 2026-09-25**, all four the recommended way:
 
-**To settle first:** whether the memory the risk manager reads is the outcome of past signals
-or only their reasoning - the first is far more useful and is only possible now that outcomes
-exist, but it changes what a prompt sees and therefore `team_version`.
+| Decision | Taken | Why |
+|---|---|---|
+| Split PR 6 | **Two pull requests.** 6a is storage and is invisible to the model; 6b changes what a model reads | 6a touches no prompt, so `team_version` is unchanged and the baseline is not disturbed by the plumbing that makes it measurable |
+| What Python stores per analysis | **The fact sheet *and* every step's answer**, in `analysis_runs` + `step_outputs` | Replay alone needs only the fact sheet, but attribution needs the steps - and "which step changed its mind" cannot be reconstructed afterwards from an answer |
+| What memory contains | **Past reasoning *and* the measured outcome** | Reasoning alone teaches a model to agree with itself: a wrong thesis it repeated three times reads as a well-founded one. Only what happened afterwards can make the next decision better |
+| Where memory is wired in | **A second team. `default` is left alone** | Memory is something added, and the roadmap says the baseline is of the thin three-step team. Keeping `default` untouched means `Trading:TeamId` switches between them and `default` vs `default-memory` becomes the first real experiment the measurement machinery enables |
+
+**Carried in from the review of 6a** (2026-09-25, an external review; verdict "approve with
+nits", no blockers). Two of its findings were fixed in 6a - a stale test docstring, and the
+batch cap that existed in three places with nothing binding them. Three are deferred here,
+because they all touch files 6b opens anyway:
+
+| | What | Why it waits |
+|---|---|---|
+| `Remaining` is not a count | `ReportOutcomesUseCase` reads `MaxPerRequest + 1` rows, so a backlog of 5 000 is reported as "1 still waiting". The name and the type say *count*; the value is a flag | Rename to `MoreWaiting`, and add a drain loop **with a tick budget** - one batch per 24-hour sweep means a large backlog takes days, and an unbounded loop would make one tick arbitrarily long |
+| No status conditions in the contract | `Measured` with no figures, or `NotMeasurable` with `hit: true`, both validate today | The obvious rule is wrong: **`net_edge` is null for HOLD**, because a HOLD has no edge to compute, only a band it stays inside. The real invariant is narrower, and it currently lives only in prose and in one `switch` in `OutcomeCalculator` |
+| `MeasurementWorker` has no test | A comment claims delivery is attempted *even when the sweep failed*, since the backlog is not only what today measured. That branch is tested nowhere and was not exercised live either | An untested error path in a background service that swallows exceptions. Raised above the reviewer's "low" for that reason |
+
+Also noted and left: a repeated `correlation_id` in the journal logs "its working is lost"
+when the working is in fact already there. Nearly unreachable - the engine's resilience
+policy does not retry `POST /v1/signals` - so it is a one-line fix when the file is next open.
+
+**What 6b has to build:** a way for a step to be given something that is not an earlier step's
+output. `StepSpec.reads` names schemas produced inside the run; memory comes from outside it,
+so it needs a flag of its own next to `sees_position`, and a port so the pipeline still does
+not import `MemoryStore`. Then a prompt file, a second `TeamSpec`, and `save` after a run.
+
+**The rule the whole stage keeps:** the database is never the integration point. Two schemas,
+two roles, and everything that crosses between them crosses over HTTP.
 
 ### And then the part that is not code
 
 **The baseline is a deliverable.** The thin three-step team has to run long enough to produce
-measured outcomes at the fixed horizons before anything is added to it. As of 2026-09-24
-nothing has been measured, because every signal is from that day; the first rows appear once
-a trading day has passed. Until then, no comparison between team versions means anything.
+measured outcomes at the fixed horizons before anything is added to it. As of 2026-09-25 it
+has **started**: 21 signals measured at one trading day. One day is not a baseline - the 5 and
+20 trading-day horizons are where a comparison starts to mean something, and those are a week
+and a month away. Until then, no comparison between team versions means anything.
 
 Two things worth fixing before the baseline is taken seriously:
 
@@ -810,11 +838,81 @@ steps* rather than here, because they are still being spent.
   signal was made that day - and exactly three history calls for AAPL, MSFT and SPY, with the
   window at the signal date less ten days. 286 .NET tests and 270 Python green.
 
+- **PR 6a - Python owns its schema, and the two sides exchange measurements** (branch
+  `stage-4-agent-schema`, 2026-09-25). Four commits, and the first three touch no prompt at
+  all, which is the reason the pull request was split: `team_version` is unchanged, so none of
+  this disturbs the baseline that has just started to accumulate.
+
+  - **Alembic for the `agent` schema.** `agent_memories` was created by
+    `db/init/01-schema.sh`, which runs once on an empty volume, so every change to the agents'
+    schema so far meant destroying the database. The init script now creates **no tables at
+    all** - only the extension, the roles, the schemas and who owns them - which is what makes
+    "runs once" harmless rather than a trap. A fresh volume needs `uv run alembic upgrade head`
+    before the agent service has anywhere to write; the existing database was `alembic stamp`-ed.
+  - **Python has database tests at last.** A throwaway pgvector container built by the
+    checked-in init script, connected to as `agent_svc` - the same shape as the engine's
+    fixture, and for the same reason. Every test downgrades on its way out, so "migrations are
+    tested both ways" is a property of the suite rather than of one deletable test.
+  - **`agent.analysis_runs` and `agent.step_outputs`** hold the fact sheet an analysis started
+    from and each step's answer as `jsonb`. Append-only, unique on the correlation id. The
+    journal write happens *after* the signal is built and **cannot withhold an answer**: a
+    failure is an error line, because the engine cannot tell a storage failure here from the
+    agents failing, and raising would stop trading over bookkeeping.
+  - **`POST /v1/outcomes` and `agent.signal_outcomes`**, the copy of what the engine measured.
+    No foreign key to `analysis_runs` - the engine measures decisions this service never
+    produced a signal for - and `ON CONFLICT DO NOTHING`, so a retry is safe. Here a failure
+    *is* reported, which is the opposite of the journal: nothing is waiting for the answer, and
+    the engine can send it again.
+  - **`trading.outcome_deliveries`** on the engine's side, so delivery is a state rather than a
+    moment. Post, then mark, then commit: a failed post leaves no markers and the next sweep
+    sends the same batch. Without it a thirty-second outage would cost a day of evidence,
+    because a sweep measures only what is still unmeasured.
+  - Also capped `team_id` and `correlation_id` at 64 characters in the contract. Both services
+    already stored them in a `varchar(64)`; only one side knew.
+
+  *Mutation testing:* the journal's transaction removed **1**; marking deliveries before the
+  post instead of after **1**. Two mutations did **not** bite, and both taught something:
+  deleting `version_table_schema` from `env.py` changes nothing, because `agent_svc`'s
+  `search_path` already resolves to `agent` - so the comment claiming Alembic defaults into
+  `public` like EF Core was simply wrong and was rewritten. And sending floats straight into
+  the `numeric` columns instead of converting them to text first changes nothing either,
+  because the engine rounds to six decimals and the columns hold six. That defence was
+  deleted rather than kept.
+
+  *Reviewed externally, 2026-09-25*, verdict "approve with nits" and no blockers. Two
+  findings were fixed on the branch. The first was a **stale docstring** in
+  `test_outcome_store.py` still explaining the float-to-text conversion that the mutation
+  test had caused to be deleted - which is worse than no explanation, because the docstring
+  is what a reader reaches first. The second the review did not raise and is the more serious
+  of the two: **the batch cap 500 existed in three places** - the engine's constant, the
+  agent service's, and the contract's `maxItems` - with each side testing only its own copy.
+  Drift there is not a slow recovery but a **stop**: the engine would send the same oversized
+  batch every sweep, take a 422, mark nothing and repeat, silently apart from one error line a
+  day. Both constants are now asserted against the checked-in contract, which is the same
+  guard `trading.hit_rate`'s conviction thresholds already had and this duplication had not.
+  Lowering `maxItems` turns both suites red, which is how it was checked. Three findings are
+  deferred to 6b and written up under *Next up*.
+
+  *Verified live:* the engine and the agent service both running, against the real database.
+  One sweep **measured 21** signals at one trading day, 63 not due, and delivered all 21 -
+  21 rows in `trading.signal_outcomes`, 21 in `trading.outcome_deliveries`, 21 in
+  `agent.signal_outcomes`, and `trading.hit_rate` populated for the first time. Python's
+  journal picked up 8 runs and 24 step outputs from the same session. 302 .NET tests and 309
+  Python green, all of them re-run in a throwaway worktree of tracked files only.
+
 ---
 
 ## Lessons and gotchas
 
 Things that cost time or were not obvious. Most are also recorded where they apply.
+
+**Python and Alembic**
+- `alembic init -t async` is the *fewer*-dependencies option here, not the more: asyncpg is already a dependency, whereas a synchronous engine would mean adding psycopg for migrations alone. It does need `sqlalchemy[asyncio]` for greenlet.
+- `fileConfig(config.config_file_name)` defaults to `disable_existing_loggers=True`, which switches off every logger already created in the process. Harmless for the `alembic` command, wrong inside a test suite. Pass `disable_existing_loggers=False`.
+- pytest-asyncio's auto mode has an event loop running by the time a fixture is set up, so `command.upgrade` - which calls `asyncio.run` inside `env.py` - raises. Run Alembic on a thread of its own rather than changing `env.py` to suit the tests.
+- `alembic -x url=...` reaches `env.py` through `config.cmd_opts.x`, so a test supplies it as `Config(..., cmd_opts=Namespace(x=[f"url={dsn}"]))`. Setting `config.attributes` instead would need a second code path in `env.py` that exists only for tests.
+- Testcontainers for Python has `with_copy_into_container`, which is the equivalent of .NET's `WithResourceMapping`: it copies bytes after `create` and before `start`, so an initdb script arrives in time. A volume mount would make the test depend on a path on this machine.
+- Waiting for "ready to accept connections" in the log races: the official Postgres entrypoint prints it once before the init scripts run and once after. Polling until the *role the script creates* can connect is a stronger signal.
 
 **.NET**
 - The .NET 10 SDK no longer runs xunit v3 through VSTest. `global.json` opts into Microsoft.Testing.Platform, and `dotnet test` then needs `--solution`.

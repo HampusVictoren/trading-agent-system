@@ -57,6 +57,24 @@ class RecordingRunner:
         return json.loads(block)
 
 
+class RecordingJournal:
+    """Keeps what it was asked to store, or fails on purpose."""
+
+    def __init__(self, failure: Exception | None = None) -> None:
+        self.failure = failure
+        self.runs = []
+
+    async def record(self, run) -> None:
+        if self.failure is not None:
+            raise self.failure
+        self.runs.append(run)
+
+    @property
+    def only(self):
+        assert len(self.runs) == 1, f"expected one run, got {len(self.runs)}"
+        return self.runs[0]
+
+
 class StubMarket:
     def __init__(self, price: float = 338.98, failure: Exception | None = None) -> None:
         self.price = price
@@ -97,11 +115,14 @@ def a_request(**overrides) -> SignalRequest:
 
 
 def a_pipeline(
-    runner=None, market=None, team=DEFAULT_TEAM
+    runner=None, market=None, team=DEFAULT_TEAM, journal=None
 ) -> tuple[SignalPipeline, RecordingRunner]:
     runner = runner or RecordingRunner()
     runtime = TeamRuntime(spec=team, version=VERSION, runner=runner)
-    return SignalPipeline({team.id: runtime}, market or StubMarket()), runner
+    pipeline = SignalPipeline(
+        {team.id: runtime}, market or StubMarket(), journal or RecordingJournal()
+    )
+    return pipeline, runner
 
 
 class TestAFullRun:
@@ -313,3 +334,65 @@ class TestASingleStepTeam:
 def test_an_existing_position_is_a_real_model():
     # Guards the fixture above from drifting into a dict that the request would reject.
     assert ExistingPosition(quantity=3, average_price=210.4).quantity == 3
+
+
+class TestWhatIsWrittenDown:
+    """What makes a decision answerable afterwards. See app/application/journal.py."""
+
+    async def test_it_records_the_facts_the_analysis_actually_started_from(self):
+        journal = RecordingJournal()
+        pipeline, _ = a_pipeline(journal=journal)
+
+        signal = await pipeline.run(a_request())
+
+        run = journal.only
+        assert run.correlation_id == "c-1"
+        assert run.team_id == "default"
+        assert run.team_version == VERSION
+        assert run.symbol == "AAPL"
+        assert run.instrument_type == "equity"
+        # The same sheet the first step was given, not a fresh one fetched afterwards.
+        # A replay is only the same question if this is the number the agents saw.
+        assert run.facts.price == signal.reference_price
+
+    async def test_it_records_every_step_in_the_order_the_team_ran_them(self):
+        journal = RecordingJournal()
+        pipeline, _ = a_pipeline(journal=journal)
+
+        await pipeline.run(a_request())
+
+        steps = journal.only.steps
+        assert [step.role for step in steps] == list(DEFAULT_TEAM.roles)
+        assert [step.ordinal for step in steps] == [0, 1, 2]
+        # Which schema each answer was validated against, so an older team_version whose
+        # steps produced something else stays readable.
+        assert [step.schema_name for step in steps] == [
+            "MarketRead",
+            "RiskAssessment",
+            "TradeView",
+        ]
+        assert steps[0].output == A_READ
+        assert steps[-1].output == A_VIEW
+
+    async def test_a_journal_that_fails_does_not_cost_the_engine_its_answer(self):
+        """Deliberate, and the argument is in AnalysisJournal's docstring: the engine
+        cannot tell a storage failure here from the agents failing, so raising would read
+        as "no decision this cycle" and stop trading over bookkeeping."""
+        pipeline, _ = a_pipeline(journal=RecordingJournal(failure=RuntimeError("no database")))
+
+        signal = await pipeline.run(a_request())
+
+        assert signal.stance is Stance.BUY
+
+    async def test_a_run_that_never_reached_an_answer_is_not_journalled(self):
+        """The population is "analyses that produced a signal". A half-written run would
+        read as a team that answered with nothing, which is a different thing entirely -
+        and the engine records the failure on its side under the same id."""
+        journal = RecordingJournal()
+        runner = RecordingRunner(failure=RuntimeError("the model went away"))
+
+        with pytest.raises(RuntimeError):
+            pipeline, _ = a_pipeline(runner=runner, journal=journal)
+            await pipeline.run(a_request())
+
+        assert journal.runs == []

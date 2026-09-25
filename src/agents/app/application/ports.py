@@ -10,7 +10,9 @@ from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel
 
+from app.application.journal import AnalysisRun
 from app.domain.facts import MarketSnapshot
+from app.domain.outcomes import MeasuredOutcome
 
 
 @runtime_checkable
@@ -36,3 +38,33 @@ class StepRunner(Protocol):
     """
 
     async def run_step[T: BaseModel](self, role: str, message: str, schema: type[T]) -> T: ...
+
+
+@runtime_checkable
+class AnalysisJournal(Protocol):
+    """Writes down what one analysis was given and what each step answered.
+
+    A port rather than a call to asyncpg, for the usual reason - but also because this is
+    the one write in the request path that must not be able to stop an answer. An
+    implementation may raise; the pipeline logs it and returns the signal anyway. The
+    engine's own `decisions` row is the record of what was traded, and refusing to answer
+    because a journal table was unreachable would stop trading over bookkeeping.
+
+    The hole that leaves is findable rather than silent: a correlation id in the engine's
+    `decisions` with no `analysis_runs` row on this side is an analysis whose working was
+    lost, and the log line says so at the moment it happens.
+    """
+
+    async def record(self, run: AnalysisRun) -> None: ...
+
+
+@runtime_checkable
+class OutcomeStore(Protocol):
+    """Keeps a copy of what the engine measured, so memory can say what happened.
+
+    Unlike the journal, a failure here is reported. The engine is telling this service
+    something it already has written down and can send again - so a 500 that makes it
+    retry is better than a success that quietly loses a measurement.
+    """
+
+    async def store(self, outcomes: list[MeasuredOutcome]) -> None: ...

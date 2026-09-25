@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A hybrid, modular automated trading agent that runs entirely locally:
 - The **.NET 10 engine** (`src/engine`) is deterministic and rule-based. It owns scheduling, the portfolio (cash, positions), the `RiskEngine` that checks proposals against hard rules, and order execution.
-- The **Python agent service** (`src/agents`) is a FastAPI app. It exposes `POST /v1/signals` and runs a team of AG2 v1.0+ agents over a computed fact sheet, returning a validated `TradeSignal`: a direction and a conviction, never an amount.
+- The **Python agent service** (`src/agents`) is a FastAPI app. It exposes `POST /v1/signals` and runs a team of AG2 v1.0+ agents over a computed fact sheet, returning a validated `TradeSignal`: a direction and a conviction, never an amount. It also takes `POST /v1/outcomes`, which is how the engine's measurements reach this side — the database is never the integration point between the two services.
 - **Market data** comes from yfinance behind a `MarketDataProvider` port, with a TTL cache and a timeout, and is turned into a `FactSheet` by pure functions before any agent runs. The same provider answers `GET /v1/quotes/{symbol}` and `GET /v1/quotes/{symbol}/history?from=`, which is how the engine prices holdings it is not analysing and how it measures an outcome - one market-data integration, in one service.
 - **PostgreSQL + pgvector** (Docker) holds both services' state, in a schema each: `trading` has the portfolio, the append-only order ledger and every decision the engine has ever made (EF Core), and `agent` has the agents' semantic memory (`agent.agent_memories`).
 - **Ollama** is the LLM backend for both text generation (`llama3.2`) and embeddings (`nomic-embed-text`). The plan is to add Claude or Grok later.
@@ -26,19 +26,21 @@ dotnet build TradingSystem.slnx                          # TreatWarningsAsErrors
 dotnet test --solution TradingSystem.slnx                # xunit v3 on Microsoft.Testing.Platform
 dotnet format TradingSystem.slnx --verify-no-changes
 
-cd src/agents && uv run ruff check app/ tests/
-cd src/agents && uv run ruff format --check app/ tests/
-cd src/agents && uv run mypy app/
+cd src/agents && uv run ruff check app/ tests/ migrations/
+cd src/agents && uv run ruff format --check app/ tests/ migrations/
+cd src/agents && uv run mypy app/ migrations/
 cd src/agents && uv run pytest
 ```
 
 `global.json` opts `dotnet test` into Microsoft.Testing.Platform, which the .NET 10 SDK
 requires for xunit v3. Note the `--solution` flag: the new runner needs it.
 
-**The database tests need Docker.** They start a `pgvector/pgvector:0.8.6-pg16` container,
-run `db/init/01-schema.sh` inside it and connect as `engine_svc`, so the migration is proved
-under the grants it actually runs under rather than as a superuser. They are a collection
-fixture, so a run that touches only domain tests starts no container.
+**The database tests need Docker, on both sides.** Each starts a
+`pgvector/pgvector:0.8.6-pg16` container, runs the checked-in `db/init/01-schema.sh` inside it,
+and connects as `engine_svc` or `agent_svc` rather than as a superuser - so a migration is
+proved under the grants it actually runs under. The container is shared for the run (a
+collection fixture in .NET, a session fixture in `tests/conftest.py`), so a run that touches
+only domain or unit tests starts nothing.
 
 ```bash
 # Migrations. dotnet-ef is a local tool, pinned in dotnet-tools.json.
@@ -47,6 +49,21 @@ dotnet dotnet-ef migrations add <Name> --project src/engine --output-dir Infrast
 dotnet dotnet-ef migrations script --project src/engine --idempotent   # read it before trusting it
 dotnet dotnet-ef migrations has-pending-model-changes --project src/engine
 ```
+
+```bash
+# The agent schema, from src/agents. Alembic is a dev dependency, the way dotnet-ef is a
+# local tool: the service never imports it, and migrating is something an operator does.
+uv run alembic upgrade head
+uv run alembic current                      # which revision this database is on
+uv run alembic upgrade head --sql           # read it before trusting it
+uv run alembic revision -m "<message>"      # handwritten SQL; --autogenerate does nothing here
+uv run alembic -x url=postgresql://... upgrade head   # a database other than your own
+```
+
+There are no SQLAlchemy models in this service - it talks to Postgres through asyncpg - so
+`env.py` passes `target_metadata = None` and every migration is handwritten SQL. That is what
+makes `--autogenerate` useless rather than dangerous: with no metadata to compare against, it
+would propose dropping every table it found.
 
 The engine will not start against a database that is behind it, so a new migration has to be
 applied before `dotnet run` works again. Two more things about generated migrations. `dotnet ef`
@@ -133,10 +150,12 @@ dotnet user-secrets set "Database:ConnectionString" \
 
 `db/init/01-schema.sh` builds the database. It runs **once**, on the first start of an empty volume, so editing it has no effect until the volume is recreated (`docker compose down -v && docker compose up -d` — this deletes all data).
 
+**It creates no tables.** It makes only what a migration tool cannot make for itself: the `vector` extension, the two login roles, the two schemas and who owns them. Every table is then its owner's migration tool's: EF Core for `trading`, Alembic for `agent`. That is what makes "runs once" harmless — nothing in that file changes as the schemas grow. On a fresh volume, `docker compose up -d` therefore leaves an empty `agent` schema until `uv run alembic upgrade head` has run.
+
 | Schema | Owner | Holds |
 |---|---|---|
-| `trading` | `engine_svc` | `portfolios`, `positions`, `orders`, `decisions`, `signal_outcomes` and the `hit_rate` view, through EF Core |
-| `agent` | `agent_svc` | `agent.agent_memories` — pgvector semantic memory |
+| `trading` | `engine_svc` | `portfolios`, `positions`, `orders`, `decisions`, `signal_outcomes`, `outcome_deliveries` and the `hit_rate` view, through EF Core |
+| `agent` | `agent_svc` | `agent_memories` — pgvector semantic memory — plus `analysis_runs`, `step_outputs` and `signal_outcomes`, through Alembic |
 
 Each role owns its schema, so its migration tool can create tables there, and has **no access to the other's** — not even to see what tables exist. Neither can create anything in `public`. Only the two roles and the superuser may connect. The `vector` extension stays in `public`, because `pgvector.asyncpg.register_vector` looks it up there.
 
@@ -158,6 +177,20 @@ reason and null returns, so the sweep stops retrying it and the report still kno
 `trading.hit_rate` is the minimum report: hit rate against the index per `team_version`,
 conviction tier and stance, with gross and net edge side by side.
 
+`outcome_deliveries` is one row per measurement the agent service has been told about, and
+no row at all until it lands. It is a table rather than a column on `signal_outcomes`
+because that table refuses `UPDATE` - but the separation is also truer: whether a
+measurement has been copied somewhere is a fact about a side effect. It is deliberately
+**not** append-only, unlike everything around it. A delivery receipt is not evidence, and
+deleting one is the supported way to ask for a resend, which is safe because storing is
+idempotent on the other side.
+
+`agent` is Alembic's, migrated from `src/agents/migrations/versions`, with its version table inside the same schema. `agent_svc`'s `search_path` already resolves there, so naming it is not what makes it work — it is what stops the location depending on a role attribute set once, by a script that runs once. A database that predates the migrations holds the table but no version row, and is `alembic stamp <revision>`-ed rather than migrated.
+
+`analysis_runs` and `step_outputs` are what one analysis leaves behind: the fact sheet the agents started from, and every step's answer as `jsonb`, against the same `correlation_id` the engine stores in `trading.decisions`. Nothing joins the two schemas in the database - the join is made when a question is asked, which is what keeps two services out of one schema. Both are **append-only**, by the same statement-level trigger the engine uses, because a replay is only worth running if the inputs it replays are the inputs that were used. `correlation_id` is unique, so a retry above the layer cannot turn one analysis into two rows. The steps are `jsonb` rather than columns because a step's schema belongs to its `team_version`: modelling it here would mean a migration every time a prompt's output grew a field, and a table that could not hold two teams at once.
+
+`signal_outcomes` is this service's copy of what the engine measured, posted to `POST /v1/outcomes` after a sweep. The engine owns the measurement; the copy exists so memory can say what happened afterwards rather than only what was argued at the time. It has **no foreign key** to `analysis_runs` — the engine measures decisions this service never produced a signal for — and the write is `ON CONFLICT DO NOTHING`, so a sweep that is retried does not have to know what landed. Append-only too: a correction is a new measurement in the engine and a new row here, never an edit.
+
 `agent.agent_memories` has a `bigint` identity key, a `NOT NULL` 768-dimensional `embedding`, and an HNSW index with `vector_cosine_ops`. `MemoryStore.search` ranks rows by cosine distance (`<=>`), filtered by ticker. Always schema-qualify table names.
 
 ## Architecture
@@ -175,6 +208,8 @@ conviction tier and stance, with gross and net edge side by side.
    | `portfolio_manager` | `MarketRead`, `RiskAssessment` | `TradeView` (stance, conviction, thesis, risks, horizon) |
 
    The portfolio manager never sees the fact sheet, and `TradeView` has no price field, so the pipeline supplies the instrument from the request and the price from the fact sheet. **There is no fallback HOLD**: a failure that looks like a decision is one the engine cannot tell apart from a real one.
+
+   A run that produced a signal is then written to `agent.analysis_runs` and `agent.step_outputs` through the `AnalysisJournal` port. That write **cannot withhold an answer**: it happens after the signal is built, and a failure is an error line naming the correlation id, not a 500. The engine cannot tell a journal outage from the agents failing, so raising would read as "no decision this cycle" and stop trading over bookkeeping - and the hole is findable, as a correlation id in `decisions` with no run on this side.
 4. `app/api/errors.py` turns a failure into an honest status code, and a body of `{error_code, correlation_id}` and nothing else. The detail is logged, never returned.
 
    | Failure | Status | `error_code` |
@@ -202,6 +237,7 @@ conviction tier and stance, with gross and net edge side by side.
 - `src/agents/app/domain/signals.py`: `TradeSignal`, `SignalRequest`, `TradeView`. **`TradeView` is what the last agent step is asked for** — stance, conviction, thesis, key risks, horizon. `TradeSignal` inherits it and adds what code is responsible for: the instrument, the reference price and its timestamp, and the run's identity. The engine sizes an order as `floor(budget / reference_price)`, so a model that could write that number would decide how many shares are bought.
 - `src/engine/Application/Contracts/`: the same shape as DTOs, with `TradeSignalMapper` as the seam into the domain. It enforces the schema's length caps, because System.Text.Json does not read JSON Schema.
 - `contracts/quote.schema.json`: what `GET /v1/quotes/{symbol}` answers. Deliberately narrower than the fact sheet - P/E and sector are read by agents, a price is read by arithmetic - and it is the one contract that carries a **currency**, because a quote can be for an instrument the engine does not price in dollars. The symbol travels in the path, validated against the same pattern on both sides *before* any lookup, which is what finding B was actually about.
+- `contracts/outcome.schema.json`: what the engine posts to `POST /v1/outcomes` after a sweep. The one contract whose enums are spelled as the *engine* stores them (`TradingDays`, `Measured`) rather than in this contract's usual upper case, so the two copies of a row compare directly without a mapping in anyone's head. Posting is idempotent and the batch is capped, because a request is a unit of work with a timeout rather than a bulk load.
 - `contracts/quote-history.schema.json`: what `GET /v1/quotes/{symbol}/history?from=YYYY-MM-DD` answers. It is the engine's **trading calendar** as much as its price series - an outcome is measured by counting bars, so a day with no bar is a day the market was shut. `from` is required, and an empty array is a good answer rather than a 404: it means nothing has traded since that date, which the engine reads as a horizon that has not passed.
 - **There is no `amount_usd` anywhere.** The agents give a view; the engine decides how much money moves. That is decision 1, and it is what bounds what a prompt injection can do.
 
@@ -223,7 +259,8 @@ Both services follow a Clean Architecture / DDD layout: `Domain` → `Applicatio
 - **Empty packages:** none left. `app/infrastructure/llm/provider.py` and `app/infrastructure/market_data/` were filled in stage 3.
 - **Engine database access:** `TradingDbContext` and the `trading` schema, reached through three ports in `Application/Persistence` - `IPortfolioRepository`, `IDecisionLog` and `IUnitOfWork`. One commit per cycle, so the decision, the position change and the ledger line move together. `FindAsync` takes no id because the engine trades one account, and a second row is reported rather than silently picked. **The portfolio survives a restart**, and there is no shared mutable state left in the worker for a second ticker or a second worker to get wrong.
 - **The trading calendar is the bar series.** `Engine.Domain.Outcomes` counts a horizon in bars rather than against a holiday table: a day with a bar is a day the market was open, which is right per exchange without anyone saying which, and a missing day is a fact about the data rather than an assumption. `Horizon` keeps trading days and calendar days apart - the fixed horizons are trading days, the model's own `horizon_days` is calendar days, because that is what the prompt asked it for.
-- **`MeasurementWorker` is the second background service.** It sweeps at startup and then every `Outcome:SweepIntervalHours`, fetching one history per instrument plus one for the benchmark however many signals there are, and writing everything in one transaction. A horizon that has not passed gets no row and is asked about again; one that never can gets a row saying why. It writes only `signal_outcomes` and never touches the portfolio, which is a test.
+- **`MeasurementWorker` is the second background service.** It sweeps at startup and then every `Outcome:SweepIntervalHours`, fetching one history per instrument plus one for the benchmark however many signals there are, and writing everything in one transaction. A horizon that has not passed gets no row and is asked about again; one that never can gets a row saying why. It writes only `signal_outcomes` and `outcome_deliveries` and never touches the portfolio, which is a test.
+- **Delivery is its own step, and it retries itself.** After the sweep, `ReportOutcomesUseCase` posts everything undelivered - up to the contract's 500 - to `POST /v1/outcomes`, and writes the markers *only once the agent service has accepted them*. That order is what makes it safe to repeat: a failed post leaves no markers and the next sweep sends the same batch, and a post that succeeded before a failed commit sends it twice, which the other side ignores. The failure this order cannot produce is a measurement marked delivered that never arrived. Without the markers a thirty-second outage would cost a day of evidence, because a sweep measures only what is still unmeasured. Delivery is attempted even when the sweep failed, since the backlog is not only what today measured.
 - **`OutcomeCalculator` is a pure function over bars.** A stored decision and two bar series in, a verdict out, with commission and spread subtracted as a round trip on the instrument leg only. The `Outcome` section holds what it is scored against - commission, spread, the HOLD band, the benchmark symbol and the fixed horizons - kept apart from `RiskPolicy` because a number that changes a measurement should not sit among numbers that change a decision. `MeasurementWorker` is what calls it and writes `trading.signal_outcomes`.
-- **The engine stores what the engine saw.** `decisions` holds the request, the signal and the outcome - not the agent service's own working. The fact sheet and the intermediate steps are Python's data, stored on Python's side against the same correlation id, so attributing a result to one agent is a join made when the question is asked. Widening the contract with fields the engine never reads would make it the owner of somebody else's internals, which is the shared-database problem over HTTP.
+- **The engine stores what the engine saw.** `decisions` holds the request, the signal and the outcome - not the agent service's own working. The fact sheet and the intermediate steps are Python's data, stored on Python's side in `agent.analysis_runs` and `agent.step_outputs` against the same correlation id, so attributing a result to one agent is a join made when the question is asked. Two questions need those tables and cannot be answered afterwards without them: *replay*, running a different team over the exact inputs an old decision had, and *attribution*, which turns "team B did better" into "which step changed its mind". Widening the contract with fields the engine never reads would make it the owner of somebody else's internals, which is the shared-database problem over HTTP.
 - **AG2 API version:** AG2 is used through its v1.0+ API (`from ag2 import Agent, tool`, `ag2.config.OpenAIConfig`, `await agent.ask(...)`). The pre-1.0 `autogen`/`ConversableAgent` API is not used here.

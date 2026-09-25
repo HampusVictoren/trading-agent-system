@@ -183,7 +183,7 @@ public class TradingSchemaTests : IAsyncLifetime
 
             await migrator.MigrateAsync(cancellationToken: TestContext.Current.CancellationToken);
 
-            (await TablesInTradingSchema(context)).ShouldBe(5);
+            (await TablesInTradingSchema(context)).ShouldBe(6);
             (await FunctionsInTradingSchema(context)).ShouldBe(1);
 
             // The report view depends on two tables, so it has to be dropped before them and

@@ -55,6 +55,28 @@ public sealed record SignalAwaitingMeasurement(
     IReadOnlySet<(HorizonUnit Unit, int Days)> AlreadyMeasured);
 
 /// <summary>
+/// A measurement that has not reached the agent service yet, in the shape the contract
+/// sends it. The correlation id rather than the decision's id, because that is the one
+/// identifier both services wrote down.
+/// </summary>
+public sealed record OutcomeAwaitingDelivery(
+    long SignalOutcomeId,
+    string CorrelationId,
+    HorizonUnit HorizonUnit,
+    int HorizonDays,
+    OutcomeStatus Status,
+    string? Reason,
+    string BenchmarkSymbol,
+    DateOnly? MeasuredOn,
+    decimal? MeasuredPrice,
+    decimal? InstrumentReturn,
+    decimal? BenchmarkReturn,
+    decimal? ExcessReturn,
+    decimal? CostFraction,
+    decimal? NetEdge,
+    bool? Hit);
+
+/// <summary>
 /// Where a measurement goes, and what is left to measure. Reading and writing sit on one
 /// port because they are two halves of one sweep.
 /// </summary>
@@ -69,6 +91,21 @@ public interface IOutcomeLog
         CancellationToken cancellationToken = default);
 
     void Record(SignalOutcomeRecord outcome);
+
+    /// <summary>
+    /// Measurements the agent service has not been told about, oldest first, at most
+    /// <paramref name="limit"/> of them.
+    /// </summary>
+    /// <remarks>
+    /// Oldest first so that a backlog drains in the order it happened rather than newest
+    /// first forever, and capped because a request is a unit of work with a timeout. What
+    /// is left over is picked up by the next sweep.
+    /// </remarks>
+    Task<IReadOnlyList<OutcomeAwaitingDelivery>> AwaitingDeliveryAsync(
+        int limit, CancellationToken cancellationToken = default);
+
+    /// <summary>Queues the marker. It reaches the database on the next commit.</summary>
+    void MarkDelivered(long signalOutcomeId);
 }
 
 /// <summary>
@@ -88,9 +125,10 @@ public interface IUnitOfWork
 /// decide what to do about it without the application layer learning what a DbContext is.
 /// </summary>
 /// <remarks>
-/// Nothing runs two writers today - the worker is one loop - so this is unreachable until
-/// stage 4's scheduled outcome job joins it. That is exactly when a lost update would be
-/// invisible, which is why the row version is in place before the second writer arrives.
+/// Nothing reaches this today. The measurement worker is a second loop but not a second
+/// writer of the portfolio - it writes signal_outcomes and outcome_deliveries and nothing
+/// else, which is a test. The row version is in place for the writer stage 5 brings, when a
+/// lost update would be money rather than a row.
 /// </remarks>
 public sealed class ConcurrentChangeException : Exception
 {
