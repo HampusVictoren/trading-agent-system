@@ -122,6 +122,29 @@ class TestWhatChangesTheVersion:
 
         assert version(spec=changed) != version()
 
+    def test_memory_switched_on_for_a_step(self):
+        # The flag alone, with the prompt untouched. A team given past outcomes is a
+        # different experiment even when nobody edited a word of its instructions, and
+        # pooling its measurements with the runs that had no memory is exactly the mixing
+        # team_version exists to prevent.
+        steps = list(DEFAULT_TEAM.steps)
+        middle = steps[1]
+        steps[1] = StepSpec(
+            role=middle.role,
+            prompt_file=middle.prompt_file,
+            output_schema=middle.output_schema,
+            reads=middle.reads,
+            sees_memory=True,
+            sees_position=middle.sees_position,
+        )
+        changed = TeamSpec(
+            id=DEFAULT_TEAM.id,
+            instrument_types=DEFAULT_TEAM.instrument_types,
+            steps=tuple(steps),
+        )
+
+        assert version(spec=changed) != version()
+
     def test_a_changed_schema(self):
         # Adding a field changes what the model is asked for, so the schemas' contents are
         # hashed rather than their class names. Shown on a middle step, because the last

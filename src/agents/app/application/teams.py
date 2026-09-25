@@ -166,7 +166,44 @@ DEFAULT_TEAM = TeamSpec(
     ),
 )
 
-TEAMS: dict[str, TeamSpec] = {DEFAULT_TEAM.id: DEFAULT_TEAM}
+# The same team with one thing added: the risk manager is shown how similar readings of
+# this instrument turned out. It exists beside DEFAULT_TEAM rather than replacing it because
+# the baseline is of the thin team - the roadmap's condition for adding anything is a
+# measured baseline, and rewriting `default` would restart the measurement that is meant to
+# judge this change.
+#
+# Two of its three steps read `default`'s prompt files rather than copies. That is the
+# point: the only difference between the two teams is the risk manager's instructions and
+# what it is given, so a difference in outcomes has one candidate explanation instead of
+# three. Copies would be three files free to drift.
+MEMORY_TEAM = TeamSpec(
+    id="default-memory",
+    instrument_types=frozenset({"equity"}),
+    steps=(
+        StepSpec(
+            role="market_analyst",
+            prompt_file=_prompt("default", "market_analyst"),
+            output_schema=MarketRead,
+            reads=(FactSheet,),
+        ),
+        StepSpec(
+            role="risk_manager",
+            prompt_file=_prompt("default-memory", "risk_manager"),
+            output_schema=RiskAssessment,
+            reads=(FactSheet, MarketRead),
+            sees_memory=True,
+        ),
+        StepSpec(
+            role="portfolio_manager",
+            prompt_file=_prompt("default", "portfolio_manager"),
+            output_schema=TradeView,
+            reads=(MarketRead, RiskAssessment),
+            sees_position=True,
+        ),
+    ),
+)
+
+TEAMS: dict[str, TeamSpec] = {team.id: team for team in (DEFAULT_TEAM, MEMORY_TEAM)}
 
 
 def load_prompts(spec: TeamSpec) -> dict[str, str]:

@@ -51,6 +51,11 @@ def version_payload(spec: TeamSpec, prompts: Mapping[str, str], llm: LlmSettings
                 # everything. This also covers FactSheet, which no step produces.
                 "output_schema": step.output_schema.model_json_schema(),
                 "reads": [schema.model_json_schema() for schema in step.reads],
+                # Both flags change what the model is handed, so both are the version's
+                # business. Leaving sees_memory out would let a team be given past outcomes
+                # without the number that groups its measurements changing - which is
+                # exactly the mixing team_version exists to prevent.
+                "sees_memory": step.sees_memory,
                 "sees_position": step.sees_position,
                 "model": _model_identity(llm.for_role(step.role)),
             }
