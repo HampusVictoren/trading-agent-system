@@ -20,19 +20,23 @@ async def _fetch(dsn: str, query: str, *args: object) -> list[asyncpg.Record]:
         await connection.close()
 
 
-async def test_the_migration_creates_the_memory_table_as_the_role_that_owns_the_schema(
-    migrated: str,
+@pytest.mark.parametrize(
+    "table", ["analysis_runs", "step_outputs", "signal_outcomes", "analysis_embeddings"]
+)
+async def test_every_table_is_owned_by_the_role_that_owns_the_schema(
+    migrated: str, table: str
 ) -> None:
     rows = await _fetch(
         migrated,
         """
         SELECT tableowner FROM pg_tables
-        WHERE schemaname = 'agent' AND tablename = 'agent_memories'
+        WHERE schemaname = 'agent' AND tablename = $1
         """,
+        table,
     )
 
     # Owned by agent_svc rather than by the superuser, which is what lets the service
-    # alter its own table later without anyone granting it anything.
+    # alter its own tables later without anyone granting it anything.
     assert [r["tableowner"] for r in rows] == ["agent_svc"]
 
 
@@ -67,7 +71,7 @@ async def test_the_embedding_column_is_as_wide_as_the_model_this_service_pins(
         """
         SELECT format_type(a.atttypid, a.atttypmod) AS type
         FROM pg_attribute a
-        WHERE a.attrelid = 'agent.agent_memories'::regclass AND a.attname = 'embedding'
+        WHERE a.attrelid = 'agent.analysis_embeddings'::regclass AND a.attname = 'embedding'
         """,
     )
 
@@ -77,14 +81,14 @@ async def test_the_embedding_column_is_as_wide_as_the_model_this_service_pins(
 async def test_the_index_is_built_for_the_operator_the_search_actually_uses(
     migrated: str,
 ) -> None:
-    """MemoryStore.search orders by `<=>`, cosine distance. An index built with a
+    """AnalysisMemory.recall orders by `<=>`, cosine distance. An index built with a
     different operator class is not an error - Postgres simply ignores it and scans the
-    table, so the only symptom is that search gets slower as memory grows."""
+    table, so the only symptom is that recall gets slower as the journal grows."""
     rows = await _fetch(
         migrated,
         """
         SELECT indexdef FROM pg_indexes
-        WHERE schemaname = 'agent' AND indexname = 'agent_memories_embedding_idx'
+        WHERE schemaname = 'agent' AND indexname = 'analysis_embeddings_vector_idx'
         """,
     )
 

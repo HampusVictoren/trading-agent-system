@@ -84,20 +84,22 @@ uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 curl -X POST http://127.0.0.1:8000/v1/signals -H "X-Api-Key: $KEY" -H "Content-Type: application/json" \
   -d @../../contracts/examples/request.json
 
-# Smoke-test memory. MemoryStore takes a pool and an embeddings client, both built by the
-# FastAPI lifespan in app/main.py; a script builds its own the same way.
+# Smoke-test memory. AnalysisMemory takes a pool and an embeddings client, both built by the
+# FastAPI lifespan in app/main.py; a script builds its own the same way. `recall` needs no
+# data to exercise every part of it - with an empty journal it answers the sentence that
+# says nothing has been measured yet, having already embedded the query and run the SQL.
 uv run python -c "import asyncio, asyncpg, httpx2
 from openai import AsyncOpenAI
 from pgvector.asyncpg import register_vector
-from app.infrastructure.db.memory import MemoryStore
+from app.infrastructure.db.memory import AnalysisMemory
 from app.settings import get_settings
 async def main():
     s = get_settings()
     async with httpx2.AsyncClient(trust_env=False) as http, asyncpg.create_pool(
             dsn=s.database_url.get_secret_value(), init=register_vector) as pool:
-        store = MemoryStore(pool, AsyncOpenAI(base_url=str(s.embeddings_base_url),
+        memory = AnalysisMemory(pool, AsyncOpenAI(base_url=str(s.embeddings_base_url),
             api_key=s.embeddings_api_key.get_secret_value(), http_client=http))
-        await store.save('TEST','HOLD','Röktest'); print(await store.search('TEST','röktest'))
+        print(await memory.recall('AAPL', 'stabil uppgång', correlation_id='smoke-test'))
 asyncio.run(main())"
 
 # .NET engine (net10.0 Worker SDK)
@@ -155,7 +157,7 @@ dotnet user-secrets set "Database:ConnectionString" \
 | Schema | Owner | Holds |
 |---|---|---|
 | `trading` | `engine_svc` | `portfolios`, `positions`, `orders`, `decisions`, `signal_outcomes`, `outcome_deliveries` and the `hit_rate` view, through EF Core |
-| `agent` | `agent_svc` | `agent_memories` — pgvector semantic memory — plus `analysis_runs`, `step_outputs` and `signal_outcomes`, through Alembic |
+| `agent` | `agent_svc` | `analysis_runs`, `step_outputs`, `signal_outcomes` and `analysis_embeddings` — the journal and the pgvector memory over it, through Alembic |
 
 Each role owns its schema, so its migration tool can create tables there, and has **no access to the other's** — not even to see what tables exist. Neither can create anything in `public`. Only the two roles and the superuser may connect. The `vector` extension stays in `public`, because `pgvector.asyncpg.register_vector` looks it up there.
 
@@ -191,7 +193,9 @@ idempotent on the other side.
 
 `signal_outcomes` is this service's copy of what the engine measured, posted to `POST /v1/outcomes` after a sweep. The engine owns the measurement; the copy exists so memory can say what happened afterwards rather than only what was argued at the time. It has **no foreign key** to `analysis_runs` — the engine measures decisions this service never produced a signal for — and the write is `ON CONFLICT DO NOTHING`, so a sweep that is retried does not have to know what landed. Append-only too: a correction is a new measurement in the engine and a new row here, never an edit.
 
-`agent.agent_memories` has a `bigint` identity key, a `NOT NULL` 768-dimensional `embedding`, and an HNSW index with `vector_cosine_ops`. `MemoryStore.search` ranks rows by cosine distance (`<=>`), filtered by ticker. Always schema-qualify table names.
+`analysis_embeddings` is the memory, and it is **one vector per journalled analysis** rather than a store of its own: `agent_memories` was retired because three of its four columns already existed in the journal, and the one thing it lacked — the `correlation_id` — is what memory needs to join an analysis to what happened afterwards. It is a table beside `analysis_runs` rather than a column on it, because an embedding is **derived data, not evidence**: the journal is append-only, and embeddings have to be rebuildable when the model changes. The model's name is stored on every row, since a mixture of two models in one index is a similarity score that means nothing. The index is HNSW with `vector_cosine_ops`, matching the `<=>` that `AnalysisMemory.recall` orders by. Always schema-qualify table names.
+
+**What reaches an agent is only what has been measured.** `recall` joins through `signal_outcomes` with an inner `LATERAL`, so an analysis the engine has not yet scored takes none of the three places. That makes memory empty — and say so — until a horizon has passed, which is the honest state and the point: reasoning without an outcome teaches a model to agree with itself, and a thesis it repeated three times reads as a well-founded one. What is embedded is the analyst's `MarketRead`, not the thesis, because the query available when the risk manager runs is today's `MarketRead` — matching a reading against a reading asks "when things looked like this before, what did we conclude and how did it go?".
 
 ## Architecture
 

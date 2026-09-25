@@ -18,7 +18,7 @@ from app.application.versioning import compute_team_version
 from app.dependencies import Resources, get_resources
 from app.infrastructure.ag2.runner import Ag2StepRunner, build_agents
 from app.infrastructure.db.journal import PostgresJournal
-from app.infrastructure.db.memory import MemoryStore
+from app.infrastructure.db.memory import AnalysisMemory
 from app.infrastructure.db.outcomes import PostgresOutcomeStore
 from app.infrastructure.llm.provider import ModelConfigs, build_model_configs
 from app.infrastructure.market_data.caching import CachingMarketData
@@ -137,7 +137,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 models=models,
                 pipeline=_build_pipeline(settings, models, market, PostgresJournal(pool)),
                 market=market,
-                memory=MemoryStore(pool, embeddings),
+                memory=AnalysisMemory(pool, embeddings),
                 outcomes=PostgresOutcomeStore(pool),
                 http_client=http_client,
                 llm_base_url=_probe_url(settings),
