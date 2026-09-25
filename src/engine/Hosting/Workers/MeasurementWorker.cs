@@ -5,8 +5,8 @@ using Engine.Hosting.Options;
 using Microsoft.Extensions.Options;
 
 /// <summary>
-/// Sweeps for signals whose horizon has passed and scores them. The second writer in this
-/// process, and the one the portfolio's row version was put in for.
+/// Sweeps for signals whose horizon has passed and scores them. Writes only
+/// <c>signal_outcomes</c> and never touches the portfolio.
 /// </summary>
 /// <remarks>
 /// It runs once at startup and then on its interval. Starting immediately is what makes a
