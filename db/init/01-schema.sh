@@ -38,21 +38,9 @@ CREATE SCHEMA agent   AUTHORIZATION agent_svc;
 ALTER ROLE engine_svc SET search_path = trading;
 ALTER ROLE agent_svc  SET search_path = agent, public;
 
--- Created as agent_svc so the service owns its table and identity sequence,
--- rather than depending on grants from the superuser.
-SET ROLE agent_svc;
-
-CREATE TABLE agent.agent_memories (
-    id         bigint      GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    ticker     varchar(10) NOT NULL,
-    action     varchar(10) NOT NULL,
-    reasoning  text        NOT NULL,
-    embedding  vector(768) NOT NULL,
-    created_at timestamptz NOT NULL DEFAULT now()
-);
-
-CREATE INDEX agent_memories_embedding_idx
-    ON agent.agent_memories USING hnsw (embedding vector_cosine_ops);
-
-RESET ROLE;
+-- No tables here. This script builds what a migration tool cannot build for
+-- itself - the extension, the roles, the two schemas and who owns them - and
+-- then stops. Each service's own tool takes it from there: EF Core for
+-- trading, Alembic for agent. That is why this file may run exactly once
+-- without that being a problem: nothing in it changes as the schemas grow.
 SQL

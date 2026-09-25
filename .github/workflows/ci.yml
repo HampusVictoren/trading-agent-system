@@ -66,14 +66,16 @@ jobs:
         run: uv sync --locked
 
       - name: Lint
-        run: uv run ruff check app/ tests/
+        run: uv run ruff check app/ tests/ migrations/
 
       - name: Check formatting
-        run: uv run ruff format --check app/ tests/
+        run: uv run ruff format --check app/ tests/ migrations/
 
       - name: Type-check
-        run: uv run mypy app/
+        run: uv run mypy app/ migrations/
 
+      # Like the engine's, some of these start a Postgres container through
+      # Testcontainers. The runner already has Docker, so no setup step is needed.
       - name: Test
         run: uv run pytest
 

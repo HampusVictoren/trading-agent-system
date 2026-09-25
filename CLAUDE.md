@@ -26,19 +26,21 @@ dotnet build TradingSystem.slnx                          # TreatWarningsAsErrors
 dotnet test --solution TradingSystem.slnx                # xunit v3 on Microsoft.Testing.Platform
 dotnet format TradingSystem.slnx --verify-no-changes
 
-cd src/agents && uv run ruff check app/ tests/
-cd src/agents && uv run ruff format --check app/ tests/
-cd src/agents && uv run mypy app/
+cd src/agents && uv run ruff check app/ tests/ migrations/
+cd src/agents && uv run ruff format --check app/ tests/ migrations/
+cd src/agents && uv run mypy app/ migrations/
 cd src/agents && uv run pytest
 ```
 
 `global.json` opts `dotnet test` into Microsoft.Testing.Platform, which the .NET 10 SDK
 requires for xunit v3. Note the `--solution` flag: the new runner needs it.
 
-**The database tests need Docker.** They start a `pgvector/pgvector:0.8.6-pg16` container,
-run `db/init/01-schema.sh` inside it and connect as `engine_svc`, so the migration is proved
-under the grants it actually runs under rather than as a superuser. They are a collection
-fixture, so a run that touches only domain tests starts no container.
+**The database tests need Docker, on both sides.** Each starts a
+`pgvector/pgvector:0.8.6-pg16` container, runs the checked-in `db/init/01-schema.sh` inside it,
+and connects as `engine_svc` or `agent_svc` rather than as a superuser - so a migration is
+proved under the grants it actually runs under. The container is shared for the run (a
+collection fixture in .NET, a session fixture in `tests/conftest.py`), so a run that touches
+only domain or unit tests starts nothing.
 
 ```bash
 # Migrations. dotnet-ef is a local tool, pinned in dotnet-tools.json.
@@ -47,6 +49,21 @@ dotnet dotnet-ef migrations add <Name> --project src/engine --output-dir Infrast
 dotnet dotnet-ef migrations script --project src/engine --idempotent   # read it before trusting it
 dotnet dotnet-ef migrations has-pending-model-changes --project src/engine
 ```
+
+```bash
+# The agent schema, from src/agents. Alembic is a dev dependency, the way dotnet-ef is a
+# local tool: the service never imports it, and migrating is something an operator does.
+uv run alembic upgrade head
+uv run alembic current                      # which revision this database is on
+uv run alembic upgrade head --sql           # read it before trusting it
+uv run alembic revision -m "<message>"      # handwritten SQL; --autogenerate does nothing here
+uv run alembic -x url=postgresql://... upgrade head   # a database other than your own
+```
+
+There are no SQLAlchemy models in this service - it talks to Postgres through asyncpg - so
+`env.py` passes `target_metadata = None` and every migration is handwritten SQL. That is what
+makes `--autogenerate` useless rather than dangerous: with no metadata to compare against, it
+would propose dropping every table it found.
 
 The engine will not start against a database that is behind it, so a new migration has to be
 applied before `dotnet run` works again. Two more things about generated migrations. `dotnet ef`
@@ -133,10 +150,12 @@ dotnet user-secrets set "Database:ConnectionString" \
 
 `db/init/01-schema.sh` builds the database. It runs **once**, on the first start of an empty volume, so editing it has no effect until the volume is recreated (`docker compose down -v && docker compose up -d` — this deletes all data).
 
+**It creates no tables.** It makes only what a migration tool cannot make for itself: the `vector` extension, the two login roles, the two schemas and who owns them. Every table is then its owner's migration tool's: EF Core for `trading`, Alembic for `agent`. That is what makes "runs once" harmless — nothing in that file changes as the schemas grow. On a fresh volume, `docker compose up -d` therefore leaves an empty `agent` schema until `uv run alembic upgrade head` has run.
+
 | Schema | Owner | Holds |
 |---|---|---|
 | `trading` | `engine_svc` | `portfolios`, `positions`, `orders`, `decisions`, `signal_outcomes` and the `hit_rate` view, through EF Core |
-| `agent` | `agent_svc` | `agent.agent_memories` — pgvector semantic memory |
+| `agent` | `agent_svc` | `agent.agent_memories` — pgvector semantic memory, through Alembic |
 
 Each role owns its schema, so its migration tool can create tables there, and has **no access to the other's** — not even to see what tables exist. Neither can create anything in `public`. Only the two roles and the superuser may connect. The `vector` extension stays in `public`, because `pgvector.asyncpg.register_vector` looks it up there.
 
@@ -157,6 +176,8 @@ days are different measurements. A row that could never be measured is still a r
 reason and null returns, so the sweep stops retrying it and the report still knows it existed.
 `trading.hit_rate` is the minimum report: hit rate against the index per `team_version`,
 conviction tier and stance, with gross and net edge side by side.
+
+`agent` is Alembic's, migrated from `src/agents/migrations/versions`, with its version table inside the same schema. `agent_svc`'s `search_path` already resolves there, so naming it is not what makes it work — it is what stops the location depending on a role attribute set once, by a script that runs once. A database that predates the migrations holds the table but no version row, and is `alembic stamp <revision>`-ed rather than migrated.
 
 `agent.agent_memories` has a `bigint` identity key, a `NOT NULL` 768-dimensional `embedding`, and an HNSW index with `vector_cosine_ops`. `MemoryStore.search` ranks rows by cosine distance (`<=>`), filtered by ticker. Always schema-qualify table names.
 
