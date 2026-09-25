@@ -13,8 +13,10 @@ something**: 21 signals scored at one trading day, and
 `trading.hit_rate` has rows in it for the first time. The machinery is now complete end to
 end - decisions are stored, the portfolio survives a restart, a sweep scores every signal
 whose horizon has passed, and the engine posts what it measured to the agent service, which
-keeps its own copy. What is left, once 6b lands, is **the baseline - which is a matter
-of waiting** and the one thing that cannot be built.
+keeps its own copy. What is left once 6b lands is **not** what this file said for two
+days. Waiting does not produce a baseline: the team contradicts itself on identical input, a
+cycle every fifteen seconds re-asks one question, and the population is two instruments. See
+**finding G**. The next step is **stage 5**, which is what makes a baseline possible.
 
 ## Resuming checklist
 
@@ -67,7 +69,7 @@ Two things that are easy to misread as broken:
 - **Python writes down what its agents were given.** `agent.analysis_runs` and `agent.step_outputs` hold the fact sheet an analysis started from and each step's answer - 8 runs and 24 step rows after one engine session, which is three steps per run exactly as the team specifies.
 - **Memory is wired in and correctly empty.** 8 runs are embedded; none of them has a measured outcome yet, so `recall` answers *"Inga tidigare analyser av AAPL har hunnit mätas färdigt."* - which is the designed behaviour rather than a fault. Worth knowing: **the first 21 measurements can never become memory**, because the analyses behind them predate the journal. Memory starts from the runs journalled since PR 6a, and the first becomes recallable when its one-trading-day horizon is measured.
 - **There are two teams now.** `default` (`b1234878670a`) is the baseline and reads no memory. `default-memory` (`79dfb7307b57`) is the same team with its risk manager shown past measured analyses. `Trading:TeamId` stays `default`; the memory team was run once by environment override to prove it works, which is where those 8 embedded runs came from.
-- **The model asks for horizons of a year.** Of 21 signals, nine say 365 days and seven say 180, although the prompt asks for a short-term thesis. The fixed horizons of 1, 5 and 20 trading days still make a baseline possible, but the model's *own* horizon will not be measurable until 2027 and is close to useless as a measure of whether it can judge time. That is a prompt problem, found before a single measurement - which is what stage 4 is for.
+- **The model asks for horizons of a year.** Of 21 signals, nine say 365 days and seven say 180, although the prompt asks for a short-term thesis. The fixed horizons of 1, 5 and 20 trading days are still the right measurement - though **finding G** is why they are not enough on their own - and the model's *own* horizon will not be measurable until 2027 and is close to useless as a measure of whether it can judge time. That is a prompt problem, found before a single measurement - which is what stage 4 is for.
 - **The engine trades two instruments.** `Trading:Tickers` is AAPL and MSFT, so a cycle is two analyses and the quote endpoint is used in a real run rather than only by tests.
 - **The `trading` schema is live and has real rows in it.** Runs on 2026-09-24 opened the account at 10 000 USD and bought one AAPL at 337.445 and one MSFT at 497.56, with a second engine process picking the same portfolio up rather than opening another. The local database has **all three** engine migrations and **all three** Alembic revisions applied, so it is ahead of `master` until PR 6a lands. Delete the rows with `TRUNCATE trading.signal_outcomes, trading.decisions, trading.orders, trading.positions, trading.portfolios RESTART IDENTITY CASCADE` if a clean baseline matters; the append-only triggers deliberately do not block that.
 - **The engine now needs `Database:ConnectionString`** or it refuses to start. It is in the user secrets store on this machine, set 2026-09-23. `dotnet user-secrets list --project src/engine` prints it, so do not run that where anyone can see the screen.
@@ -122,19 +124,31 @@ all land in PR 4, and are repeated here so they are not re-derived from scratch.
 The pool leak in `memory.py` that the roadmap lists under PR 6 was already fixed: all three
 methods use `async with self._pool.acquire()`. Found by reading, not by testing.
 
-**After PR 5, the baseline is a deliverable, not a by-product.** The thin three-step team has to
-run long enough to produce measured outcomes at the fixed horizons before anything is added to
-it. Without that, nobody can say whether a news agent helped or only cost tokens - the same
-reasoning that made the review rounds conditional in PR #11. A `team_version` with outcomes at
-the fixed horizons is part of the stage's definition of done.
+**The baseline is a deliverable, not a by-product.** Nobody can say whether a news agent
+helped or only cost tokens without one - the same reasoning that made the review rounds
+conditional in PR #11 - and a `team_version` with outcomes at the fixed horizons is part of
+the stage's definition of done.
+
+What this said until 2026-09-25 was that the team "has to run long enough". **That was the
+wrong shape of the problem.** Long enough on two instruments, re-asked every fifteen seconds,
+with a model that answers the same fact sheet three different ways, is not a baseline however
+long it runs. See **finding G**. What a baseline needs is a population, and a population is
+what stage 5 builds.
 
 Before stage 5, turn finding D's currency mismatch into an outcome rather than a throw.
 
-### Next up: the baseline, which is only waiting
+### Next up: stage 5, because waiting does not work
 
-**Stage 4's code is done** once PR 6b lands. Nothing else in the stage is a pull request;
-what remains is letting the thin team run until the 5- and 20-trading-day horizons have
-measurements worth grouping.
+**Stage 4's code is done** once PR 6b lands. Nothing else in the stage is a pull request -
+but what remains is not a matter of waiting, which is what **finding G** corrects. The rows
+already written show the team giving BUY, HOLD *and* SELL on one fact sheet, 36 signals
+across four (instrument, trading day) pairs, and nothing scheduling the engine at all.
+
+So the order is: merge 6b, settle the model and the prompt's horizons together (both change
+`team_version`, and both are free today at four independent events), then **stage 5** - the
+universe, one analysis per fact-sheet change, and the shortlist stored so the question that
+decides the project can be asked. Stage 8's condition survives untouched, because stage 5
+does not touch the team.
 
 **What 6b settled** (decisions taken 2026-09-25, all four the recommended way, then a fifth
 forced by a live run):
@@ -161,27 +175,32 @@ the working is already there. Nearly unreachable, one line to fix.
 
 ### And then the part that is not code
 
-**The baseline is a deliverable.** The thin three-step team has to run long enough to produce
-measured outcomes at the fixed horizons before anything is added to it. As of 2026-09-25 it
-has **started**: 21 signals measured at one trading day. One day is not a baseline - the 5 and
-20 trading-day horizons are where a comparison starts to mean something, and those are a week
-and a month away. Until then, no comparison between team versions means anything.
+**The baseline is a deliverable, and it is not a waiting game.** It was written here as one
+for two days; finding G is why that was wrong. What a baseline needs is a population, and
+21 measured rows across four (instrument, trading day) pairs is not one - especially when the
+team gives three different answers to the same fact sheet.
 
-Two things worth fixing before the baseline is taken seriously:
+Two things to settle before stage 5, and they belong in one change because both move
+`team_version`:
 
-- **The model's horizons are absurd.** Nine of 21 signals ask for 365 days. The fixed
-  horizons still work, but the model's own is unmeasurable for a year. That is a prompt to
-  change - and changing it changes `team_version`, which is exactly the point of hashing it.
-- **`llama3.2` at 3B.** The roadmap has said from the start that a larger model or Claude
-  would reason better. A baseline measured on a model nobody intends to keep is a baseline
-  that measures the wrong thing, so it is worth deciding *which* model the baseline is of
-  before letting it run for a fortnight.
+- **`llama3.2` at 3B contradicts itself.** No longer a suspicion: MSFT at 516.57 got BUY,
+  HOLD and SELL on the same data. The roadmap has said from the start that a larger model or
+  Claude would reason better; switching is one environment variable, `TAS_LLM__DEFAULT__*`.
+  A baseline of a model that disagrees with itself measures sampling noise.
+- **The model's horizons are absurd.** Nine of 21 signals ask for 365 days despite a prompt
+  asking for a short-term thesis. The fixed horizons still work, but the model's own is
+  unmeasurable for a year - and it is the one number that would show whether it can judge
+  time at all.
+
+Doing both now costs four independent events. Doing them after stage 5 has been running for a
+month costs a month.
 
 ## Open findings
 
-Six findings from a review of the repository on 2026-09-20. Every one was reproduced before it
-was written down, and the reproduction is the *Verified* line. They live here rather than in the
-roadmap on purpose: the plan should change when a stage starts, not every time a finding arrives.
+Six findings from a review of the repository on 2026-09-20, and one from reading the data on
+2026-09-25. Every one was reproduced before it was written down, and the reproduction is the
+*Verified* line. They live here rather than in the roadmap on purpose: the plan should change
+when a stage starts, not every time a finding arrives.
 
 | | Finding | Status |
 |---|---|---|
@@ -191,6 +210,7 @@ roadmap on purpose: the plan should change when a stage starts, not every time a
 | D | A currency mix is reported as a bug, not as an outcome | **Fixed** in PR #23 |
 | E | There is no trading calendar anywhere in the plan | **Fixed** in stage 4's PR 4 |
 | F | Outcome measurement ignores transaction costs | **Fixed** in stage 4's PR 4 |
+| G | The team contradicts itself on identical input, so waiting cannot produce a baseline | **Open** - decides what happens before stage 5 |
 
 ### A — a failed analysis is sent twice (fixed, PR #17)
 
@@ -356,6 +376,54 @@ entire difference between a positive and a negative edge, so the measurement wil
 overstate the agents — in precisely the number that is supposed to decide whether the project is
 worth continuing. A cost model belongs in the outcome function from the start; it is a pure
 function and therefore an ideal test-first target.
+
+### G — the team contradicts itself on identical input (open)
+
+**Found 2026-09-25**, by querying the rows the engine has already written rather than by
+reading code. It is the most useful thing in the database, and it invalidates a plan this
+file repeated for two days.
+
+*Verified:* group `trading.decisions` by symbol and `reference_price` - the same price means
+the same fact sheet, since the sheet is computed from the same snapshot.
+
+| Instrument | Price | Signals | Stance on identical input |
+|---|---|---|---|
+| MSFT | 516.57 | 4 | **BUY, HOLD and SELL** |
+| MSFT | 497.56 | 5 | BUY, HOLD, conviction 0.50-0.80 |
+| AAPL | 337.715 | 7 | BUY, HOLD |
+
+The whole population is 36 signals with a stance, across **four** (instrument, trading day)
+pairs. Running a cycle every fifteen seconds produced fourteen AAPL signals on one fact
+sheet, and all fourteen get the same measured outcome - so 21 measured rows are about four
+independent events. "15 of 16 BUYs hit" is really "both shares rose on one day".
+
+**Why it matters more than it looks.** This file has said since 2026-09-24 that the baseline
+is a deliverable that can only be waited for. That is wrong, on three counts and in that
+order of severity:
+
+1. The team disagrees with itself on the same input, so no amount of data separates it from
+   chance. This is a measurement of `llama3.2` at 3B, not of the market.
+2. The measurements are not independent. A cycle every fifteen seconds re-asks one question.
+3. The population is two instruments.
+
+And a practical fourth: nothing runs the engine. It is started by hand for a minute or two at
+a time, so even the waiting is not happening.
+
+**What it changes.** Stage 5 is not a detour around the baseline, it is what makes one
+possible - a universe of 30-50 instruments, one analysis per instrument per fact-sheet change,
+and the shortlist stored so the question that decides the project can be asked. The roadmap
+already said so: *"det här är steget från 'bedöm AAPL var 15:e sekund' till målet"*. Stage 8's
+condition is untouched, because stage 5 does not touch the team.
+
+**What to settle first**, while both are still free: the model, and the prompt's horizons.
+Both change `team_version`, so they belong in one change - and doing them now costs four
+independent events rather than a month of them.
+
+**One thing stage 5 has to carry.** Nothing in `decisions` records *how* an instrument was
+chosen. After stage 5 there will be two regimes under one `team_version` - "AAPL every
+fifteen seconds" and "screened shortlist" - and no way to tell them apart afterwards. The
+shortlist is stored per cycle by the roadmap's own design; the decision row also needs to say
+which regime produced it. That is one column, and it is free now.
 
 ### Considered and rejected for now
 
