@@ -1465,9 +1465,11 @@ steps* rather than here, because they are still being spent.
      SELL of nothing held that is `NotSized`, a SELL that fetched no quotes, and a worker test
      that the exits run first. `TradingWorkerPersistenceTests` builds its own container and will
      need `AddTransient<ApplyExitsUseCase>()`.
-  5. Then: fold this worklog commit into commit 4 with `git reset --soft HEAD~1` so the pull
-     request stays at four, re-run every CI step in a throwaway `git worktree --detach`, push,
-     and open the PR from the compare URL.
+  5. Then: re-run every CI step in a throwaway `git worktree --detach`, push, and open the PR
+     from the compare URL. **Do not fold this worklog commit into commit 4** - the branch was
+     pushed on 2026-09-26 to keep the work off one machine, so rewriting it now would need a
+     force-push, which needs asking first. The pull request carries five commits instead of
+     four, and that is the cheaper of the two prices.
 
   **Still open on this branch**, and worth deciding rather than discovering: the exits can only
   reach the gate through prices the reader already validated, so the gate's own price-age and
