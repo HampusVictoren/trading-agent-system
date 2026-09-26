@@ -25,12 +25,17 @@ from app.domain.screening import (
     risk_adjusted_momentum,
     score_candidate,
 )
+from app.domain.signals import EquityInstrument
 
 START = date(2026, 1, 1)
 
 # Comfortably below any turnover the fixtures produce, so a test about momentum is not
 # quietly a test about liquidity.
 NO_FLOOR = 0.0
+
+
+def equity(symbol: str) -> EquityInstrument:
+    return EquityInstrument(type="equity", symbol=symbol)
 
 
 def bars(
@@ -162,15 +167,15 @@ class TestAnInstrumentIsEitherRankedOrRefusedForAStatedReason:
         # The figures travel with the score because a ranking nobody can check is a ranking
         # nobody will question - and because the engine stores them per cycle, which is what
         # makes "did the agents beat the screen?" answerable later.
-        result = score_candidate("AAPL", a_rankable_series(), min_dollar_volume=NO_FLOOR)
+        result = score_candidate(equity("AAPL"), a_rankable_series(), min_dollar_volume=NO_FLOOR)
 
         assert isinstance(result, Candidate)
-        assert result.symbol == "AAPL"
+        assert result.instrument.symbol == "AAPL"
         assert result.median_dollar_volume > 0
         assert result.volatility_30d > 0
 
     def test_a_series_too_short_for_the_momentum_horizon_is_refused_by_name(self):
-        result = score_candidate("NEW", bars(100.0, 101.0), min_dollar_volume=NO_FLOOR)
+        result = score_candidate(equity("NEW"), bars(100.0, 101.0), min_dollar_volume=NO_FLOOR)
 
         assert isinstance(result, Rejection)
         assert str(MOMENTUM_DAYS) in result.reason
@@ -183,7 +188,7 @@ class TestAnInstrumentIsEitherRankedOrRefusedForAStatedReason:
             for offset in range(4)
         )
 
-        result = score_candidate("THIN", sparse, min_dollar_volume=NO_FLOOR)
+        result = score_candidate(equity("THIN"), sparse, min_dollar_volume=NO_FLOOR)
 
         assert isinstance(result, Rejection)
         assert str(VOLATILITY_WINDOW + 1) in result.reason
@@ -192,14 +197,16 @@ class TestAnInstrumentIsEitherRankedOrRefusedForAStatedReason:
         # The reason names the turnover and the floor, so a universe that suddenly shrinks
         # can be diagnosed from the response rather than from the source.
         result = score_candidate(
-            "TINY", a_rankable_series(close=1.0, volume=10), min_dollar_volume=1_000_000
+            equity("TINY"), a_rankable_series(close=1.0, volume=10), min_dollar_volume=1_000_000
         )
 
         assert isinstance(result, Rejection)
         assert "1000000" in result.reason.replace(" ", "")
 
     def test_a_share_with_no_volumes_at_all_is_refused_before_the_floor_is_applied(self):
-        result = score_candidate("DARK", a_rankable_series(volume=None), min_dollar_volume=NO_FLOOR)
+        result = score_candidate(
+            equity("DARK"), a_rankable_series(volume=None), min_dollar_volume=NO_FLOOR
+        )
 
         assert isinstance(result, Rejection)
         assert "volume" in result.reason
@@ -208,7 +215,7 @@ class TestAnInstrumentIsEitherRankedOrRefusedForAStatedReason:
 class TestTheShortlistIsDeterministic:
     def candidate(self, symbol: str, score: float) -> Candidate:
         return Candidate(
-            symbol=symbol,
+            instrument=equity(symbol),
             score=score,
             return_3m=0.1,
             volatility_30d=0.2,
@@ -221,7 +228,7 @@ class TestTheShortlistIsDeterministic:
             limit=3,
         )
 
-        assert [c.symbol for c in shortlist] == ["B", "C", "A"]
+        assert [c.instrument.symbol for c in shortlist] == ["B", "C", "A"]
 
     def test_only_the_limit_is_returned(self):
         shortlist = rank([self.candidate(s, float(i)) for i, s in enumerate("ABCDE")], limit=2)
@@ -234,7 +241,7 @@ class TestTheShortlistIsDeterministic:
         first = rank([self.candidate("Z", 1.0), self.candidate("A", 1.0)], limit=2)
         second = rank([self.candidate("A", 1.0), self.candidate("Z", 1.0)], limit=2)
 
-        assert [c.symbol for c in first] == ["A", "Z"]
+        assert [c.instrument.symbol for c in first] == ["A", "Z"]
         assert first == second
 
     def test_asking_for_more_than_exists_returns_what_exists(self):

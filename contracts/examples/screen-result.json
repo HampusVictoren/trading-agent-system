@@ -1,0 +1,29 @@
+{
+  "candidates": [
+    {
+      "instrument": { "type": "equity", "symbol": "NVDA" },
+      "score": 1.421,
+      "return_3m": 0.2842,
+      "volatility_30d": 0.2,
+      "median_dollar_volume": 41250000.0
+    },
+    {
+      "instrument": { "type": "equity", "symbol": "AAPL" },
+      "score": 0.5714,
+      "return_3m": 0.08,
+      "volatility_30d": 0.14,
+      "median_dollar_volume": 12480000.0
+    }
+  ],
+  "rejected": [
+    {
+      "instrument": { "type": "equity", "symbol": "MSFT" },
+      "reason": "no close from 90 days ago to compare against"
+    },
+    {
+      "instrument": { "type": "equity", "symbol": "TINY" },
+      "reason": "typical daily turnover 41000 is below the 5000000 floor"
+    }
+  ],
+  "as_of": "2026-09-26T13:45:02.117000Z"
+}

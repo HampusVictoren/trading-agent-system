@@ -30,13 +30,14 @@ from collections.abc import Sequence
 from datetime import date
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from app.domain.facts import (
     DERIVED_PRECISION,
     annualised_volatility,
     trailing_return,
 )
+from app.domain.signals import Instrument
 
 # The window the liquidity figure is measured over, in bars. Thirty trading days is about a
 # calendar month, long enough that one quiet week does not disqualify a share.
@@ -51,6 +52,13 @@ MIN_LIQUIDITY_BARS = LIQUIDITY_WINDOW // 2
 # divided by, in bars. Three months is long enough to be a trend rather than a week's news.
 MOMENTUM_DAYS = 90
 VOLATILITY_WINDOW = 30
+
+# Caps mirrored in contracts/screen.schema.json. The universe is bounded because a request
+# is a unit of work with a timeout rather than a bulk load - the same reasoning as the
+# outcome batch's 500 - and the shortlist because it bounds a cycle's LLM cost.
+MAX_UNIVERSE = 100
+MAX_SHORTLIST = 50
+MAX_REASON_LENGTH = 200
 
 
 class ScreeningBar(BaseModel):
@@ -86,11 +94,16 @@ class Candidate(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    symbol: str
+    # The instrument rather than a bare symbol, so this type *is* what the contract carries
+    # and nothing maps between a domain shape and a wire shape. It is echoed from the
+    # request, never rebuilt from the provider's response, so a symbol in an answer is
+    # always one that passed validation - the same rule the quote endpoints follow.
+    instrument: Instrument
+
     score: float
     return_3m: float
     volatility_30d: float
-    median_dollar_volume: float
+    median_dollar_volume: Annotated[float, Field(ge=0)]
 
 
 class Rejection(BaseModel):
@@ -102,8 +115,8 @@ class Rejection(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    symbol: str
-    reason: str
+    instrument: Instrument
+    reason: Annotated[str, Field(min_length=1, max_length=MAX_REASON_LENGTH)]
 
 
 def median_dollar_volume(
@@ -142,7 +155,7 @@ def risk_adjusted_momentum(momentum: float, volatility: float) -> float | None:
 
 
 def score_candidate(
-    symbol: str, bars: Sequence[ScreeningBar], *, min_dollar_volume: float
+    instrument: Instrument, bars: Sequence[ScreeningBar], *, min_dollar_volume: float
 ) -> Candidate | Rejection:
     """One instrument in, either a ranked candidate or a stated reason it is not one.
 
@@ -152,24 +165,27 @@ def score_candidate(
     momentum = trailing_return(bars, days=MOMENTUM_DAYS)
     if momentum is None:
         return Rejection(
-            symbol=symbol, reason=f"no close from {MOMENTUM_DAYS} days ago to compare against"
+            instrument=instrument,
+            reason=f"no close from {MOMENTUM_DAYS} days ago to compare against",
         )
 
     volatility = annualised_volatility(bars, window=VOLATILITY_WINDOW)
     if volatility is None:
         return Rejection(
-            symbol=symbol, reason=f"fewer than {VOLATILITY_WINDOW + 1} closes to measure volatility"
+            instrument=instrument,
+            reason=f"fewer than {VOLATILITY_WINDOW + 1} closes to measure volatility",
         )
 
     turnover = median_dollar_volume(bars)
     if turnover is None:
         return Rejection(
-            symbol=symbol, reason=f"fewer than {MIN_LIQUIDITY_BARS} days report a volume"
+            instrument=instrument,
+            reason=f"fewer than {MIN_LIQUIDITY_BARS} days report a volume",
         )
 
     if turnover < min_dollar_volume:
         return Rejection(
-            symbol=symbol,
+            instrument=instrument,
             reason=(
                 f"typical daily turnover {turnover:.0f} is below the {min_dollar_volume:.0f} floor"
             ),
@@ -177,10 +193,13 @@ def score_candidate(
 
     score = risk_adjusted_momentum(momentum, volatility)
     if score is None:
-        return Rejection(symbol=symbol, reason="the close has not moved, so there is no volatility")
+        return Rejection(
+            instrument=instrument,
+            reason="the close has not moved, so there is no volatility",
+        )
 
     return Candidate(
-        symbol=symbol,
+        instrument=instrument,
         score=score,
         return_3m=momentum,
         volatility_30d=volatility,
@@ -195,5 +214,39 @@ def rank(candidates: Sequence[Candidate], *, limit: int) -> tuple[Candidate, ...
     shortlist. Without that, two instruments with an identical score would swap places
     between cycles and the engine would see a new shortlist with no new information in it.
     """
-    ordered = sorted(candidates, key=lambda candidate: (-candidate.score, candidate.symbol))
+    ordered = sorted(
+        candidates, key=lambda candidate: (-candidate.score, candidate.instrument.symbol)
+    )
     return tuple(ordered[:limit])
+
+
+class ScreenRequest(BaseModel):
+    """What the engine asks for. Every policy figure travels with it.
+
+    The universe is in the request rather than in this service's configuration, because the
+    engine owns what it trades. Two things follow from that, and both are the reason:
+    `/v1/screen` becomes a pure function of its input, with nothing hidden behind it; and a
+    shortlist stored per cycle can be reproduced from the request that produced it, which is
+    what stage 5's own question needs.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    universe: Annotated[tuple[Instrument, ...], Field(min_length=1, max_length=MAX_UNIVERSE)]
+    limit: Annotated[int, Field(ge=1, le=MAX_SHORTLIST)]
+    min_dollar_volume: Annotated[float, Field(ge=0)]
+    correlation_id: Annotated[str, Field(min_length=1, max_length=64)]
+
+
+class ScreenResult(BaseModel):
+    """The shortlist, what was left out, and when the ranking was computed."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    candidates: Annotated[tuple[Candidate, ...], Field(max_length=MAX_SHORTLIST)]
+
+    # Uncapped, unlike the shortlist: the universe is already bounded, and a run where
+    # everything was rejected is exactly the run whose reasons you need in full.
+    rejected: tuple[Rejection, ...]
+
+    as_of: AwareDatetime
