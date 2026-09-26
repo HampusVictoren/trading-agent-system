@@ -1331,6 +1331,40 @@ steps* rather than here, because they are still being spent.
     about. `TOOLONGSYMBOL` (13), `toolongsymbol` (13) and `ABCDEFGHIJK` (11) all sat in
     "refuses" lists and all became valid symbols the moment the cap moved.
 
+  - **The branch as first pushed would not have run.** Every symbol column in both schemas was
+    `varchar(10)` while the pattern now allows 16, so `XACT-OMXS30.ST` at 14 characters would
+    have made every sweep fail with `22001: value too long for type character varying(10)` and
+    `POST /v1/outcomes` refuse every row - nightly, in the one job nobody watches. Found by a
+    test written for something else, which stored the real benchmark. Six columns widened
+    across two migration tools, and the guards are round trips against real columns, because
+    nothing else would have caught it: no test in either suite had ever written a symbol longer
+    than four characters to a column. Mutation-tested both ways.
+
+  - **`trading.hit_rate` groups by `benchmark_symbol` now**, which is a latent defect closed by
+    the change that would have triggered it. The unique index is on `(decision_id,
+    horizon_unit, horizon_days)`, so one decision cannot carry two benchmarks at one horizon -
+    but two decisions alike in every column the view groups by certainly can, and they pooled
+    into one hit rate. Postgres then refuses to alter a column a view selects, so the widening
+    had to drop and rebuild the view around itself: a dependency this branch created for itself
+    one migration earlier.
+
+  - *Verified live, end to end.* The reset ran, the service came up on unchanged team versions
+    - the currency touches nothing in the hash - and the engine traded. Three decisions under
+    `5926c629dcbe`, all `reference_currency = SEK`: ERIC-B.ST HOLD, VOLV-B.ST HOLD, then
+    ERIC-B.ST BUY at conviction 0.60 for **26 shares at 94.96 kr**. 26 x 94.96 = 2 468.96 and
+    the cash balance is 100 000 - 2 468.96 = 97 531.04, which checks out - and 26 is exactly
+    what the half conviction tier predicts at a 5 000 kr headroom, where 10 000 kr would have
+    bought 2. The opening-balance argument is therefore measured rather than reasoned. The
+    sweep found 123 horizons not due and measured none, which is right. The journal took four
+    Swedish runs.
+
+  - **Finding G's count 1 is improved, not closed.** The same fact sheet - ERIC-B.ST at 94.96 -
+    answered HOLD at conviction 0.50 and then BUY at 0.60 within two minutes. Temperature 0
+    removed the draw, and this is the residue documented in PR 2 of the model change: Ollama is
+    byte-identical only when the preceding request state is identical, and a cycle sends three
+    different prompts. So the decision is *more* stable than `llama3.2`'s BUY/HOLD/SELL without
+    being stable.
+
   - **Two mistakes of my own, both from replacing text without reading its context.** A blanket
     `"USD"` to `Money.DefaultCurrency` rewrite hit a JSON payload inside a raw string literal
     and produced an unquoted `"currency":Money.DefaultCurrency`; it is now a constant
@@ -1344,6 +1378,12 @@ steps* rather than here, because they are still being spent.
 ## Lessons and gotchas
 
 Things that cost time or were not obvious. Most are also recorded where they apply.
+
+**Widths, and the tests that never wrote anything wide**
+- **Widening a validation rule is not widening the column behind it.** The symbol pattern went from 10 characters to 16 for Swedish tickers, and six database columns across two schemas stayed at `varchar(10)`. The first real write would have been `22001: value too long for type character varying(10)` - and for the benchmark it would have been every night, in the sweep. Grep for every column that holds the value, not only the places that validate it.
+- **A suite can be green because it never used the interesting value.** No test in either service had written a symbol longer than four characters to a real column, so nothing noticed. The guard that works is a round trip at the maximum the rule admits, and it belongs next to the column rather than next to the rule.
+- **A migration that widens in place cannot always be reversed.** Narrowing refuses while a stored value needs the extra width, which is correct - losing information quietly is worse than stopping - but it means a test fixture running `downgrade base` has to clear the tables first. Append-only tables cannot be cleared by a `DELETE`, and `TRUNCATE` is the statement the triggers deliberately allow.
+- **Postgres refuses to alter the type of a column a view selects.** Adding a column to a view's grouping and widening that column in the next migration is a dependency you created for yourself; the widening has to drop and rebuild the view around itself.
 
 **Verifying an external symbol**
 - **Check a benchmark on every path it is used on, not the convenient one.** `XACT-OMXS30.ST` works through `yf.download`, which is what the screen uses - but the nightly sweep reaches it through the per-instrument fetch, which raises `InstrumentNotFound` when `.info` carries no price. A benchmark that worked on one path and not the other would have failed at night, in the one job nobody is watching.
