@@ -56,11 +56,24 @@ public sealed class RiskPolicyOptions
     [Range(0, 30)]
     public int? MinHoldingPeriodDays { get; init; }
 
+    /// <summary>
+    /// How far below what it cost a holding may fall before the engine sells it without asking.
+    /// </summary>
+    /// <remarks>
+    /// Not nullable, unlike the two above, because zero is not a value anybody could mean: it
+    /// would sell every holding that was not up. So the default of zero being outside the range
+    /// is exactly the check a missing key needs. The ceiling is half, above which a stop-loss
+    /// would let a position halve before acting and would not be one.
+    /// </remarks>
+    [Range(typeof(decimal), "0.01", "0.5", ParseLimitsInInvariantCulture = true, ConvertValueInInvariantCulture = true)]
+    public decimal StopLossPercentage { get; init; }
+
     /// <summary>The same limits in the domain's own terms, which guards them a second time.</summary>
     public RiskPolicy ToRiskPolicy() =>
         new(
             MaxPositionPercentage,
             CashBufferPct!.Value,
             TimeSpan.FromSeconds(MaxQuoteAgeSeconds),
-            TimeSpan.FromDays(MinHoldingPeriodDays!.Value));
+            TimeSpan.FromDays(MinHoldingPeriodDays!.Value),
+            StopLossPercentage);
 }

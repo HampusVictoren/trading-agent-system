@@ -43,7 +43,9 @@ builder.Services.AddTradingDatabase();
 builder.Services.Configure<TelemetryOptions>(options =>
     options.SeverityProvider = _ => ResilienceEventSeverity.Information);
 
+builder.Services.AddTransient<HoldingQuoteReader>();
 builder.Services.AddTransient<ProcessProposalUseCase>();
+builder.Services.AddTransient<ApplyExitsUseCase>();
 builder.Services.AddTransient<MeasureOutcomesUseCase>();
 builder.Services.AddTransient<ReportOutcomesUseCase>();
 

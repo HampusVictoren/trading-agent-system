@@ -75,6 +75,7 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
                 ["RiskPolicy:MaxPositionPercentage"] = "0.05",
                 ["RiskPolicy:CashBufferPct"] = "0.10",
                 ["RiskPolicy:MinHoldingPeriodDays"] = "3",
+                ["RiskPolicy:StopLossPercentage"] = "0.10",
                 ["RiskPolicy:MaxQuoteAgeSeconds"] = "300",
                 ["Trading:Tickers:0"] = Symbol,
                 ["Trading:CycleIntervalSeconds"] = "3600",
@@ -93,6 +94,7 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
         services.AddSingleton<TimeProvider>(new FixedClock(Now));
         services.AddSingleton(agents);
         services.AddTradingDatabase();
+        services.AddTransient<HoldingQuoteReader>();
         services.AddTransient<ProcessProposalUseCase>();
 
         return services.BuildServiceProvider();

@@ -8,38 +8,37 @@ using Engine.Domain.Risk;
 using Engine.Domain.Signals;
 using Engine.Domain.ValueObjects;
 using Engine.Hosting.Options;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 public class ProcessProposalUseCase
 {
     private readonly IAgentClient _agentClient;
+    private readonly HoldingQuoteReader _quotes;
     private readonly IDecisionLog _decisions;
     private readonly PositionSizer _sizer;
     private readonly RiskEngine _riskEngine;
     private readonly RiskPolicy _policy;
     private readonly TradingOptions _trading;
     private readonly TimeProvider _clock;
-    private readonly ILogger<ProcessProposalUseCase> _logger;
 
     public ProcessProposalUseCase(
         IAgentClient agentClient,
+        HoldingQuoteReader quotes,
         IDecisionLog decisions,
         PositionSizer sizer,
         RiskEngine riskEngine,
         RiskPolicy policy,
         IOptions<TradingOptions> trading,
-        TimeProvider clock,
-        ILogger<ProcessProposalUseCase> logger)
+        TimeProvider clock)
     {
         _agentClient = agentClient;
+        _quotes = quotes;
         _decisions = decisions;
         _sizer = sizer;
         _riskEngine = riskEngine;
         _policy = policy;
         _trading = trading.Value;
         _clock = clock;
-        _logger = logger;
     }
 
     /// <summary>
@@ -149,7 +148,11 @@ public class ProcessProposalUseCase
         // order is never sized against a quote the agents never saw. Everything else the
         // portfolio holds is asked for here, because the position limit is a share of the
         // portfolio's value and a holding without a price makes that value unknowable.
-        var prices = await PricesForOtherHoldingsAsync(portfolio, requested, request, cancellationToken);
+        var quotes = await _quotes.ForHoldingsAsync(
+            portfolio, request.AsOf, request.CorrelationId, except: requested, cancellationToken);
+
+        var prices = quotes.Aggregate(
+            PriceSnapshot.Empty, (snapshot, quote) => snapshot.With(quote.Ticker, quote.Price));
 
         var intent = _sizer.Size(signal, portfolio, prices, _policy);
 
@@ -182,72 +185,6 @@ public class ProcessProposalUseCase
             new TradeDecisionResult.Executed(requested, order.Quantity, order.Price),
             signal,
             placed);
-    }
-
-    /// <summary>
-    /// A price for every other holding, from the agent service's quote endpoint. One call
-    /// each: the portfolio holds one or two instruments, and a batch endpoint designed before
-    /// there is a third would be designed from guesswork.
-    /// </summary>
-    /// <remarks>
-    /// A quote that cannot be fetched, or that is too old to trust, is simply left out. The
-    /// portfolio then cannot be valued and the sizer names the holding that stopped it -
-    /// which is the honest outcome, and one the engine already had a word for. Valuing a
-    /// holding at what it cost instead would overstate a loser, raising the position
-    /// allowance for everything else at exactly the wrong moment.
-    /// </remarks>
-    private async Task<PriceSnapshot> PricesForOtherHoldingsAsync(
-        Portfolio portfolio,
-        Ticker analysed,
-        TradeSignalRequestDto request,
-        CancellationToken cancellationToken)
-    {
-        var prices = PriceSnapshot.Empty;
-        var now = request.AsOf;
-
-        foreach (var position in portfolio.Positions.Where(held => held.Ticker != analysed))
-        {
-            var quote = await QuoteOrNothingAsync(position.Ticker, request.CorrelationId, cancellationToken);
-
-            if (quote is null)
-                continue;
-
-            if (!quote.IsUsableAt(now, _policy.MaxQuoteAge))
-            {
-                _logger.LogWarning(
-                    "The quote for {Ticker} is dated {AsOf:O}, which is outside the {Limit} s window.",
-                    position.Ticker.Value, quote.AsOf, _policy.MaxQuoteAge.TotalSeconds);
-                continue;
-            }
-
-            prices = prices.With(quote.Ticker, quote.Price);
-        }
-
-        return prices;
-    }
-
-    /// <summary>
-    /// A failed quote is not a failed cycle: the analysis already succeeded, and one holding
-    /// without a price is a sizing outcome rather than an error. It is logged, because the
-    /// outcome alone says a price was missing and not why.
-    /// </summary>
-    private async Task<InstrumentQuote?> QuoteOrNothingAsync(
-        Ticker ticker, string correlationId, CancellationToken cancellationToken)
-    {
-        try
-        {
-            var dto = await _agentClient.GetQuoteAsync(ticker.Value, correlationId, cancellationToken);
-            return dto is null ? null : QuoteMapper.ToDomain(dto);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw; // We are shutting down.
-        }
-        catch (Exception ex) when (ex is AgentServiceUnavailableException or AgentResponseInvalidException)
-        {
-            _logger.LogWarning(ex, "No usable quote for {Ticker} this cycle.", ticker.Value);
-            return null;
-        }
     }
 
     /// <summary>

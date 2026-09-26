@@ -41,8 +41,31 @@ public sealed record RiskPolicy
     /// </remarks>
     public TimeSpan MinHoldingPeriod { get; }
 
+    /// <summary>
+    /// How far a holding may fall below what it cost before it is sold without asking anyone.
+    /// </summary>
+    /// <remarks>
+    /// Measured against the average purchase price rather than the highest price since the
+    /// purchase, which is the other obvious choice. A trailing stop needs a high-water mark, and
+    /// the position does not have one: keeping it would mean a column updated every cycle from a
+    /// price the engine does not always manage to fetch, so a missed quote would quietly lower
+    /// the mark and the stop with it. The purchase price is a number the portfolio already knows
+    /// exactly, and it answers the question the thesis actually made: the shares were bought
+    /// because they were expected to rise, and they have not.
+    ///
+    /// Ten percent is set against how much these instruments move rather than against a feeling
+    /// about losses. Swedish large caps run at roughly 25-30 % annualised volatility, which is
+    /// about 1.8 % a day, so a two-sigma week is an eight percent move: a tighter stop would
+    /// mostly sell noise, and a looser one would not be a stop.
+    /// </remarks>
+    public decimal StopLossPct { get; }
+
     public RiskPolicy(
-        decimal maxPositionPct, decimal cashBufferPct, TimeSpan maxQuoteAge, TimeSpan minHoldingPeriod)
+        decimal maxPositionPct,
+        decimal cashBufferPct,
+        TimeSpan maxQuoteAge,
+        TimeSpan minHoldingPeriod,
+        decimal stopLossPct)
     {
         if (maxPositionPct <= 0m || maxPositionPct > 1m)
         {
@@ -72,9 +95,18 @@ public sealed record RiskPolicy
                 nameof(minHoldingPeriod), minHoldingPeriod, "A minimum holding period cannot be negative.");
         }
 
+        // Neither end is a stop. At zero every holding that is not up would be sold the moment
+        // it was priced; at one the price would have to reach zero first.
+        if (stopLossPct <= 0m || stopLossPct >= 1m)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(stopLossPct), stopLossPct, "A stop-loss must be a share above 0 and below 1.");
+        }
+
         MaxPositionPct = maxPositionPct;
         CashBufferPct = cashBufferPct;
         MaxQuoteAge = maxQuoteAge;
         MinHoldingPeriod = minHoldingPeriod;
+        StopLossPct = stopLossPct;
     }
 }

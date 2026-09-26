@@ -28,7 +28,8 @@ public class ProcessProposalUseCaseTests
 
     private static readonly RiskPolicy Policy =
         new(maxPositionPct: 0.05m, cashBufferPct: 0.10m, maxQuoteAge: TimeSpan.FromMinutes(5),
-            minHoldingPeriod: TimeSpan.FromDays(3));
+            minHoldingPeriod: TimeSpan.FromDays(3),
+        stopLossPct: 0.10m);
 
     private sealed class FixedClock(DateTimeOffset now) : TimeProvider
     {
@@ -104,10 +105,12 @@ public class ProcessProposalUseCaseTests
             TeamId = TeamId
         });
 
+        var quotes = new HoldingQuoteReader(client, Policy, NullLogger<HoldingQuoteReader>.Instance);
+
         return (
             new ProcessProposalUseCase(
-                client, decisions, new PositionSizer(), new RiskEngine(), Policy, options, new FixedClock(Now),
-                NullLogger<ProcessProposalUseCase>.Instance),
+                client, quotes, decisions, new PositionSizer(), new RiskEngine(), Policy, options,
+                new FixedClock(Now)),
             client,
             decisions);
     }

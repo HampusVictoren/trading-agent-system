@@ -18,6 +18,7 @@ public class EngineOptionsTests
         ["RiskPolicy:CashBufferPct"] = "0.10",
         ["RiskPolicy:MaxQuoteAgeSeconds"] = "300",
         ["RiskPolicy:MinHoldingPeriodDays"] = "3",
+        ["RiskPolicy:StopLossPercentage"] = "0.10",
         ["Trading:Tickers:0"] = "AAPL",
         ["Trading:CycleIntervalSeconds"] = "15",
         ["Trading:TeamId"] = "default",
@@ -100,6 +101,7 @@ public class EngineOptionsTests
         policy.CashBufferPct.ShouldBe(0.10m);
         policy.MaxQuoteAge.ShouldBe(TimeSpan.FromMinutes(5));
         policy.MinHoldingPeriod.ShouldBe(TimeSpan.FromDays(3));
+        policy.StopLossPct.ShouldBe(0.10m);
     }
 
     [Theory]
@@ -121,6 +123,19 @@ public class EngineOptionsTests
     {
         Resolve<RiskPolicyOptions>(("RiskPolicy:MinHoldingPeriodDays", "0")).ToRiskPolicy()
             .MinHoldingPeriod.ShouldBe(TimeSpan.Zero);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("0")]
+    [InlineData("0.6")]
+    public void A_stop_loss_outside_the_allowed_range_is_rejected(string? value)
+    {
+        // Not nullable, unlike the two settings above, because zero is not a value anybody
+        // could mean - it would sell every holding that was not up - so the default of zero
+        // being outside the range is exactly the check a missing key needs.
+        Should.Throw<OptionsValidationException>(
+            () => Resolve<RiskPolicyOptions>(("RiskPolicy:StopLossPercentage", value)));
     }
 
     [Theory]
