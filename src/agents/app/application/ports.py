@@ -6,6 +6,7 @@ asyncpg. The Protocol also means a fake in a test is a fake because it has the r
 shape, not because it inherits from anything.
 """
 
+from collections.abc import Mapping, Sequence
 from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel
@@ -13,6 +14,27 @@ from pydantic import BaseModel
 from app.application.journal import AnalysisRun
 from app.domain.facts import MarketSnapshot
 from app.domain.outcomes import MeasuredOutcome
+from app.domain.screening import ScreeningBar
+
+
+@runtime_checkable
+class UniverseData(Protocol):
+    """Bars for many instruments, in as few calls as the source allows.
+
+    Separate from `MarketDataProvider` because the shape of the question is different, and
+    the difference is the whole reason screening is affordable. That port is one call per
+    instrument and includes fundamentals, which yfinance fetches per symbol; this one asks
+    only for closes and volumes, which it will fetch for a whole list at once. Ranking fifty
+    instruments through the other port would be fifty round trips every cycle.
+
+    A symbol the source had no data for is **left out of the mapping** rather than raising,
+    so one delisted name in a universe of fifty does not cost the cycle its screen. A
+    failure to reach the source at all is different, and raises `MarketDataUnavailable`:
+    ranking against a fraction of the universe you asked for would be a shortlist that looks
+    like a judgement and is an outage.
+    """
+
+    async def histories(self, symbols: Sequence[str]) -> Mapping[str, tuple[ScreeningBar, ...]]: ...
 
 
 @runtime_checkable

@@ -1,0 +1,11 @@
+{
+  "universe": [
+    { "type": "equity", "symbol": "AAPL" },
+    { "type": "equity", "symbol": "MSFT" },
+    { "type": "equity", "symbol": "NVDA" },
+    { "type": "equity", "symbol": "TINY" }
+  ],
+  "limit": 2,
+  "min_dollar_volume": 5000000,
+  "correlation_id": "cycle-2026-09-26-1"
+}

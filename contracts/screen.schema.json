@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/HampusVictoren/trading-agent-system/contracts/screen.schema.json",
+  "title": "Screen",
+  "description": "What POST /v1/screen answers: a universe ranked without a single LLM call, and every instrument that was left out with the reason. The engine sends the universe rather than the agent service holding it, because the engine owns what it trades - which also makes this endpoint a pure function of its input, and a stored shortlist reproducible from the request that produced it.",
+  "type": "object",
+  "unevaluatedProperties": false,
+  "required": [
+    "candidates",
+    "rejected",
+    "as_of"
+  ],
+  "properties": {
+    "candidates": {
+      "description": "The shortlist, best first. Shorter than the requested limit when fewer instruments could be ranked, and empty when none could - a screen that finds nothing is a fact about the universe today rather than a failure.",
+      "type": "array",
+      "maxItems": 50,
+      "items": { "$ref": "#/$defs/candidate" }
+    },
+    "rejected": {
+      "description": "Every instrument that was looked at and left out, with the reason. Named rather than dropped: a universe that quietly shrinks is one where a systematic data failure reads, months later, as a decision not to hold anything in that sector.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/rejection" }
+    },
+    "as_of": {
+      "description": "When the ranking was computed. The factors are built from daily bars, so two screens on the same trading day rank the same way; this is what says which day's data a stored shortlist was chosen from.",
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "$defs": {
+    "instrument": {
+      "description": "Echoed from the request rather than rebuilt from the provider's response, so the symbol in an answer is always one that passed validation.",
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": [
+        "type",
+        "symbol"
+      ],
+      "properties": {
+        "type": { "const": "equity" },
+        "symbol": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9.\\-]{0,9}$"
+        }
+      }
+    },
+    "candidate": {
+      "description": "One ranked instrument, with the figures the score was computed from. The figures travel with the score because a ranking nobody can check is a ranking nobody will question - and because the engine stores them per cycle, which is what makes 'did the agents beat the screen that picked them?' answerable afterwards.",
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": [
+        "instrument",
+        "score",
+        "return_3m",
+        "volatility_30d",
+        "median_dollar_volume"
+      ],
+      "properties": {
+        "instrument": { "$ref": "#/$defs/instrument" },
+        "score": {
+          "description": "Risk-adjusted momentum: return_3m divided by volatility_30d. Deliberately simple, and the baseline the outcome measurement exists to improve on.",
+          "type": "number"
+        },
+        "return_3m": {
+          "description": "The fraction gained over the momentum horizon, from the last close at or before 90 days ago.",
+          "type": "number"
+        },
+        "volatility_30d": {
+          "description": "Annualised standard deviation of daily log returns over the last 30 bars. Always above zero: a close that has not moved is left out rather than ranked first.",
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "median_dollar_volume": {
+          "description": "Typical daily turnover - price times volume, the median over 30 bars. The median rather than the mean, because one results day can carry ten times a normal session and a mean would qualify a share that cannot be traded on any other day.",
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "rejection": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": [
+        "instrument",
+        "reason"
+      ],
+      "properties": {
+        "instrument": { "$ref": "#/$defs/instrument" },
+        "reason": {
+          "description": "Why it is not a candidate, in words a person reading a stored shortlist can act on. Capped for the same reason every other free-text field in these contracts is.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      }
+    },
+    "request": {
+      "description": "What the engine posts. Every policy figure travels with it rather than living in the agent service's configuration, so the answer depends on nothing the caller cannot see.",
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": [
+        "universe",
+        "limit",
+        "min_dollar_volume",
+        "correlation_id"
+      ],
+      "properties": {
+        "universe": {
+          "description": "Every instrument that may be considered. Capped because a request is a unit of work with a timeout rather than a bulk load - the same reasoning as the outcome batch.",
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "items": { "$ref": "#/$defs/instrument" }
+        },
+        "limit": {
+          "description": "How many candidates to return at most. The shortlist the engine will actually analyse, so it bounds the cycle's LLM cost.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50
+        },
+        "min_dollar_volume": {
+          "description": "The liquidity floor, as typical daily turnover in the instrument's own currency. An instrument below it is rejected with both numbers in the reason.",
+          "type": "number",
+          "minimum": 0
+        },
+        "correlation_id": {
+          "description": "The same id the cycle carries everywhere else, so a shortlist can be joined to the decisions made from it.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      }
+    }
+  }
+}

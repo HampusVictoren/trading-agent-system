@@ -9,6 +9,7 @@ from app.api.security import require_api_key
 from app.dependencies import Resources, get_resources
 from app.domain.outcomes import OutcomeReport
 from app.domain.quotes import InstrumentHistory, InstrumentQuote
+from app.domain.screening import ScreenRequest, ScreenResult
 from app.domain.signals import (
     MAX_SYMBOL_LENGTH,
     SYMBOL_PATTERN,
@@ -39,6 +40,28 @@ async def create_signal(
     team_id or an instrument this team does not cover is refused before a model is paid for.
     """
     return await resources.pipeline.run(request)
+
+
+@router.post("/v1/screen", response_model=ScreenResult)
+async def screen(
+    request: ScreenRequest,
+    resources: Annotated[Resources, Depends(get_resources)],
+) -> ScreenResult:
+    """Rank a universe without a single LLM call, so the endpoint above is asked about ten
+    instruments instead of fifty.
+
+    The counterpart to /v1/signals rather than a variant of it: this one costs a market-data
+    fetch and some arithmetic, that one costs three model calls. It is still behind the same
+    API key, because it is the step that decides what gets analysed.
+
+    Everything it needs is in the request - the universe, the shortlist size, the liquidity
+    floor - so the answer depends on nothing the caller cannot see, and a shortlist stored
+    per cycle can be reproduced from the request that produced it.
+
+    A symbol the source has nothing for comes back as a rejection with the reason; only
+    failing to reach the source at all is a 503.
+    """
+    return await resources.screening.screen(request)
 
 
 @router.get("/v1/quotes/{symbol}", response_model=InstrumentQuote)

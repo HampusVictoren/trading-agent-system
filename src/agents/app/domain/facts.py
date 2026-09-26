@@ -12,8 +12,9 @@ its own, with its own caps, visible in that step's `reads`.
 
 import math
 import statistics
+from collections.abc import Sequence
 from datetime import date, timedelta
-from typing import Annotated
+from typing import Annotated, Protocol
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
@@ -34,8 +35,36 @@ type Sector = Annotated[str, Field(max_length=MAX_SECTOR_LENGTH)]
 type Currency = Annotated[str, Field(min_length=1, max_length=MAX_CURRENCY_LENGTH)]
 
 
+class ClosingBar(Protocol):
+    """A day and a close, structurally - whatever else the bar happens to carry.
+
+    The three factor functions below take this rather than `PriceBar`, so screening can
+    pass its own richer bar and reuse the arithmetic instead of copying it. A protocol
+    rather than a base class because `PriceBar` is a wire shape: it is what
+    `contracts/quote-history.schema.json` describes, field for field, and a shared parent
+    would tie that contract to whatever a subclass added next.
+    """
+
+    # Read-only properties rather than plain annotations. A protocol attribute is mutable
+    # and invariant, which a frozen pydantic field does not satisfy; a property says what is
+    # actually wanted here, which is only ever to read the two values.
+    @property
+    def on(self) -> date: ...
+
+    @property
+    def close(self) -> float: ...
+
+
 class PriceBar(BaseModel):
-    """One day's close. Only the close, because that is all anything here computes on."""
+    """One day's close, and the shape the history contract carries.
+
+    Only the close, because that is all an outcome is measured on - and because this is
+    what `/v1/quotes/{symbol}/history` serialises. The contract declares the bar with
+    `unevaluatedProperties: false`, and the engine's `BarDto` refuses an unmapped member,
+    so a field added here would make every history response unreadable to the engine. When
+    something in this service needs more per day, it gets its own type; see
+    `app.domain.screening.ScreeningBar`.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -104,7 +133,7 @@ def _round(value: float) -> float:
     return round(value, DERIVED_PRECISION)
 
 
-def trailing_return(history: tuple[PriceBar, ...], *, days: int) -> float | None:
+def trailing_return(history: Sequence[ClosingBar], *, days: int) -> float | None:
     """The fraction gained since the last close at or before `days` ago.
 
     Counted from a calendar date rather than a fixed number of rows, so a holiday week does
@@ -124,7 +153,7 @@ def trailing_return(history: tuple[PriceBar, ...], *, days: int) -> float | None
     return _round((latest.close - earlier[-1].close) / earlier[-1].close)
 
 
-def annualised_volatility(history: tuple[PriceBar, ...], *, window: int) -> float | None:
+def annualised_volatility(history: Sequence[ClosingBar], *, window: int) -> float | None:
     """The standard deviation of daily log returns over the last `window` bars, annualised.
 
     Measured in bars rather than calendar days, unlike the returns above: volatility is a
@@ -143,7 +172,7 @@ def annualised_volatility(history: tuple[PriceBar, ...], *, window: int) -> floa
     return _round(statistics.stdev(log_returns) * math.sqrt(TRADING_DAYS_PER_YEAR))
 
 
-def pct_below_high(price: float, history: tuple[PriceBar, ...], *, weeks: int) -> float | None:
+def pct_below_high(price: float, history: Sequence[ClosingBar], *, weeks: int) -> float | None:
     """How far under its highest close of the period the price is, as a fraction.
 
     The live price is included in the high, so a share at a new high reads as 0.0 rather

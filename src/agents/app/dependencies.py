@@ -7,6 +7,7 @@ from fastapi import Request
 
 from app.application.pipeline import SignalPipeline
 from app.application.ports import MarketDataProvider, Memory, OutcomeStore
+from app.application.screening import ScreeningService
 from app.infrastructure.llm.provider import ModelConfigs
 
 
@@ -34,6 +35,12 @@ class Resources:
     # journal because one is this service's own working and the other is a copy of
     # somebody else's record.
     outcomes: OutcomeStore
+
+    # The screen. A concrete class rather than a port, because unlike the four above it has
+    # no implementation to swap: every decision in it is a pure function, and what varies -
+    # reaching a source - is already behind the UniverseData port it was given.
+    screening: ScreeningService
+
     http_client: httpx2.AsyncClient
 
     # None when the configured provider has no OpenAI-shaped model list to probe.
