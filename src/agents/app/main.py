@@ -13,6 +13,7 @@ from pgvector.asyncpg import register_vector
 from app.api.errors import register_error_handlers
 from app.api.routes import router
 from app.application.pipeline import SignalPipeline, TeamRuntime
+from app.application.screening import ScreeningService
 from app.application.teams import TEAMS, all_roles, load_prompts
 from app.application.versioning import compute_team_version
 from app.dependencies import Resources, get_resources
@@ -21,8 +22,11 @@ from app.infrastructure.db.journal import PostgresJournal
 from app.infrastructure.db.memory import AnalysisMemory
 from app.infrastructure.db.outcomes import PostgresOutcomeStore
 from app.infrastructure.llm.provider import ModelConfigs, build_model_configs
-from app.infrastructure.market_data.caching import CachingMarketData
-from app.infrastructure.market_data.yfinance_source import fetch_from_yfinance
+from app.infrastructure.market_data.caching import CachingMarketData, CachingUniverseData
+from app.infrastructure.market_data.yfinance_source import (
+    fetch_from_yfinance,
+    fetch_histories_from_yfinance,
+)
 from app.observability.correlation import CorrelationIdMiddleware
 from app.observability.logging import configure_logging
 from app.settings import Settings, get_settings
@@ -136,12 +140,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
             memory = AnalysisMemory(pool, embeddings)
 
+            # Its own cache rather than sharing the one above: the two hold different
+            # things - a quote with fundamentals against six months of closes and volumes -
+            # and they expire on different clocks, because a quote goes stale in minutes
+            # and a daily bar not until tomorrow's close.
+            universe = CachingUniverseData(
+                fetch_histories_from_yfinance,
+                timeout_s=settings.screen_timeout_s,
+                ttl_s=settings.screen_ttl_s,
+            )
+
             app.state.resources = Resources(
                 models=models,
                 pipeline=_build_pipeline(settings, models, market, PostgresJournal(pool), memory),
                 market=market,
                 memory=memory,
                 outcomes=PostgresOutcomeStore(pool),
+                screening=ScreeningService(universe),
                 http_client=http_client,
                 llm_base_url=_probe_url(settings),
             )

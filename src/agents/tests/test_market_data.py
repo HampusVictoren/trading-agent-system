@@ -6,7 +6,8 @@ so all of it runs against a fake.
 """
 
 import asyncio
-from datetime import UTC, datetime
+import time
+from datetime import UTC, date, datetime, timedelta
 
 import pandas as pd
 import pytest
@@ -14,8 +15,16 @@ import pytest
 from app.application.errors import InstrumentNotFound, MarketDataUnavailable
 from app.application.ports import MarketDataProvider
 from app.domain.facts import MarketSnapshot, PriceBar, Quote
-from app.infrastructure.market_data.caching import CachingMarketData
-from app.infrastructure.market_data.yfinance_source import to_snapshot
+from app.domain.screening import ScreeningBar
+from app.infrastructure.market_data.caching import CachingMarketData, CachingUniverseData
+from app.infrastructure.market_data.yfinance_source import to_histories, to_snapshot
+
+# A short series is enough: these tests are about caching and parsing, never about whether a
+# factor could be computed from it.
+A_BAR_SERIES = tuple(
+    ScreeningBar(on=date(2026, 1, 1) + timedelta(days=offset), close=100.0 + offset, volume=1_000)
+    for offset in range(3)
+)
 
 
 def snapshot(symbol: str = "AAPL", price: float = 100.0) -> MarketSnapshot:
@@ -240,3 +249,201 @@ class TestTheYfinancePayloadIsWhitelisted:
 
 def test_the_caching_provider_is_a_market_data_provider():
     assert isinstance(provider(CountingFetch()), MarketDataProvider)
+
+
+class TestABatchOfHistoriesIsParsedFromWhateverShapeYfinanceReturns:
+    """`yf.download`'s column layout depends on how many tickers were asked for, which is
+    exactly the kind of upstream detail that must not reach the domain untested."""
+
+    def frame(self, data: dict, *, multi: bool) -> pd.DataFrame:
+        index = pd.to_datetime(["2026-01-02", "2026-01-05", "2026-01-06"])
+        if not multi:
+            symbol = next(iter(data))
+            return pd.DataFrame(data[symbol], index=index)
+        return pd.DataFrame(
+            {
+                (symbol, field): values
+                for symbol, fields in data.items()
+                for field, values in fields.items()
+            },
+            index=index,
+        )
+
+    def test_several_tickers_come_back_grouped_by_symbol(self):
+        frame = self.frame(
+            {
+                "AAPL": {"Close": [100.0, 101.0, 102.0], "Volume": [1_000, 1_100, 1_200]},
+                "MSFT": {"Close": [400.0, 401.0, 402.0], "Volume": [500, 510, 520]},
+            },
+            multi=True,
+        )
+
+        histories = to_histories(["AAPL", "MSFT"], frame)
+
+        assert set(histories) == {"AAPL", "MSFT"}
+        assert histories["AAPL"][0].close == 100.0
+        assert histories["AAPL"][0].volume == 1_000
+        assert histories["MSFT"][-1].close == 402.0
+
+    def test_a_single_ticker_with_one_column_level_parses_the_same_way(self):
+        # The shape that would otherwise be discovered in production, on the first cycle
+        # where the universe and the holdings happen to overlap down to one symbol.
+        frame = self.frame(
+            {"AAPL": {"Close": [100.0, 101.0, 102.0], "Volume": [1_000, 1_100, 1_200]}},
+            multi=False,
+        )
+
+        histories = to_histories(["AAPL"], frame)
+
+        assert len(histories["AAPL"]) == 3
+
+    def test_bars_come_back_oldest_first(self):
+        # Every factor function takes the last bar as the latest one, so a reversed series
+        # would make all of them quietly wrong rather than fail.
+        frame = self.frame(
+            {"AAPL": {"Close": [100.0, 101.0, 102.0], "Volume": [1, 1, 1]}}, multi=False
+        )
+
+        dates = [bar.on for bar in to_histories(["AAPL"], frame)["AAPL"]]
+
+        assert dates == sorted(dates)
+
+    def test_a_symbol_the_frame_has_nothing_for_is_left_out_rather_than_empty(self):
+        # What the port promises, and what turns one delisted name into one rejection
+        # instead of a failed screen.
+        frame = self.frame(
+            {"AAPL": {"Close": [100.0, 101.0, 102.0], "Volume": [1, 1, 1]}}, multi=True
+        )
+
+        histories = to_histories(["AAPL", "GONE"], frame)
+
+        assert "GONE" not in histories
+
+    def test_a_row_with_no_close_is_skipped(self):
+        # NaN fails a > 0 comparison as readily as a negative number, which is what stops a
+        # day the source had nothing for becoming a bar with no price.
+        frame = self.frame(
+            {"AAPL": {"Close": [100.0, float("nan"), 102.0], "Volume": [1, 1, 1]}}, multi=False
+        )
+
+        assert len(to_histories(["AAPL"], frame)["AAPL"]) == 2
+
+    def test_a_missing_volume_becomes_none_rather_than_zero(self):
+        # Zero is a claim that nothing traded, and it is the claim that makes a liquid share
+        # look untradeable once the median is taken.
+        frame = self.frame(
+            {"AAPL": {"Close": [100.0, 101.0, 102.0], "Volume": [1_000, float("nan"), 1_200]}},
+            multi=False,
+        )
+
+        volumes = [bar.volume for bar in to_histories(["AAPL"], frame)["AAPL"]]
+
+        assert volumes == [1_000, None, 1_200]
+
+    def test_a_frame_with_no_columns_at_all_yields_nothing(self):
+        assert to_histories(["AAPL"], pd.DataFrame()) == {}
+
+
+class TestTheUniverseCacheFetchesOnlyWhatItIsMissing:
+    def source(self, *, fails: bool = False, hangs: bool = False):
+        calls: list[list[str]] = []
+
+        def fetch(symbols):
+            calls.append(list(symbols))
+            if fails:
+                raise RuntimeError("upstream said no")
+            if hangs:
+                time.sleep(5)
+            return {symbol: A_BAR_SERIES for symbol in symbols}
+
+        fetch.calls = calls  # type: ignore[attr-defined]
+        return fetch
+
+    def cache(self, fetch, *, ttl_s: float = 300, timeout_s: float = 1.0, clock=None):
+        return CachingUniverseData(
+            fetch,
+            timeout_s=timeout_s,
+            ttl_s=ttl_s,
+            clock=clock or (lambda: 0.0),
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_first_call_fetches_everything(self):
+        fetch = self.source()
+
+        await self.cache(fetch).histories(["AAPL", "MSFT"])
+
+        assert fetch.calls == [["AAPL", "MSFT"]]
+
+    @pytest.mark.asyncio
+    async def test_a_second_call_within_the_ttl_fetches_nothing(self):
+        fetch = self.source()
+        cache = self.cache(fetch)
+
+        await cache.histories(["AAPL", "MSFT"])
+        await cache.histories(["AAPL", "MSFT"])
+
+        assert len(fetch.calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_only_the_symbols_not_already_held_are_fetched(self):
+        # The reason this caches per symbol rather than per call. A screen of the universe
+        # followed by a screen of the universe plus one holding must cost one extra series,
+        # not the whole list again.
+        fetch = self.source()
+        cache = self.cache(fetch)
+
+        await cache.histories(["AAPL", "MSFT"])
+        await cache.histories(["AAPL", "MSFT", "NVDA"])
+
+        assert fetch.calls == [["AAPL", "MSFT"], ["NVDA"]]
+
+    @pytest.mark.asyncio
+    async def test_an_expired_entry_is_fetched_again(self):
+        now = {"t": 0.0}
+        fetch = self.source()
+        cache = self.cache(fetch, ttl_s=100, clock=lambda: now["t"])
+
+        await cache.histories(["AAPL"])
+        now["t"] = 101.0
+        await cache.histories(["AAPL"])
+
+        assert len(fetch.calls) == 2
+
+    @pytest.mark.asyncio
+    async def test_a_symbol_that_came_back_empty_is_not_remembered_as_empty(self):
+        # "Not listed today" and "the batch dropped it" look the same from here, and only one
+        # of them is permanent - so the next screen asks again rather than inheriting a hole.
+        calls: list[list[str]] = []
+
+        def fetch(symbols):
+            calls.append(list(symbols))
+            return {}
+
+        cache = self.cache(fetch)
+        await cache.histories(["GONE"])
+        await cache.histories(["GONE"])
+
+        assert calls == [["GONE"], ["GONE"]]
+
+    @pytest.mark.asyncio
+    async def test_a_hang_becomes_market_data_unavailable(self):
+        with pytest.raises(MarketDataUnavailable):
+            await self.cache(self.source(hangs=True), timeout_s=0.05).histories(["AAPL"])
+
+    @pytest.mark.asyncio
+    async def test_a_source_that_raises_becomes_market_data_unavailable(self):
+        # No InstrumentNotFound branch here, unlike the per-instrument provider: a symbol the
+        # source has nothing for is simply absent from the answer, so only reaching it fails.
+        with pytest.raises(MarketDataUnavailable):
+            await self.cache(self.source(fails=True)).histories(["AAPL"])
+
+    @pytest.mark.asyncio
+    async def test_the_answer_holds_cached_and_freshly_fetched_series_alike(self):
+        fetch = self.source()
+        cache = self.cache(fetch)
+
+        await cache.histories(["AAPL"])
+        both = await cache.histories(["AAPL", "MSFT"])
+
+        assert set(both) == {"AAPL", "MSFT"}

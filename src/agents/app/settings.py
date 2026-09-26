@@ -138,6 +138,13 @@ class Settings(BaseSettings):
     market_data_timeout_s: Annotated[float, Field(gt=0)]
     market_data_ttl_s: Annotated[float, Field(ge=0)]
 
+    # Screening. Its own pair rather than reusing the two above, because the calls are not
+    # comparable: one is a quote for one instrument, the other is six months of bars for up
+    # to a hundred. A timeout sized for the first would fail every screen, and a TTL sized
+    # for a quote would refetch a universe that only changes once a trading day.
+    screen_timeout_s: Annotated[float, Field(gt=0)]
+    screen_ttl_s: Annotated[float, Field(ge=0)]
+
     llm: LlmSettings
 
 
