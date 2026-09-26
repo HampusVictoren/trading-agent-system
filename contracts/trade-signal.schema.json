@@ -41,10 +41,10 @@
       "items": { "type": "string", "minLength": 1, "maxLength": 300 }
     },
     "horizon_days": {
-      "description": "The period the view is meant to play out over. Stage 4 measures the outcome at this horizon and at fixed ones, so that two team versions can be compared.",
+      "description": "The period the view is meant to play out over, in calendar days. Capped at 30 because the system looks for short-term opportunities, because 30 calendar days is about the 20 trading days of the longest fixed horizon - so the model's own horizon is measured in the same window as the ones it is compared against - and because stage 5's time-limit exit fires on this number. Stage 4 measures the outcome at this horizon and at the fixed ones, so that two team versions can be compared.",
       "type": "integer",
       "minimum": 1,
-      "maximum": 365
+      "maximum": 30
     },
     "reference_price": {
       "description": "The quote the view was formed on. The engine sizes the order from this, so the agent service returns it rather than the engine fetching market data of its own.",

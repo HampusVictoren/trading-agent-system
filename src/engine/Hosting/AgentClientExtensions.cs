@@ -44,10 +44,11 @@ public static class AgentClientExtensions
                 options.Retry.MaxRetryAttempts = 1;
 
                 // Retry only when the connection never came up. The default rule also retries
-                // a failing response, but the agent service answers 5xx *after* spending
-                // 12-15 s of LLM time, so a retry pays twice for nothing - and from stage 4 it
-                // would write one logical cycle to the database twice. A timeout is excluded
-                // for the same reason: the first request may still be running on the far side.
+                // a failing response, but the agent service answers 5xx *after* spending a
+                // cycle's worth of LLM time - about 30 s on a 14B model - so a retry pays
+                // twice for nothing, and from stage 4 it would write one logical cycle to the
+                // database twice. A timeout is excluded for the same reason: the first
+                // request may still be running on the far side.
                 options.Retry.ShouldHandle = args => ValueTask.FromResult(
                     args.Outcome.Exception is HttpRequestException { HttpRequestError: HttpRequestError.ConnectionError });
 

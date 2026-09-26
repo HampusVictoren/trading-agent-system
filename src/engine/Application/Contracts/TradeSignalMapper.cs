@@ -26,9 +26,18 @@ public static class TradeSignalMapper
     // The caps in contracts/trade-signal.schema.json. System.Text.Json does not read JSON
     // Schema, so the engine has to enforce them itself - and it has to, because from stage 4
     // every thesis is stored and every one of them is read back into a prompt.
-    private const int MaxThesisLength = 2000;
-    private const int MaxRiskLength = 300;
-    private const int MaxRisks = 5;
+    //
+    // public so the contract test can read the checked-in schema and compare, the way it
+    // already does for ReportOutcomesUseCase.MaxPerRequest. Each of these numbers lives in
+    // three places - pydantic, the schema, here - and until now only the first two were
+    // held together.
+    public const int MaxThesisLength = 2000;
+    public const int MaxRiskLength = 300;
+    public const int MaxRisks = 5;
+
+    // Calendar days. See the schema for why 30; the short version is that the fixed
+    // horizons reach 20 trading days and stage 5's time-limit exit fires on this number.
+    public const int MaxHorizonDays = 30;
 
     public static TradeSignal ToDomain(TradeSignalDto dto)
     {
@@ -61,6 +70,10 @@ public static class TradeSignalMapper
 
         if (dto.HorizonDays < 1)
             throw Invalid($"the horizon of {dto.HorizonDays} days is not a period");
+
+        if (dto.HorizonDays > MaxHorizonDays)
+            throw Invalid(
+                $"the horizon of {dto.HorizonDays} days is past the {MaxHorizonDays} day limit");
 
         if (dto.ReferencePrice <= 0)
             throw Invalid($"the reference price {dto.ReferencePrice} is not a price");

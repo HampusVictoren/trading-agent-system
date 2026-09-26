@@ -7,16 +7,19 @@ A running record of what has been done, what was learned along the way, and what
 
 This file answers "where are we, how did we get here, and what is next". When resuming, read *Current state* and *Next steps* first, then the roadmap section for the next stage.
 
-**Last updated:** 2026-09-25, with PR 6b open - the last pull request of the stage. **We
-are in stage 4**, the one the project exists for, and as of today it has **measured
-something**: 21 signals scored at one trading day, and
-`trading.hit_rate` has rows in it for the first time. The machinery is now complete end to
-end - decisions are stored, the portfolio survives a restart, a sweep scores every signal
-whose horizon has passed, and the engine posts what it measured to the agent service, which
-keeps its own copy. What is left once 6b lands is **not** what this file said for two
-days. Waiting does not produce a baseline: the team contradicts itself on identical input, a
-cycle every fifteen seconds re-asks one question, and the population is two instruments. See
-**finding G**. The next step is **stage 5**, which is what makes a baseline possible.
+**Last updated:** 2026-09-25. **Stage 4's code is complete and merged** - all eight pull
+requests. The machinery runs end to end: decisions are stored, the portfolio survives a
+restart, a sweep scores every signal whose horizon has passed, the engine posts what it
+measured to the agent service, and memory reads the journal back. 21 signals are scored and
+`trading.hit_rate` has rows in it.
+
+**Stage 5 is next, and the ground was cleared for it today.** Finding G said waiting cannot
+produce a baseline, because the team contradicted itself on identical input. Both halves of
+that are now settled in one change, while it was still cheap: the model is `qwen2.5:14b` at
+temperature 0 with a pinned seed, and the horizon is capped at 30 days on both sides of the
+contract. Three identical requests through the real pipeline now answer SELL, SELL, SELL.
+See *Before stage 5*. The rest of finding G - one question re-asked every fifteen seconds,
+and a population of two instruments - is what stage 5 itself fixes.
 
 ## Resuming checklist
 
@@ -27,7 +30,18 @@ git pull --ff-only
 docker compose up -d                       # trading-db; needs .env in the repo root
 cd src/agents && uv sync                   # Python dependencies from uv.lock
 curl -s http://127.0.0.1:11434/api/tags    # is Ollama on Windows reachable from WSL?
+diff <(grep -o '^[A-Z_]*' .env.example | sort -u) <(grep -o '^[A-Z_]*' .env | sort -u)
 ```
+
+**Compare the local `src/agents/.env` against `.env.example` after pulling**, and not only
+for keys that are missing. Every setting is required and **nothing has a default**, which is
+deliberate - an incomplete environment stops the service rather than falling back to the
+wrong database or OpenAI's cloud. The cost is that a *stale* value is silent: an `.env`
+written before 2026-09-25 still says `llama3.2`, temperature 0.2, no seed and a 30 s timeout,
+and the service starts happily on it. Nothing breaks and nothing is mixed up - the model is
+in `team_version`, so those outcomes never pool with anyone else's - but you are then running
+a third team that matches neither the documentation nor the current hash, and the only sign
+is the startup line `Agent service ready: <model> via <provider>`. Read it.
 
 Then run the CI checks listed in CLAUDE.md before changing anything, so that a failure is known to be pre-existing. **CI is reproducible locally** with a throwaway worktree, which is what catches anything that only passes because this machine has something CI does not:
 
@@ -57,30 +71,32 @@ Two things that are easy to misread as broken:
 
 ## Current state
 
-- **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21, **stage 3 done** 2026-09-23. **Stage 4 started** 2026-09-23 and is where the work is now. PR 5 and PR 6 were each split in two, so the stage is eight pull requests: **seven are merged or written** and one - memory in the loop - is left. Stages 5-8 exist only as plan.
-- **`master` is at PR #39**, stage 4's PR 6a, merged 2026-09-25. The stacked pair that the last entry warned about landed in the right order and both branches are gone on both sides. Nothing reaches `master` without the three required checks passing, so what is there is green by construction.
-- **One branch is open:** `stage-4-memory`, PR 6b - the memory the agents read, and the second team that reads it.
-- **`6c6da0e6edad` and `b1234878670a` are the same team.** Write that down anywhere it might be read, because it cannot be recovered from the data: the two hashes describe byte-identical behaviour, and measurements under them may be pooled. The rows are *not* rewritten to say so - `decisions` is append-only precisely so a stored version cannot be edited afterwards, and a history that can be corrected is not evidence.
-- **`default`'s `team_version` moved once, on 2026-09-25**, from `6c6da0e6edad` to `b1234878670a`, without a word of the team changing. Adding `sees_memory` to the hash payload wrote `sees_memory: false` onto every step; the payload is now sparse so it cannot happen again, but the hash cannot be restored. The 21 measurements already taken keep the old value - it is stored on each decision row - and everything from here accumulates under the new one. A day of one-trading-day measurements is the cheapest this will ever cost.
+- **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21, **stage 3 done** 2026-09-23. **Stage 4 started** 2026-09-23. PR 5 and PR 6 were each split in two, so the stage is eight pull requests, and **all eight are merged** as of 2026-09-25. **Stage 5 has started**, with the model and the horizon settled first; stages 6-8 exist only as plan.
+- **`master` is at PR #41**, and stage 4 is fully merged: 6a (#39), 6b (#40) and the docs-only record of finding G (#41), all on 2026-09-25. Nothing reaches `master` without the three required checks passing, so what is there is green by construction.
+- **One branch is open:** `stage-5-model-and-horizon` - the model, the clock and the horizon cap. Not stage 5 itself; the thing finding G said to do before it.
+- **`b1234878670a` never reached a row, and that is worth knowing rather than forgetting.** On 2026-09-25 `default`'s hash moved from `6c6da0e6edad` to `b1234878670a` without a word of the team changing: adding `sees_memory` to the payload wrote `sees_memory: false` onto every step. The payload was made sparse the same day, before the engine ran again, so the accidental hash was never stored - `SELECT team_id, team_version, count(*) FROM trading.decisions` returns only `6c6da0e6edad` and `79dfb7307b57`. Nothing has to be pooled and nothing has to be written down; the earlier warning in this file that the two hashes had to be reconciled by hand is obsolete, not wrong at the time. The lesson survives the hash: a version payload that lists every flag with its default ties the version to the shape of the payload rather than to the team.
 - **There is one path now.** `POST /v1/signals` is the only endpoint that costs money, the engine calls it every cycle, and the old three-agent chain, `InvestmentProposal`, `ValidateTrade`, `RiskViolationException` and the FastMCP server are gone. Running the engine today produces real quantities at real prices, with the position cap holding across cycles.
 - **Every environment variable was renamed on 2026-09-23.** The local `src/agents/.env` was renamed in place and still works; a fresh clone follows `.env.example`. Nothing outside this repo reads them.
 - **Measurement has produced its first numbers.** A sweep on 2026-09-25 **measured 21** signals at one trading day, left 63 horizons not due, abandoned none, and delivered all 21 to the agent service. `trading.hit_rate` has four rows. They mean nothing yet, and it is worth saying so plainly: one trading day is noise, and all sixteen BUYs "hit" because both names happened to rise that day. The two HOLDs that missed did so with an excess of 3.5 %, which is the band doing its job rather than the model doing well.
 - **Both schemas now hold a copy of the same measurement**, joined by nothing: 21 rows in `trading.signal_outcomes`, 21 in `trading.outcome_deliveries`, 21 in `agent.signal_outcomes`. The correlation id is the only thing they share, and it crosses over HTTP.
 - **Python writes down what its agents were given.** `agent.analysis_runs` and `agent.step_outputs` hold the fact sheet an analysis started from and each step's answer - 8 runs and 24 step rows after one engine session, which is three steps per run exactly as the team specifies.
 - **Memory is wired in and correctly empty.** 8 runs are embedded; none of them has a measured outcome yet, so `recall` answers *"Inga tidigare analyser av AAPL har hunnit mätas färdigt."* - which is the designed behaviour rather than a fault. Worth knowing: **the first 21 measurements can never become memory**, because the analyses behind them predate the journal. Memory starts from the runs journalled since PR 6a, and the first becomes recallable when its one-trading-day horizon is measured.
-- **There are two teams now.** `default` (`b1234878670a`) is the baseline and reads no memory. `default-memory` (`79dfb7307b57`) is the same team with its risk manager shown past measured analyses. `Trading:TeamId` stays `default`; the memory team was run once by environment override to prove it works, which is where those 8 embedded runs came from.
-- **The model asks for horizons of a year.** Of 21 signals, nine say 365 days and seven say 180, although the prompt asks for a short-term thesis. The fixed horizons of 1, 5 and 20 trading days are still the right measurement - though **finding G** is why they are not enough on their own - and the model's *own* horizon will not be measurable until 2027 and is close to useless as a measure of whether it can judge time. That is a prompt problem, found before a single measurement - which is what stage 4 is for.
+- **There are two teams now.** `default` is the baseline and reads no memory; `default-memory` is the same team with its risk manager shown past measured analyses. For their versions, which moved with the model on 2026-09-25, see the bullet above rather than a copy here - two places holding the same hash is how this file came to assert one that existed nowhere. `Trading:TeamId` stays `default`; the memory team was run once by environment override to prove it works, which is where those 8 embedded runs came from.
+- **The model asked for horizons of a year, and no longer can.** The full distribution over all 36 stored signals was 6 days (3), 30 (1), 90 (6), 180 (**15**) and 365 (**11**) - 26 of 36 at half a year or more, although the system looks for short-term opportunities. Nobody had told it otherwise: the prompt said "be honest" without naming a range and the schema allowed 365. Capped at 30 on 2026-09-25, in pydantic, in the schema and in the engine's mapper, with the range named in the prompt. The first live signal afterwards asked for 15.
+- **The model is `qwen2.5:14b`**, at temperature 0 with seed 42, replacing `llama3.2` (3B). A cycle is about 20 s warm and 28 s cold, against 7-10 s before. `TAS_LLM__DEFAULT__TIMEOUT_S` is 60 and `AgentService:RequestTimeoutSeconds` is 120; the old 30 was below a single step on any 14B model.
+- **Two team_versions are in the data; two more are only in the code.** `default` ran 28 decisions as `6c6da0e6edad` and `default-memory` 8 as `79dfb7307b57`. The model change makes them `5926c629dcbe` and `b856e3edf611`, but the engine has not run since, so neither has a row yet. The stored rows keep their old values, which is the point of putting the version on the row - and the distinction between a version that exists and one that has been *used* is what this file got wrong about `b1234878670a` above.
 - **The engine trades two instruments.** `Trading:Tickers` is AAPL and MSFT, so a cycle is two analyses and the quote endpoint is used in a real run rather than only by tests.
-- **The `trading` schema is live and has real rows in it.** Runs on 2026-09-24 opened the account at 10 000 USD and bought one AAPL at 337.445 and one MSFT at 497.56, with a second engine process picking the same portfolio up rather than opening another. The local database has **all three** engine migrations and **all three** Alembic revisions applied, so it is ahead of `master` until PR 6a lands. Delete the rows with `TRUNCATE trading.signal_outcomes, trading.decisions, trading.orders, trading.positions, trading.portfolios RESTART IDENTITY CASCADE` if a clean baseline matters; the append-only triggers deliberately do not block that.
+- **The `trading` schema is live and has real rows in it.** Runs on 2026-09-24 opened the account at 10 000 USD and bought one AAPL at 337.445 and one MSFT at 497.56, with a second engine process picking the same portfolio up rather than opening another. The local database has **all three** engine migrations and **all three** Alembic revisions applied, which `master` has carried since PR 6a (#39) merged on 2026-09-25 - so the two are level. Delete the rows with `TRUNCATE trading.signal_outcomes, trading.decisions, trading.orders, trading.positions, trading.portfolios RESTART IDENTITY CASCADE` if a clean baseline matters; the append-only triggers deliberately do not block that.
 - **The engine now needs `Database:ConnectionString`** or it refuses to start. It is in the user secrets store on this machine, set 2026-09-23. `dotnet user-secrets list --project src/engine` prints it, so do not run that where anyone can see the screen.
 - **Migrations are applied by hand, and the engine refuses to start without them.** Decided 2026-09-24: `dotnet dotnet-ef database update` stays a deploy step, but startup names the pending migrations and the command instead of failing on a missing column mid-cycle.
 - **What is now impossible** rather than merely unlikely: the agents cannot name an amount (the contract has no `amount_usd`, and a test refuses one that reappears); an answer that is not the contract cannot deserialise into nulls; a position cannot be sized against cash instead of net asset value; and an order cannot be placed on a quote that is stale or dated in the future.
 
 ## Next steps
 
-**Stage 4 - persistence and outcome measurement**, six pull requests in and one to go. Read
-the stage in `docs/arkitektur-roadmap.md` before continuing; it carries several decisions that
-are easy to miss.
+**Stage 4 - persistence and outcome measurement** is merged, all eight pull requests. **Stage
+5 - finding candidates and selling** is next, in three pull requests; read that stage in
+`docs/arkitektur-roadmap.md` before continuing, since it carries several decisions that are
+easy to miss.
 
 **This is the stage the project exists for**, and most of it now exists. Decisions survive a
 restart, every signal is stored with the room it was decided in, and a nightly sweep scores
@@ -139,15 +155,26 @@ Before stage 5, turn finding D's currency mismatch into an outcome rather than a
 
 ### Next up: stage 5, because waiting does not work
 
-**Stage 4's code is done** once PR 6b lands. Nothing else in the stage is a pull request -
-but what remains is not a matter of waiting, which is what **finding G** corrects. The rows
-already written show the team giving BUY, HOLD *and* SELL on one fact sheet, 36 signals
-across four (instrument, trading day) pairs, and nothing scheduling the engine at all.
+**Stage 4's code is done and merged**, all eight pull requests. Nothing else in the stage is
+a pull request - but what remains is not a matter of waiting, which is what **finding G**
+corrects. The rows already written show the team giving BUY, HOLD *and* SELL on one fact
+sheet, 36 signals across four (instrument, trading day) pairs, and nothing scheduling the
+engine at all.
 
-So the order is: merge 6b, settle the model and the prompt's horizons together (both change
-`team_version`, and both are free today at four independent events), then **stage 5** - the
-universe, one analysis per fact-sheet change, and the shortlist stored so the question that
-decides the project can be asked. Stage 8's condition survives untouched, because stage 5
+The model and the horizon are now settled - see *Before stage 5*, and the measured result:
+SELL, SELL, SELL where `llama3.2` gave three different answers. What is left of finding G is
+the population, and that is **stage 5** itself.
+
+**Stage 5 goes out as three pull requests**, decided 2026-09-25. The roadmap calls it 3-4
+days, which is too much for one review:
+
+| | What | Why it is its own review |
+|---|---|---|
+| 1 | `app/screening/` and `POST /v1/screen` - a universe, the factors from `facts.py` over all of it, filters and a ranking | Pure functions over fixed datasets, TDD, and **no engine changes at all**. It can be run and judged before anything else moves. The stage's stated practical risk lives here: yfinance is unofficial and rate-limited, and fundamentals are fetched per instrument |
+| 2 | Selling: the SELL branch in `PositionSizer`, `Portfolio.ExecuteSell` with realised profit and loss, and the deterministic exits - stop-loss, time limit, minimum holding period | Test-first with the same table technique as stage 2. The exits are the half that does not depend on the LLM answering, which is decision 1 applied to selling |
+| 3 | The engine drives the cycle: universe to shortlist, shortlist union holdings, one analysis per fact-sheet change, and the shortlist stored per cycle | This is where the regime column goes, and where "do the agents beat the screening that picked their candidates?" becomes answerable |
+
+Stage 8's condition survives untouched, because stage 5
 does not touch the team.
 
 **What 6b settled** (decisions taken 2026-09-25, all four the recommended way, then a fifth
@@ -173,27 +200,72 @@ for a follow-up, since 6b turned out to touch the memory path rather than the de
 Also still open: a repeated `correlation_id` in the journal logs "its working is lost" when
 the working is already there. Nearly unreachable, one line to fix.
 
-### And then the part that is not code
+### Before stage 5 — the model, the clock and the horizon (2026-09-25)
 
-**The baseline is a deliverable, and it is not a waiting game.** It was written here as one
-for two days; finding G is why that was wrong. What a baseline needs is a population, and
-21 measured rows across four (instrument, trading day) pairs is not one - especially when the
-team gives three different answers to the same fact sheet.
+Finding G named two things to settle while they were still cheap, both of which move
+`team_version`, so they were done as one change. Doing them at four independent events costs
+four; doing them after stage 5 has run for a month costs a month.
 
-Two things to settle before stage 5, and they belong in one change because both move
-`team_version`:
+**The hardware was the first surprise, and it decided the rest.** Windows' WMI reports the
+GPU as 4 GB, which is a 32-bit field saturating rather than a fact -
+`HardwareInformation.qwMemorySize` in the registry says the RX 7600 XT has **16 GB**.
+`llama3.2` was using 4.1 of them at 100 tok/s. So "use a bigger model" was never a hardware
+question, and the machine had been treated as smaller than it is for two weeks.
 
-- **`llama3.2` at 3B contradicts itself.** No longer a suspicion: MSFT at 516.57 got BUY,
-  HOLD and SELL on the same data. The roadmap has said from the start that a larger model or
-  Claude would reason better; switching is one environment variable, `TAS_LLM__DEFAULT__*`.
-  A baseline of a model that disagrees with itself measures sampling noise.
-- **The model's horizons are absurd.** Nine of 21 signals ask for 365 days despite a prompt
-  asking for a short-term thesis. The fixed horizons still work, but the model's own is
-  unmeasurable for a year - and it is the one number that would show whether it can judge
-  time at all.
+**`qwen3:14b` was tried first and rejected on measurement.** It reasons better, and Ollama
+puts its thinking in a separate `reasoning` field so `content` stays clean JSON - structured
+output works. The problem is the cost and that it cannot be turned off through the route this
+project uses:
 
-Doing both now costs four independent events. Doing them after stage 5 has been running for a
-month costs a month.
+| Attempt | Result |
+|---|---|
+| `/v1` with `chat_template_kwargs: {"enable_thinking": false}` | Accepted without complaint, **ignored** - 1448 characters of reasoning to answer `{"ok": true}` |
+| `/no_think` in the system prompt | No effect on this build |
+| native `/api/chat` with `"think": false` | **Works** - 0 characters, 4.9 s - but that is provider `ollama`, the one branch in `provider.py` that carries no timeout |
+
+25-37 s per step against 8-9 s: five times the wall clock for reasoning that is never
+stored, since the journal holds `step_outputs` and not the `reasoning` field. And the
+architecture had already decomposed the problem - three steps, one question and one schema
+each - which is the work a thinking model does inside a single turn.
+
+So: **`qwen2.5:14b`**, same size class, same family, no thinking mode. 8-9 s per step warm,
+15.6 s cold, `reasoning` empty. Its Swedish is grammatically rough in a way its reasoning is
+not; see *Open decisions*.
+
+**Temperature 0 and a seed pin the decision, not the run.** This was worth measuring rather
+than assuming, because the claim was about to be written down. Repeat an identical request
+and Ollama returns byte-identical output. Put a *different* request in between and the same
+request returns different bytes - the numerics depend on batching and KV-cache state outside
+the request. So replay will reproduce a distribution, not a run, and stage 8's replay idea
+has to be read that way.
+
+What it does buy is that a contradiction can no longer be blamed on the draw:
+
+| | `llama3.2` 3B, temp 0.2, no seed | `qwen2.5:14b`, temp 0, seed 42 |
+|---|---|---|
+| Same fact sheet, repeated | **BUY, HOLD and SELL** | SELL, SELL, SELL |
+| Conviction | 0.50-0.80 | 0.85, 0.80, 0.80 |
+| Wording | varies | varies |
+| Cycle | 7-10 s | 20 s warm, 28 s cold |
+
+**Timeouts had to move with the model.** 30 s per call was below one step on any 14B model,
+so every call would have timed out. `TAS_LLM__DEFAULT__TIMEOUT_S` is 60 and
+`AgentService:RequestTimeoutSeconds` is 120 - the engine gives up on a pathological chain
+before the agent service's own ceiling of three times 60, which is the right way round.
+
+**The horizon is capped at 30 days.** The full distribution over 36 stored signals was 26 at
+180 days or more and only 3 at a week or less. The cap is in pydantic, in
+`contracts/trade-signal.schema.json` and in the engine's `TradeSignalMapper`, and the prompt
+now names the range - the schema is what holds when the prompt is ignored, which it has been
+before. `contracts/outcome.schema.json` stays **uncapped** and says why: decisions stored
+before the cap asked for up to 365 days, and a measurement belongs at the horizon its
+decision actually asked for. The first live signal afterwards asked for 15.
+
+The engine's other three contract caps were made public and pulled into the same test while
+the file was open. Each was written in three places with only the first two held together,
+and the drift is quiet rather than loud: the agent service validates its own answer first, so
+a cap the engine set lower would surface as the agents "answering with something unusable" -
+a 502 at the seam furthest from the number that is actually wrong.
 
 ## Open findings
 
@@ -210,7 +282,7 @@ when a stage starts, not every time a finding arrives.
 | D | A currency mix is reported as a bug, not as an outcome | **Fixed** in PR #23 |
 | E | There is no trading calendar anywhere in the plan | **Fixed** in stage 4's PR 4 |
 | F | Outcome measurement ignores transaction costs | **Fixed** in stage 4's PR 4 |
-| G | The team contradicts itself on identical input, so waiting cannot produce a baseline | **Open** - decides what happens before stage 5 |
+| G | The team contradicts itself on identical input, so waiting cannot produce a baseline | **Partly addressed** 2026-09-25 - the model and the draw are settled; the population is stage 5's job |
 
 ### A — a failed analysis is sent twice (fixed, PR #17)
 
@@ -377,7 +449,7 @@ overstate the agents — in precisely the number that is supposed to decide whet
 worth continuing. A cost model belongs in the outcome function from the start; it is a pure
 function and therefore an ideal test-first target.
 
-### G — the team contradicts itself on identical input (open)
+### G — the team contradicts itself on identical input (partly addressed)
 
 **Found 2026-09-25**, by querying the rows the engine has already written rather than by
 reading code. It is the most useful thing in the database, and it invalidates a plan this
@@ -425,6 +497,20 @@ fifteen seconds" and "screened shortlist" - and no way to tell them apart afterw
 shortlist is stored per cycle by the roadmap's own design; the decision row also needs to say
 which regime produced it. That is one column, and it is free now.
 
+**What was done about it, 2026-09-25.** **Count 1 is settled**, and only count 1; see *Before
+stage 5* for the measurements. It had two causes and only one of them was the model: no seed
+was set and the temperature was 0.2, so part of the contradiction was the draw. Temperature
+0 with a pinned seed removes that, which makes the experiment *sharper* rather than merely
+quieter - a contradiction that survives greedy decoding is the model's. On `qwen2.5:14b`,
+three identical requests through the real pipeline answered SELL, SELL, SELL at conviction
+0.85/0.80/0.80 and horizon 15, against `llama3.2` answering BUY, HOLD and SELL to one fact
+sheet. Three runs is a small sample; it is three-for-three on the thing that was previously
+three-for-three against.
+
+Counts 2 and 3 - one question re-asked every fifteen seconds, and a population of two
+instruments - are untouched, and they are exactly what stage 5 builds. The finding stays
+open until then.
+
 ### Considered and rejected for now
 
 - **Start persisting decisions before stage 4, to stop losing evidence.** The argument is that a
@@ -440,6 +526,9 @@ which regime produced it. That is one column, and it is free now.
 
 ## Open decisions and loose ends
 
+- **English prompts, as a third team rather than an edit.** Permitted by the owner on 2026-09-25: the agents may talk to each other in English if it gives better results. Not taken up in the same change as the model, because that change already moved four variables - model, temperature, seed and horizon - and a fifth would make the next difference in outcomes unattributable. The right form is a third `TeamSpec` with English instructions and a Swedish answer, sharing what it can with `default` the way `default-memory` shares two of three prompt files; `team_version` then keeps the outcomes apart automatically. Worth doing when there is a population to measure it against, which is after stage 5.
+- **`qwen2.5:14b`'s Swedish is rough.** Observed in the first live signals: *"P/E-ratios är acceptabelt"*, *"den nuvarande beslutet"*, *"kärnaaffärer"*. The reasoning behind the theses reads better than the Swedish they are written in, which is the concrete argument for the English-prompt experiment above. It is an observation, not a finding - nothing has measured whether the language affects the decision.
+- **`Trading:CycleIntervalSeconds` is 15 and no longer describes the cadence.** Raised by a review of PR #42. `TradingWorker` delays *after* the loop over tickers, so nothing overlaps and nothing queues - the period is simply (analysis time x tickers) + 15 s, which the model change moved from about 30 s to 55-70 s. Deliberately not bumped: stage 5 replaces the cadence entirely with one analysis per fact-sheet change, so tuning a number that is about to be deleted is churn. It belongs to **stage 5's third pull request**, where the cycle is rewritten, and it is the same thing as count 2 of finding G.
 - **Orphan Docker volume** `trading-agent-system_postgres_data`, left from the original compose file. It holds no user tables (checked on a copy). Deleting it is the owner's call: `docker volume rm trading-agent-system_postgres_data`.
 - **Dependabot:** the first uv run failed (run 35465220355), but every Dependabot run on 2026-09-19 succeeded, so it looks like a one-off. Nothing to do unless it returns.
 - **`github-advanced-security` fails on most pull requests** (#4, #5, #6, #10, #11, #13, #14 and on through stage 1; it passed on #7). It is GitHub's Copilot "Code scanning AI findings" job, it is not a required check, and it blocks nothing — but a check that is usually red trains you to ignore red. Decide whether to switch it off under *Settings → Advanced Security*.
@@ -869,7 +958,8 @@ steps* rather than here, because they are still being spent.
   422. 271 .NET tests and 270 Python green.
 
 - **PR `stage-4-outcome-job`** (four commits, 2026-09-24): the sweep, the table and the
-  report. **The machinery of stage 4 is complete after this**; what is left is waiting.
+  report. **The machinery of stage 4 is complete after this**; what was left was written here
+  as waiting, which finding G later corrected.
 
   - **Three decisions.** A signal that can never be measured gets a row; one row per
     (decision, horizon) with a unique index; the sweep is a second `BackgroundService` that
@@ -1056,9 +1146,79 @@ steps* rather than here, because they are still being spent.
 
 ---
 
+## Stage 5 log (2026-09-25 ->, in progress)
+
+- **PR - the model, the clock and the horizon** (branch `stage-5-model-and-horizon`,
+  2026-09-25). Not stage 5's own work: the thing finding G said to settle before it, while
+  four independent events was the whole cost of moving `team_version`. Five commits: three,
+  then two answering a review.
+
+  - **The horizon is capped at 30 calendar days**, in pydantic, in the schema and in the
+    engine's mapper, with the range named in the prompt. 26 of 36 stored signals had asked
+    for 180 days or more. Three reasons, one direction: the system looks for short-term
+    opportunities, 30 days is about the 20 trading days of the longest fixed horizon, and
+    stage 5's time-limit exit fires on this number - at 365 it is a rule that never fires.
+    `contracts/outcome.schema.json` stays uncapped and now says why.
+  - **`qwen2.5:14b` at temperature 0 with seed 42**, after `qwen3:14b` was tried and
+    rejected on measurement. The detail is under *Before stage 5*; the short version is that
+    a thinking model costs five times the wall clock for reasoning this system never stores,
+    and cannot have it turned off through the endpoint that carries a timeout.
+  - **Timeouts moved with it.** 30 s per call was below a single step on any 14B model.
+  - *Mutation-tested:* the engine's cap changed from 30 to 365 turns exactly two tests red;
+    the Python constant drifting from the schema turns the agreement test red; the field
+    ignoring the constant turns the behaviour test red. The last two fail on different
+    mistakes, which is why both exist.
+  - *Verified live:* 307 .NET and 346 Python tests green, re-run in a throwaway worktree of
+    tracked files only; a real `POST /v1/signals` answered in 28.4 s cold and 19-20 s warm,
+    asking for a 15 day horizon; three identical requests answered SELL, SELL, SELL at
+    conviction 0.85/0.80/0.80.
+
+  *Reviewed externally, 2026-09-25*, verdict "accept with nits" and no blockers in contract
+  or wiring. Everything raised was either fixed on the branch or recorded; nothing was
+  deferred to a later pull request.
+
+  - **The worklog contradicted itself about its own corrections**, which is the finding worth
+    keeping. The commit that introduced the contradictions argued in its own message that a
+    resume document describing a plan which no longer holds is one you stop trusting - and
+    then corrected four places and left six. Two of them named `b1234878670a` as `default`'s
+    version, a hash this session had already proved exists in no row. Writing a new sentence
+    beside a stale one leaves the file *worse* than it was, because now a reader has to
+    decide which to believe. Fixed in the commit above; the sixth was found by re-running the
+    reviewer's own check over the whole file rather than the parts I had touched.
+  - **A test that fails on a correct change.** The seam test hardcoded `31` and `"past the 30
+    day limit"`, so moving the cap - consistently, in all three places - turned it red on a
+    string. Both now come from `MaxHorizonDays`. The mutation that proves it is the one where
+    *everything* stays green.
+  - **`Trading:CycleIntervalSeconds` was called a structural mismatch**, and it is not:
+    `TradingWorker` delays *after* the loop over tickers, so nothing overlaps and nothing
+    queues. The period is simply (analysis time x tickers) + 15 s, which the model change
+    moved from about 30 s to 55-70 s. So the number no longer describes the cadence, which is
+    a documentation problem and count 2 of finding G - recorded under *Open decisions*, not
+    bumped, because stage 5's third pull request deletes the cadence.
+  - **The stale-`.env` hole** was the most useful thing in the review after the worklog. No
+    setting has a default, which makes an incomplete environment fail fast but makes a *stale*
+    value silent: an `.env` from before today still says `llama3.2`, and the service starts on
+    it happily, running a third team that matches neither the docs nor the current hash. The
+    resuming checklist now diffs the two files and says why.
+  - **Not acted on:** the git author identity, at the owner's instruction.
+
+---
+
 ## Lessons and gotchas
 
 Things that cost time or were not obvious. Most are also recorded where they apply.
+
+**Keeping this file honest**
+- **Correcting a document means finding every place, not the places you remember.** A commit that argued this point in its own message then corrected four claims and left six, including two naming a `team_version` the same session had proved existed in no database row. A new sentence beside a stale one is worse than the stale one alone, because a reader now has to pick. Grep the specific phrase and the specific value across the whole file, then read the neighbouring bullets, before claiming a correction is done.
+- **A test that fails on a correct change is a liability.** Hardcoding both the input and the expected message (`31`, `"past the 30 day limit"`) meant a consistent cap change turned it red for a string reason, while the test actually guarding consistency stayed green. The mutation worth running is the one where everything should stay green - that is what tells you a test is pinning behaviour rather than pinning a literal.
+- **"Structural" is a strong word to check before repeating.** A review called the cycle interval a structural mismatch; `TradingWorker` delays after the loop, so nothing overlaps or queues. The finding was real, the severity was not, and accepting the framing would have bought a config change that stage 5 deletes.
+
+**Models and Ollama**
+- **`Win32_VideoController.AdapterRAM` is a 32-bit field and saturates at 4 GB.** It reported 4 GB for a 16 GB card, which would have ruled out every model worth switching to. `HardwareInformation.qwMemorySize` under the display class key in the registry is the real number. Two weeks of treating the machine as smaller than it is.
+- **A thinking model's thinking cannot always be turned off.** `qwen3:14b` on Ollama 0.34.4 ignores `/no_think` in the prompt and accepts `chat_template_kwargs: {"enable_thinking": false}` on `/v1` without applying it - accepted, not refused, which is the worst of the three outcomes. Only the native `/api/chat` honours `"think": false`. Check the `reasoning` field's length rather than trusting the switch.
+- **Ollama separates thinking from content on `/v1`.** `message.reasoning` holds it and `message.content` stays clean JSON, so structured output works with a thinking model. The cost is wall clock and tokens, not correctness.
+- **Temperature 0 plus a seed is not reproducibility.** Repeating an identical request gives byte-identical output; inserting a *different* request in between changes the bytes, because the numerics depend on batching and KV-cache state outside the request. Test it by interleaving, not by repeating - repeating alone will tell you it is deterministic.
+- **Raise the timeouts before switching to a larger model, not after.** 30 s per call was below a single step on any 14B, so the first run would have been a wall of 504s that looks like a broken integration.
 
 **Python and Alembic**
 - `alembic init -t async` is the *fewer*-dependencies option here, not the more: asyncpg is already a dependency, whereas a synchronous engine would mean adding psycopg for migrations alone. It does need `sqlalchemy[asyncio]` for greenlet.
