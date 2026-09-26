@@ -47,7 +47,7 @@ public sealed class DecisionRecord
 
     // What the engine was willing to spend at the moment it asked. No agent reads these, but
     // a decision is only interpretable next to the room it was made in.
-    public required decimal AvailableRiskBudgetUsd { get; init; }
+    public required decimal AvailableRiskBudget { get; init; }
     public required decimal MaxPositionPct { get; init; }
     public decimal? ExistingQuantity { get; init; }
     public decimal? ExistingAveragePrice { get; init; }

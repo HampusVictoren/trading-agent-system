@@ -47,11 +47,19 @@ class Stance(StrEnum):
 # The one place the rule lives on this side. The quote endpoint takes a symbol in its path
 # rather than in a body, so the pattern has to be reachable from there too - and a second
 # copy of a validation rule is a second chance to get it wrong.
-SYMBOL_PATTERN = r"^[A-Z][A-Z0-9.-]{0,9}$"
+#
+# Sixteen rather than the ten it was until the universe became Swedish. Ten fitted every US
+# ticker and rejected `ESSITY-B.ST` - a real OMXS30 member - and `XACT-OMXS30.ST`, which is
+# what outcomes are now measured against. A Nordic symbol carries a share class and an
+# exchange suffix, so the longest in play is fourteen; sixteen leaves room without leaving
+# the field unbounded. The same string is spelled identically in all five contract files,
+# and a test compares them, because five copies of one rule written two ways is how a rule
+# drifts.
+SYMBOL_PATTERN = r"^[A-Z][A-Z0-9.-]{0,15}$"
 
 # What the pattern allows at most, stated separately because a path parameter is rejected
 # on length before the regex is ever run.
-MAX_SYMBOL_LENGTH = 10
+MAX_SYMBOL_LENGTH = 16
 
 # Both services store the correlation id and the team id in a varchar(64) - the engine in
 # `trading.decisions`, this one in `agent.analysis_runs`. Capping the contract at the same
@@ -179,6 +187,6 @@ class SignalRequest(BaseModel):
     # Required and nullable, not optional: "no position" is something the engine states,
     # not something it may leave out.
     existing_position: ExistingPosition | None
-    available_risk_budget_usd: Annotated[float, Field(ge=0)]
+    available_risk_budget: Annotated[float, Field(ge=0)]
     max_position_pct: Annotated[float, Field(gt=0, le=1)]
     correlation_id: Annotated[str, Field(min_length=1, max_length=MAX_IDENTIFIER_LENGTH)]

@@ -54,7 +54,7 @@
         "benchmark_symbol": {
           "description": "What the signal was compared against. Stored rather than assumed, because it is configuration today and a report has to stay readable after somebody changes it.",
           "type": "string",
-          "pattern": "^[A-Z][A-Z0-9.\\-]{0,9}$"
+          "pattern": "^[A-Z][A-Z0-9.-]{0,15}$"
         },
         "measured_on": {
           "description": "The day the horizon landed on. Null when nothing was measured.",

@@ -72,7 +72,7 @@
         "symbol": {
           "description": "Uppercase, as the engine's Ticker normalises it.",
           "type": "string",
-          "pattern": "^[A-Z][A-Z0-9.-]{0,9}$"
+          "pattern": "^[A-Z][A-Z0-9.-]{0,15}$"
         }
       }
     },
@@ -114,7 +114,7 @@
         "team_id",
         "as_of",
         "existing_position",
-        "available_risk_budget_usd",
+        "available_risk_budget",
         "max_position_pct",
         "correlation_id"
       ],
@@ -128,7 +128,7 @@
         },
         "as_of": { "type": "string", "format": "date-time" },
         "existing_position": { "$ref": "#/$defs/existing_position" },
-        "available_risk_budget_usd": {
+        "available_risk_budget": {
           "description": "What the engine is willing to spend on this instrument right now, after its own rules.",
           "type": "number",
           "minimum": 0

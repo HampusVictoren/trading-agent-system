@@ -3,7 +3,7 @@
   "team_id": "default",
   "as_of": "2026-09-21T14:02:55Z",
   "existing_position": { "quantity": 3, "average_price": 210.4 },
-  "available_risk_budget_usd": 412.75,
+  "available_risk_budget": 412.75,
   "max_position_pct": 0.05,
   "correlation_id": "8b1f0a4e-6d2c-4a21-9f77-0c3b5e6a1d90"
 }

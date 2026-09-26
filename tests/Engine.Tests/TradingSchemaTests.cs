@@ -35,7 +35,7 @@ public class TradingSchemaTests : IAsyncLifetime
     private async Task<Guid> AnAccountThatHasBought()
     {
         await using var context = _database.NewContext();
-        var portfolio = new Portfolio(new Money(10_000m, "USD"));
+        var portfolio = new Portfolio(new Money(10_000m, Money.DefaultCurrency));
         portfolio.ExecuteBuy(Aapl, quantity: 2m, new Money(100m));
         context.Portfolios.Add(portfolio);
         await context.SaveChangesAsync(TestContext.Current.CancellationToken);
@@ -290,7 +290,7 @@ public class TradingSchemaTests : IAsyncLifetime
         Symbol = Aapl,
         TeamId = "default",
         RequestedAt = new DateTimeOffset(2026, 9, 23, 14, 0, 0, TimeSpan.Zero),
-        AvailableRiskBudgetUsd = 10_000m,
+        AvailableRiskBudget = 10_000m,
         MaxPositionPct = 0.05m,
         Outcome = DecisionOutcome.NoAction,
         OutcomeReason = "HOLD",

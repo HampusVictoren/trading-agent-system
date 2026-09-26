@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using Engine.Application.Contracts;
 using Engine.Application.Interfaces;
+using Engine.Domain.ValueObjects;
 using Engine.Infrastructure.Clients.Agents;
 using Polly.Timeout;
 using Shouldly;
@@ -24,7 +25,7 @@ public class PythonAgentClientTests
         TeamId = "default",
         AsOf = new DateTimeOffset(2026, 9, 23, 14, 0, 0, TimeSpan.Zero),
         ExistingPosition = null,
-        AvailableRiskBudgetUsd = 10_000m,
+        AvailableRiskBudget = 10_000m,
         MaxPositionPct = 0.05m,
         CorrelationId = "cycle-1"
     };
@@ -190,10 +191,12 @@ public class PythonAgentClientTests
         }
     }
 
+    // A constant interpolated string: every hole is itself a constant, so this stays a
+    // compile-time literal while tracking the account's currency rather than repeating it.
     private const string ValidQuote =
-        """
+        $$"""
         {"instrument":{"type":"equity","symbol":"MSFT"},
-         "price":415.25,"currency":"USD","as_of":"2026-09-24T18:44:00Z"}
+         "price":415.25,"currency":"{{Money.DefaultCurrency}}","as_of":"2026-09-24T18:44:00Z"}
         """;
 
     [Fact]
@@ -205,7 +208,7 @@ public class PythonAgentClientTests
 
         quote.ShouldNotBeNull();
         quote.Price.ShouldBe(415.25m);
-        quote.Currency.ShouldBe("USD");
+        quote.Currency.ShouldBe(Money.DefaultCurrency);
         quote.Instrument.ShouldBeOfType<EquityInstrumentDto>().Symbol.ShouldBe("MSFT");
     }
 

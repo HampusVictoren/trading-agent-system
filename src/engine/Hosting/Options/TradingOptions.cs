@@ -34,7 +34,7 @@ public sealed class TradingOptions
     /// and zero is not a portfolio.
     /// </remarks>
     [Range(typeof(decimal), "1", "100000000")]
-    public decimal OpeningBalanceUsd { get; init; }
+    public decimal OpeningBalance { get; init; }
 
     public TimeSpan CycleInterval => TimeSpan.FromSeconds(CycleIntervalSeconds);
 }

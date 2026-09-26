@@ -20,7 +20,7 @@ public class EngineOptionsTests
         ["Trading:Tickers:0"] = "AAPL",
         ["Trading:CycleIntervalSeconds"] = "15",
         ["Trading:TeamId"] = "default",
-        ["Trading:OpeningBalanceUsd"] = "10000",
+        ["Trading:OpeningBalance"] = "10000",
         ["Database:ConnectionString"] = "Host=127.0.0.1;Database=tradingdb;Username=engine_svc",
         ["Outcome:CommissionBps"] = "1",
         ["Outcome:SpreadBps"] = "2",
@@ -64,7 +64,7 @@ public class EngineOptionsTests
         Resolve<TradingOptions>().Tickers.ShouldBe(["AAPL"]);
         Resolve<TradingOptions>().CycleInterval.ShouldBe(TimeSpan.FromSeconds(15));
         Resolve<TradingOptions>().TeamId.ShouldBe("default");
-        Resolve<TradingOptions>().OpeningBalanceUsd.ShouldBe(10_000m);
+        Resolve<TradingOptions>().OpeningBalance.ShouldBe(10_000m);
     }
 
     [Fact]
@@ -136,7 +136,7 @@ public class EngineOptionsTests
         // that follows, because the position cap is a share of the portfolio's value. A
         // missing setting binds to zero, which the lower bound is there to catch.
         Should.Throw<OptionsValidationException>(
-            () => Resolve<TradingOptions>(("Trading:OpeningBalanceUsd", value)));
+            () => Resolve<TradingOptions>(("Trading:OpeningBalance", value)));
     }
 
     [Fact]

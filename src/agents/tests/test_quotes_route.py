@@ -19,7 +19,7 @@ from app.application.errors import InstrumentNotFound, MarketDataUnavailable
 from app.dependencies import get_resources
 from app.domain.facts import MarketSnapshot, PriceBar, Quote
 from app.domain.quotes import InstrumentQuote
-from app.domain.signals import EquityInstrument
+from app.domain.signals import MAX_SYMBOL_LENGTH, EquityInstrument
 from app.main import app
 from app.settings import get_settings
 
@@ -99,7 +99,10 @@ def test_the_fact_sheets_own_fields_do_not_leak_into_the_answer(quotes):
         "../internal/shutdown",
         "..%2Fsecrets",
         "msft",  # the engine normalises before it asks; lower case is somebody else
-        "TOOLONGSYMBOL",
+        # Derived, not spelled out: this was the literal "TOOLONGSYMBOL" until the cap moved
+        # from ten to sixteen for Swedish tickers, at which point it silently became a valid
+        # symbol and stopped testing anything.
+        "A" * (MAX_SYMBOL_LENGTH + 1),
         "1MSFT",
     ],
 )

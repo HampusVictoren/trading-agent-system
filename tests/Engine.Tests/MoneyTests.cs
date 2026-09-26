@@ -9,8 +9,10 @@ public class MoneyTests
     [Fact]
     public void Add_sums_the_amounts_and_keeps_the_currency()
     {
+        // Both sides are built from the default, because what this asserts is that Add keeps
+        // the currency - not which currency the account happens to be in.
         new Money(100m).Add(new Money(50m))
-            .ShouldBe(new Money(150m, "USD"));
+            .ShouldBe(new Money(150m, Money.DefaultCurrency));
     }
 
     [Fact]
@@ -33,7 +35,10 @@ public class MoneyTests
     [Fact]
     public void Zero_defaults_to_usd()
     {
-        Money.Zero().ShouldBe(new Money(0m, "USD"));
+        // Named rather than spelled, because this test is about the default being *the*
+        // default - the account's currency moved from USD to SEK and the assertion should
+        // not have to move with it.
+        Money.Zero().ShouldBe(new Money(0m, Money.DefaultCurrency));
     }
 
     [Fact]

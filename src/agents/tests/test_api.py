@@ -45,7 +45,7 @@ A_REQUEST = {
     "team_id": "default",
     "as_of": "2026-09-23T14:02:55Z",
     "existing_position": None,
-    "available_risk_budget_usd": 500.0,
+    "available_risk_budget": 500.0,
     "max_position_pct": 0.05,
     "correlation_id": "0f2d7c11-3b48-4e9a-8c15-77ab2e4d6f30",
 }

@@ -16,12 +16,17 @@ using Engine.Domain.ValueObjects;
 /// already raises for a body that is not the contract, so the use case reports one outcome
 /// for "the agents answered with something unusable" however it went wrong.
 ///
-/// The contract has no currency field: every price in it is USD, and the engine's portfolio
-/// is USD. Stage 5's wider universe is where that has to become explicit.
+/// The contract has no currency field: every price in it is the account's currency, and the
+/// account and the universe are both Swedish. The quote contract does carry one, because a
+/// quote can be for an instrument the engine does not price in kronor - and that is the seam
+/// where a mismatch would surface, which is finding D's remaining half.
 /// </remarks>
 public static class TradeSignalMapper
 {
-    private const string ContractCurrency = "USD";
+    // What a price in this contract is denominated in. It is the account's currency rather
+    // than the instrument's, and the two are the same only because the universe is Swedish;
+    // Money.DefaultCurrency is where that is decided.
+    private const string ContractCurrency = Money.DefaultCurrency;
 
     // The caps in contracts/trade-signal.schema.json. System.Text.Json does not read JSON
     // Schema, so the engine has to enforce them itself - and it has to, because from stage 4

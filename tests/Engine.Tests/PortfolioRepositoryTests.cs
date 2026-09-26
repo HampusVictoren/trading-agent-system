@@ -42,7 +42,7 @@ public class PortfolioRepositoryTests : IAsyncLifetime
     {
         var id = await InAScope(async (portfolios, _, commit) =>
         {
-            var portfolio = new Portfolio(new Money(10_000m, "USD"));
+            var portfolio = new Portfolio(new Money(10_000m, Money.DefaultCurrency));
             portfolio.ExecuteBuy(Aapl, quantity: 3m, new Money(210.40m));
             portfolios.Add(portfolio);
             await commit.SaveChangesAsync(TestContext.Current.CancellationToken);
@@ -53,12 +53,12 @@ public class PortfolioRepositoryTests : IAsyncLifetime
 
         reloaded.ShouldNotBeNull();
         reloaded.Id.ShouldBe(id);
-        reloaded.CashBalance.ShouldBe(new Money(9368.80m, "USD"));
+        reloaded.CashBalance.ShouldBe(new Money(9368.80m, Money.DefaultCurrency));
 
         var position = reloaded.Positions.ShouldHaveSingleItem();
         position.Ticker.ShouldBe(Aapl);
         position.Quantity.ShouldBe(3m);
-        position.AveragePurchasePrice.ShouldBe(new Money(210.40m, "USD"));
+        position.AveragePurchasePrice.ShouldBe(new Money(210.40m, Money.DefaultCurrency));
     }
 
     [Fact]
@@ -76,7 +76,7 @@ public class PortfolioRepositoryTests : IAsyncLifetime
     {
         await InAScope(async (portfolios, _, commit) =>
         {
-            var portfolio = new Portfolio(new Money(10_000m, "USD"));
+            var portfolio = new Portfolio(new Money(10_000m, Money.DefaultCurrency));
             portfolio.ExecuteBuy(Aapl, quantity: 2m, new Money(100m));
             portfolios.Add(portfolio);
             await commit.SaveChangesAsync(TestContext.Current.CancellationToken);
@@ -110,7 +110,7 @@ public class PortfolioRepositoryTests : IAsyncLifetime
         // that grows with the account's history, and no domain rule reads it back.
         await InAScope(async (portfolios, _, commit) =>
         {
-            var portfolio = new Portfolio(new Money(10_000m, "USD"));
+            var portfolio = new Portfolio(new Money(10_000m, Money.DefaultCurrency));
             portfolio.ExecuteBuy(Aapl, quantity: 2m, new Money(100m));
             portfolios.Add(portfolio);
             await commit.SaveChangesAsync(TestContext.Current.CancellationToken);
@@ -129,8 +129,8 @@ public class PortfolioRepositoryTests : IAsyncLifetime
         // first would hide it for exactly as long as it takes to lose money.
         await using (var context = _database.NewContext())
         {
-            context.Portfolios.Add(new Portfolio(new Money(10_000m, "USD")));
-            context.Portfolios.Add(new Portfolio(new Money(5_000m, "USD")));
+            context.Portfolios.Add(new Portfolio(new Money(10_000m, Money.DefaultCurrency)));
+            context.Portfolios.Add(new Portfolio(new Money(5_000m, Money.DefaultCurrency)));
             await context.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
@@ -145,7 +145,7 @@ public class PortfolioRepositoryTests : IAsyncLifetime
     {
         var portfolioId = await InAScope(async (portfolios, decisions, commit) =>
         {
-            var portfolio = new Portfolio(new Money(10_000m, "USD"));
+            var portfolio = new Portfolio(new Money(10_000m, Money.DefaultCurrency));
             portfolios.Add(portfolio);
             decisions.Record(ADecision(portfolio.Id));
             await commit.SaveChangesAsync(TestContext.Current.CancellationToken);
@@ -177,7 +177,7 @@ public class PortfolioRepositoryTests : IAsyncLifetime
         // make the agent service look more reliable the worse it got.
         await InAScope(async (portfolios, decisions, commit) =>
         {
-            var portfolio = new Portfolio(new Money(10_000m, "USD"));
+            var portfolio = new Portfolio(new Money(10_000m, Money.DefaultCurrency));
             portfolios.Add(portfolio);
             decisions.Record(new DecisionRecord
             {
@@ -186,7 +186,7 @@ public class PortfolioRepositoryTests : IAsyncLifetime
                 Symbol = Msft,
                 TeamId = "default",
                 RequestedAt = new DateTimeOffset(2026, 9, 23, 14, 0, 0, TimeSpan.Zero),
-                AvailableRiskBudgetUsd = 10_000m,
+                AvailableRiskBudget = 10_000m,
                 MaxPositionPct = 0.05m,
                 Outcome = DecisionOutcome.AgentUnavailable,
                 OutcomeReason = "the agent service answered 503",
@@ -215,7 +215,7 @@ public class PortfolioRepositoryTests : IAsyncLifetime
 
         await InAScope(async (portfolios, decisions, commit) =>
         {
-            var portfolio = new Portfolio(new Money(10_000m, "USD"));
+            var portfolio = new Portfolio(new Money(10_000m, Money.DefaultCurrency));
             portfolios.Add(portfolio);
             decisions.Record(ADecision(portfolio.Id, quoteAsOf));
             await commit.SaveChangesAsync(TestContext.Current.CancellationToken);
@@ -236,7 +236,7 @@ public class PortfolioRepositoryTests : IAsyncLifetime
         Symbol = Msft,
         TeamId = "default",
         RequestedAt = new DateTimeOffset(2026, 9, 23, 14, 0, 0, TimeSpan.Zero),
-        AvailableRiskBudgetUsd = 10_000m,
+        AvailableRiskBudget = 10_000m,
         MaxPositionPct = 0.05m,
         ExistingQuantity = null,
         ExistingAveragePrice = null,
@@ -248,7 +248,7 @@ public class PortfolioRepositoryTests : IAsyncLifetime
         KeyRisks = ["Multipelkontraktion", "Svag orderingång"],
         HorizonDays = 5,
         ReferencePrice = 415.25m,
-        ReferenceCurrency = "USD",
+        ReferenceCurrency = Money.DefaultCurrency,
         QuoteAsOf = quoteAsOf ?? new DateTimeOffset(2026, 9, 23, 13, 58, 0, TimeSpan.Zero),
         Outcome = DecisionOutcome.RejectedByRisk,
         OutcomeReason = "the quote is older than the policy allows",

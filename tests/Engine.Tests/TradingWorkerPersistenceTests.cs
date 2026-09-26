@@ -78,7 +78,7 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
                 ["Trading:Tickers:0"] = Symbol,
                 ["Trading:CycleIntervalSeconds"] = "3600",
                 ["Trading:TeamId"] = "default",
-                ["Trading:OpeningBalanceUsd"] = "10000",
+                ["Trading:OpeningBalance"] = "10000",
                 ["Database:ConnectionString"] = _database.ConnectionString,
             })
             .Build();
@@ -189,7 +189,7 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
         decisions.Select(row => row.OrderId).ShouldBe(orders.Select(order => (Guid?)order.Id), ignoreOrder: true);
 
         // The second cycle saw the money the first one spent.
-        decisions[1].AvailableRiskBudgetUsd.ShouldBe(9_800m);
+        decisions[1].AvailableRiskBudget.ShouldBe(9_800m);
         decisions[1].ExistingQuantity.ShouldBe(2m);
     }
 

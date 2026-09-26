@@ -260,7 +260,7 @@ public class ProcessProposalUseCase
             TeamId = request.TeamId,
             RequestedAt = request.AsOf,
 
-            AvailableRiskBudgetUsd = request.AvailableRiskBudgetUsd,
+            AvailableRiskBudget = request.AvailableRiskBudget,
             MaxPositionPct = request.MaxPositionPct,
             ExistingQuantity = request.ExistingPosition?.Quantity,
             ExistingAveragePrice = request.ExistingPosition?.AveragePrice,
@@ -308,7 +308,7 @@ public class ProcessProposalUseCase
             // holding - and those arrive with stage 4's quote endpoint. No agent reads this
             // figure anyway; it is sent because the decision record should say what the
             // engine could have spent.
-            AvailableRiskBudgetUsd = portfolio.CashBalance.Amount,
+            AvailableRiskBudget = portfolio.CashBalance.Amount,
             MaxPositionPct = _policy.MaxPositionPct,
             CorrelationId = correlationId
         };

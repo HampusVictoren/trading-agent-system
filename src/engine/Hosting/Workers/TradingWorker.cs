@@ -106,12 +106,12 @@ public class TradingWorker : BackgroundService
     /// <summary>Happens once in the account's life: the first cycle against an empty database.</summary>
     private Portfolio OpenTheAccount(IPortfolioRepository portfolios)
     {
-        var portfolio = new Portfolio(new Money(_options.OpeningBalanceUsd, Money.DefaultCurrency));
+        var portfolio = new Portfolio(new Money(_options.OpeningBalance, Money.DefaultCurrency));
         portfolios.Add(portfolio);
 
         _logger.LogInformation(
             "No portfolio was stored, so one was opened with ${Balance} {Currency}.",
-            _options.OpeningBalanceUsd, Money.DefaultCurrency);
+            _options.OpeningBalance, Money.DefaultCurrency);
 
         return portfolio;
     }

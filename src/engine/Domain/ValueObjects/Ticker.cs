@@ -16,7 +16,7 @@ public partial record Ticker
     /// stage 5's screening produces symbols from market data rather than from configuration,
     /// and a value object that accepts anything non-blank is no rule at all.
     /// </remarks>
-    [GeneratedRegex(@"^[A-Z][A-Z0-9.\-]{0,9}$")]
+    [GeneratedRegex(@"^[A-Z][A-Z0-9.\-]{0,15}$")]
     private static partial Regex Format();
 
     public string Value { get; }

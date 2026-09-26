@@ -19,7 +19,7 @@ from app.application.errors import InstrumentNotFound, MarketDataUnavailable
 from app.dependencies import get_resources
 from app.domain.facts import MarketSnapshot, PriceBar, Quote
 from app.domain.quotes import InstrumentHistory
-from app.domain.signals import EquityInstrument
+from app.domain.signals import MAX_SYMBOL_LENGTH, EquityInstrument
 from app.main import app
 from app.settings import get_settings
 
@@ -135,7 +135,10 @@ def test_a_date_that_is_not_a_date_is_refused_before_any_lookup(history):
     market.snapshot.assert_not_called()
 
 
-@pytest.mark.parametrize("symbol", ["../internal/shutdown", "msft", "TOOLONGSYMBOL"])
+# The last case is derived rather than spelled out: it was the literal "TOOLONGSYMBOL" until
+# the cap moved from ten to sixteen for Swedish tickers, at which point it silently became a
+# valid symbol and stopped testing anything.
+@pytest.mark.parametrize("symbol", ["../internal/shutdown", "msft", "A" * (MAX_SYMBOL_LENGTH + 1)])
 def test_a_symbol_that_is_not_a_symbol_is_refused_before_any_lookup(history, symbol):
     client, market = history
 

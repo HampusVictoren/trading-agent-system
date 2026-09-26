@@ -177,7 +177,7 @@ public class TradeSignalContractTests
             TeamId = "default",
             AsOf = DateTimeOffset.Parse("2026-09-21T14:02:55Z"),
             ExistingPosition = new ExistingPositionDto { Quantity = 3m, AveragePrice = 210.4m },
-            AvailableRiskBudgetUsd = 412.75m,
+            AvailableRiskBudget = 412.75m,
             MaxPositionPct = 0.05m,
             CorrelationId = "8b1f0a4e-6d2c-4a21-9f77-0c3b5e6a1d90"
         };
@@ -201,7 +201,7 @@ public class TradeSignalContractTests
             TeamId = "default",
             AsOf = DateTimeOffset.UtcNow,
             ExistingPosition = null,
-            AvailableRiskBudgetUsd = 500m,
+            AvailableRiskBudget = 500m,
             MaxPositionPct = 0.05m,
             CorrelationId = "c-1"
         };
