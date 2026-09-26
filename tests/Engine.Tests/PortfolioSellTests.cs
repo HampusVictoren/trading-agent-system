@@ -251,4 +251,33 @@ public class PortfolioSellTests
             TheHolding(portfolio).AveragePurchasePrice.Amount.ShouldBe(105m);
         }
     }
+
+    public class WhyTheSaleHappened : PortfolioSellTests
+    {
+        [Fact]
+        public void Is_on_the_ledger_line_because_it_cannot_be_worked_out_afterwards()
+        {
+            // A sale of ten shares at a hundred looks identical whichever of the three
+            // triggers produced it, and "the agents' exits beat the mechanical ones" is a
+            // question only this column can answer.
+            var portfolio = Holding(quantity: 26m, at: 95m);
+
+            var order = portfolio.ExecuteSell(Eric, 10m, new Money(100m), OrderTrigger.StopLoss);
+
+            order.Trigger.ShouldBe(OrderTrigger.StopLoss);
+        }
+
+        [Fact]
+        public void Is_always_the_agents_own_idea_on_a_buy()
+        {
+            // ExecuteBuy takes no trigger at all: the deterministic rules only ever sell, so a
+            // parameter here would have one legal value and give a caller somewhere to pass
+            // the wrong one.
+            var portfolio = new Portfolio(new Money(100_000m));
+
+            var order = portfolio.ExecuteBuy(Eric, 10m, new Money(95m), Bought, Horizon);
+
+            order.Trigger.ShouldBe(OrderTrigger.Signal);
+        }
+    }
 }

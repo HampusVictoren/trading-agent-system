@@ -93,7 +93,12 @@ public class Portfolio
             _positions.Add(new Position(ticker, quantity, price, at, horizonDays));
         }
 
-        var order = new Order(Guid.CreateVersion7(), Id, ticker, OrderSide.Buy, quantity, price);
+        // No trigger parameter, unlike a sale. Every buy in this system comes from a signal -
+        // the deterministic rules only ever sell - so a parameter here would have one legal
+        // value and give a caller somewhere to pass the wrong one.
+        var order = new Order(
+            Guid.CreateVersion7(), Id, ticker, OrderSide.Buy, quantity, price, OrderTrigger.Signal);
+
         _newOrders.Add(order);
         return order;
     }
@@ -112,8 +117,11 @@ public class Portfolio
     /// No short selling: this refuses to sell what is not held rather than opening a negative
     /// position. That is a deliberate no, and it is enforced here as well as above because this
     /// is the only code that moves shares.
+    ///
+    /// The trigger is a parameter because a sale genuinely has three sources, and which one it
+    /// was cannot be worked out afterwards from a row that looks identical either way.
     /// </remarks>
-    public Order ExecuteSell(Ticker ticker, decimal quantity, Money price)
+    public Order ExecuteSell(Ticker ticker, decimal quantity, Money price, OrderTrigger trigger)
     {
         var position = _positions.FirstOrDefault(held => held.Ticker == ticker)
             ?? throw new InvalidOperationException(
@@ -129,7 +137,7 @@ public class Portfolio
             _positions.Remove(position);
 
         var order = new Order(
-            Guid.CreateVersion7(), Id, ticker, OrderSide.Sell, quantity, price, realised);
+            Guid.CreateVersion7(), Id, ticker, OrderSide.Sell, quantity, price, trigger, realised);
 
         _newOrders.Add(order);
         return order;

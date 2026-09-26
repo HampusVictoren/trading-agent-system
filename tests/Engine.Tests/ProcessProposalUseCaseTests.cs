@@ -27,7 +27,8 @@ public class ProcessProposalUseCaseTests
     private static readonly DateTimeOffset Now = new(2026, 9, 23, 14, 0, 0, TimeSpan.Zero);
 
     private static readonly RiskPolicy Policy =
-        new(maxPositionPct: 0.05m, cashBufferPct: 0.10m, maxQuoteAge: TimeSpan.FromMinutes(5));
+        new(maxPositionPct: 0.05m, cashBufferPct: 0.10m, maxQuoteAge: TimeSpan.FromMinutes(5),
+            minHoldingPeriod: TimeSpan.FromDays(3));
 
     private sealed class FixedClock(DateTimeOffset now) : TimeProvider
     {

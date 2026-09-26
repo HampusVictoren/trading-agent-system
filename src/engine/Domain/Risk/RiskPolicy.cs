@@ -23,7 +23,26 @@ public sealed record RiskPolicy
     /// </summary>
     public TimeSpan MaxQuoteAge { get; }
 
-    public RiskPolicy(decimal maxPositionPct, decimal cashBufferPct, TimeSpan maxQuoteAge)
+    /// <summary>
+    /// How long a holding is kept before the agents are allowed to sell it on a new opinion.
+    /// </summary>
+    /// <remarks>
+    /// A churn guard, not a conviction about markets. A cycle runs every minute or so, and the
+    /// same model given the same fact sheet answered HOLD at 0.50 and then BUY at 0.60 two
+    /// minutes later - so without this, one instrument could be bought and sold several times
+    /// in an afternoon on noise, and the commission on every leg would be the only certain
+    /// outcome of it. It is measured in calendar time from the last purchase, because that is
+    /// what a clock gives; counting trading days here would be borrowing a measurement rule to
+    /// answer a question about how fast the system may change its mind.
+    ///
+    /// A stop-loss and a time limit are exempt, and that is the whole reason an order carries a
+    /// trigger. They are not new opinions - they are what was agreed at the purchase - and a
+    /// minimum hold that blocked a stop-loss would turn a risk control into a waiting period.
+    /// </remarks>
+    public TimeSpan MinHoldingPeriod { get; }
+
+    public RiskPolicy(
+        decimal maxPositionPct, decimal cashBufferPct, TimeSpan maxQuoteAge, TimeSpan minHoldingPeriod)
     {
         if (maxPositionPct <= 0m || maxPositionPct > 1m)
         {
@@ -43,8 +62,19 @@ public sealed record RiskPolicy
                 nameof(maxQuoteAge), maxQuoteAge, "A quote age limit must be a positive period.");
         }
 
+        // Zero is a real answer - it means the agents may reverse a purchase immediately - so it
+        // is allowed, and only a negative period is a mistake. There is no upper bound here:
+        // "longer than any thesis's horizon" is a rule about the contract, and the domain does
+        // not know the contract. RiskPolicyOptions does, and enforces it at startup.
+        if (minHoldingPeriod < TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(minHoldingPeriod), minHoldingPeriod, "A minimum holding period cannot be negative.");
+        }
+
         MaxPositionPct = maxPositionPct;
         CashBufferPct = cashBufferPct;
         MaxQuoteAge = maxQuoteAge;
+        MinHoldingPeriod = minHoldingPeriod;
     }
 }

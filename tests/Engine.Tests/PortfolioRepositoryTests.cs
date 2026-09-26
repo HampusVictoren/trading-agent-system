@@ -108,6 +108,59 @@ public class PortfolioRepositoryTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_sale_survives_being_stored_and_read_back()
+    {
+        // Three mappings that only a database can prove: the realised figure as an owned value
+        // that is null on a buy, the trigger as text rather than an enum's number, and a sold
+        // out holding leaving no row behind. The last one is a delete through the aggregate,
+        // which is the part a unit test cannot tell apart from never having inserted it.
+        await InAScope(async (portfolios, _, commit) =>
+        {
+            var portfolio = new Portfolio(new Money(10_000m, Money.DefaultCurrency));
+            portfolio.ExecuteBuy(Aapl, quantity: 10m, new Money(100m));
+            portfolios.Add(portfolio);
+            await commit.SaveChangesAsync(TestContext.Current.CancellationToken);
+            return portfolio.Id;
+        });
+
+        await InAScope(async (portfolios, _, commit) =>
+        {
+            var portfolio = (await portfolios.FindAsync(TestContext.Current.CancellationToken))!;
+            portfolio.ExecuteSell(Aapl, quantity: 4m, new Money(120m), OrderTrigger.Signal);
+            portfolio.ExecuteSell(Aapl, quantity: 6m, new Money(90m), OrderTrigger.StopLoss);
+            await commit.SaveChangesAsync(TestContext.Current.CancellationToken);
+            return portfolio.Id;
+        });
+
+        await using var context = _database.NewContext();
+        var orders = await context.Orders.ToListAsync(TestContext.Current.CancellationToken);
+
+        // Keyed on the quantity rather than read in order, and that is not fussiness: the two
+        // sales are created in the same millisecond, and two version 7 ids from the same
+        // millisecond sort by the random bits that follow the timestamp. Ordering by id passed
+        // in a full run and failed when this test ran alone.
+        var buy = orders.Single(order => order.Quantity == 10m);
+        var partial = orders.Single(order => order.Quantity == 4m);
+        var rest = orders.Single(order => order.Quantity == 6m);
+
+        buy.Side.ShouldBe(OrderSide.Buy);
+        buy.Trigger.ShouldBe(OrderTrigger.Signal);
+        buy.RealisedProfitAndLoss.ShouldBeNull();
+
+        // 4 shares 20 up and 6 shares 10 down, both against the 100 they cost.
+        partial.Trigger.ShouldBe(OrderTrigger.Signal);
+        partial.RealisedProfitAndLoss!.Amount.ShouldBe(80m);
+
+        rest.Trigger.ShouldBe(OrderTrigger.StopLoss);
+        rest.RealisedProfitAndLoss!.Amount.ShouldBe(-60m);
+
+        var reloaded = await InAScope((portfolios, _, _) => portfolios.FindAsync(TestContext.Current.CancellationToken));
+
+        reloaded!.Positions.ShouldBeEmpty();
+        reloaded.CashBalance.ShouldBe(new Money(10_020m, Money.DefaultCurrency));
+    }
+
+    [Fact]
     public async Task A_reloaded_portfolio_does_not_carry_the_orders_it_already_placed()
     {
         // NewOrders means what it says. Loading the whole ledger to append one line is work

@@ -31,6 +31,11 @@ internal static class PortfolioTestExtensions
     internal static void AddQuantity(this Position position, decimal addedQuantity, Money price) =>
         position.AddQuantity(addedQuantity, price, BoughtAt, ThesisHorizonDays);
 
+    /// <summary>The sale a test means when it is not about why the sale happened.</summary>
+    internal static Order ExecuteSell(
+        this Portfolio portfolio, Ticker ticker, decimal quantity, Money price) =>
+        portfolio.ExecuteSell(ticker, quantity, price, OrderTrigger.Signal);
+
     /// <summary>A holding with the two new values filled in, for tests that predate them.</summary>
     internal static Position APosition(Ticker ticker, decimal quantity, Money averagePrice) =>
         new(ticker, quantity, averagePrice, BoughtAt, ThesisHorizonDays);

@@ -17,8 +17,13 @@ public sealed class OrderConfiguration : IEntityTypeConfiguration<Order>
 
         builder.HasKey(order => order.Id);
 
-        // Version 7 ids come from the domain, time-ordered, so the primary key's index also
-        // gives the ledger its natural reading order.
+        // Version 7 ids come from the domain, time-ordered to the millisecond, so the primary
+        // key's index also gives the ledger its reading order - between cycles. Within one
+        // millisecond it does not: .NET fills the bits after the timestamp at random, so two
+        // orders placed in the same transaction sort arbitrarily, and `placed_at` cannot break
+        // the tie either because `now()` is the transaction's clock and identical for both.
+        // Nothing reads the ledger in order today. A cycle that places several sales will, and
+        // that is when it needs a sequence of its own rather than a sharper timestamp.
         builder.Property(order => order.Id).ValueGeneratedNever();
 
         builder.Property(order => order.Ticker)
@@ -40,6 +45,15 @@ public sealed class OrderConfiguration : IEntityTypeConfiguration<Order>
             price.Property(money => money.Amount).HasPrecision(MoneyPrecision.Digits, MoneyPrecision.Decimals);
             price.Property(money => money.Currency).HasMaxLength(3).IsFixedLength();
         });
+
+        // Text as well, and for the same reason: `triggered_by = 'StopLoss'` is readable from
+        // psql, and stage 5's later exits add values without a migration. The column is named
+        // rather than defaulted to "Trigger", which in a table that carries an append-only
+        // trigger would be a word with two meanings in the same schema.
+        builder.Property(order => order.Trigger)
+            .HasConversion<string>()
+            .HasColumnName("triggered_by")
+            .HasMaxLength(16);
 
         // Notional is worked out from the two columns beside it, so storing it would be a
         // second copy of the same fact that nothing keeps in step.

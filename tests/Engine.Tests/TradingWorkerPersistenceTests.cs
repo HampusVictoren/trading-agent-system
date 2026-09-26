@@ -74,6 +74,7 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
                 ["AgentService:ApiKey"] = "a-test-key",
                 ["RiskPolicy:MaxPositionPercentage"] = "0.05",
                 ["RiskPolicy:CashBufferPct"] = "0.10",
+                ["RiskPolicy:MinHoldingPeriodDays"] = "3",
                 ["RiskPolicy:MaxQuoteAgeSeconds"] = "300",
                 ["Trading:Tickers:0"] = Symbol,
                 ["Trading:CycleIntervalSeconds"] = "3600",

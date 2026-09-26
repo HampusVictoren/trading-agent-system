@@ -3,13 +3,19 @@ namespace Engine.Domain.Risk;
 using Engine.Domain.Signals;
 
 /// <summary>
-/// How much of the available budget a conviction is allowed to use: none, half, or all of it.
+/// How much of the allowance a conviction is allowed to use: none, half, or all of it. On a
+/// buy that allowance is a budget; on a sale it is the holding.
 /// </summary>
 /// <remarks>
 /// Deliberately discrete. An LLM's conviction is not calibrated - 0.8 does not mean it is
 /// right eight times in ten - so scaling an amount by it linearly reads a precision that is
 /// not there. Three tiers say "not worth acting on", "worth a starter position" and "worth
 /// the full allowance", which is as much as the number can honestly support.
+///
+/// The same thresholds scale both directions. A conviction of 0.5 means the same thing
+/// whichever way it points - worth acting on, but not with everything - and a separate set of
+/// numbers for selling would be two sets to calibrate in stage 8 with the same absence of
+/// evidence behind both.
 ///
 /// Stage 8 revisits the thresholds against measured outcomes. Until there are outcomes,
 /// moving them would be guessing, so they are code rather than configuration.
