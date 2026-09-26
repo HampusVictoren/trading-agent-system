@@ -43,5 +43,13 @@ public sealed class PositionConfiguration : IEntityTypeConfiguration<Position>
 /// The column says so too, so a value that could not exist cannot be stored.</summary>
 internal static class TickerColumn
 {
-    public const int MaxLength = 10;
+    /// <summary>
+    /// The width of every symbol column in the `trading` schema, and it has to be at least
+    /// what the contract's symbol pattern admits - which is 16 since the universe became
+    /// Swedish. It was 10, and `XACT-OMXS30.ST` at 14 characters would have made every sweep
+    /// fail to write a measurement: `22001: value too long for type character varying(10)`,
+    /// at night, in the one job nobody watches. Widening the pattern without widening the
+    /// column is the mistake this constant exists to make visible in one place.
+    /// </summary>
+    public const int MaxLength = 16;
 }

@@ -14,6 +14,7 @@ import pytest
 import pytest_asyncio
 
 from app.domain.outcomes import HorizonUnit, MeasuredOutcome, OutcomeStatus
+from app.domain.signals import MAX_SYMBOL_LENGTH
 from app.infrastructure.db.outcomes import PostgresOutcomeStore
 
 MEASURED = MeasuredOutcome(
@@ -74,6 +75,50 @@ async def test_every_figure_comes_back_as_the_engine_sent_it(pool: asyncpg.Pool)
     assert row["excess_return"] == Decimal("0.015484")
     assert row["net_edge"] == Decimal("0.014884")
     assert row["hit"] is True
+
+
+async def test_the_longest_benchmark_symbol_the_contract_allows_fits_the_column(
+    pool: asyncpg.Pool,
+) -> None:
+    """The guard that was missing when the benchmark moved to Stockholm.
+
+    `benchmark_symbol` was `varchar(10)` while the contract's pattern allowed sixteen, so
+    `XACT-OMXS30.ST` at fourteen characters would have made this service refuse **every** row
+    the engine posted after the switch - nightly, in the one job nobody watches. Nothing in
+    either suite wrote a symbol longer than four characters to a real column, so nothing
+    noticed. A pattern widened without its column is the mistake; a round trip is what sees it.
+    """
+    benchmark = "A" * MAX_SYMBOL_LENGTH
+
+    await PostgresOutcomeStore(pool).store(
+        [MEASURED.model_copy(update={"correlation_id": "c-long", "benchmark_symbol": benchmark})]
+    )
+
+    stored = await pool.fetchval(
+        "SELECT benchmark_symbol FROM agent.signal_outcomes WHERE correlation_id = $1", "c-long"
+    )
+
+    assert stored == benchmark
+
+
+async def test_a_symbol_the_actual_benchmark_uses_fits_the_column(
+    pool: asyncpg.Pool,
+) -> None:
+    """The same guard with the real value, because the abstract one would still have passed
+    at a width of sixteen while the benchmark was something longer."""
+    await PostgresOutcomeStore(pool).store(
+        [
+            MEASURED.model_copy(
+                update={"correlation_id": "c-omx", "benchmark_symbol": "XACT-OMXS30.ST"}
+            )
+        ]
+    )
+
+    stored = await pool.fetchval(
+        "SELECT benchmark_symbol FROM agent.signal_outcomes WHERE correlation_id = $1", "c-omx"
+    )
+
+    assert stored == "XACT-OMXS30.ST"
 
 
 async def test_a_row_that_could_not_be_measured_keeps_its_reason_and_no_numbers(
