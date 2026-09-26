@@ -73,7 +73,8 @@ Two things that are easy to misread as broken:
 
 - **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21, **stage 3 done** 2026-09-23. **Stage 4 started** 2026-09-23. PR 5 and PR 6 were each split in two, so the stage is eight pull requests, and **all eight are merged** as of 2026-09-25. **Stage 5 has started**, with the model and the horizon settled first; stages 6-8 exist only as plan.
 - **`master` is at PR #41**, and stage 4 is fully merged: 6a (#39), 6b (#40) and the docs-only record of finding G (#41), all on 2026-09-25. Nothing reaches `master` without the three required checks passing, so what is there is green by construction.
-- **One branch is open:** `stage-5-model-and-horizon` - the model, the clock and the horizon cap. Not stage 5 itself; the thing finding G said to do before it.
+- **One branch is open:** `stage-5-screening`, PR 1 of stage 5's three - the screen. `stage-5-model-and-horizon` merged as #42 on 2026-09-25.
+- **The system can find candidates now.** `POST /v1/screen` ranks a universe with no LLM call at all: risk-adjusted momentum from bars, filtered on liquidity, with everything it left out named and the reason attached. The stage's stated practical risk turned out to be a measurement rather than a worry - **50 instruments in 2.0 seconds**, the same as 8, because `yf.download` batches and the ranking asks for no fundamentals. Nothing calls it yet; the engine starts driving the cycle in PR 3.
 - **`b1234878670a` never reached a row, and that is worth knowing rather than forgetting.** On 2026-09-25 `default`'s hash moved from `6c6da0e6edad` to `b1234878670a` without a word of the team changing: adding `sees_memory` to the payload wrote `sees_memory: false` onto every step. The payload was made sparse the same day, before the engine ran again, so the accidental hash was never stored - `SELECT team_id, team_version, count(*) FROM trading.decisions` returns only `6c6da0e6edad` and `79dfb7307b57`. Nothing has to be pooled and nothing has to be written down; the earlier warning in this file that the two hashes had to be reconciled by hand is obsolete, not wrong at the time. The lesson survives the hash: a version payload that lists every flag with its default ties the version to the shape of the payload rather than to the team.
 - **There is one path now.** `POST /v1/signals` is the only endpoint that costs money, the engine calls it every cycle, and the old three-agent chain, `InvestmentProposal`, `ValidateTrade`, `RiskViolationException` and the FastMCP server are gone. Running the engine today produces real quantities at real prices, with the position cap holding across cycles.
 - **Every environment variable was renamed on 2026-09-23.** The local `src/agents/.env` was renamed in place and still works; a fresh clone follows `.env.example`. Nothing outside this repo reads them.
@@ -1202,11 +1203,70 @@ steps* rather than here, because they are still being spent.
     resuming checklist now diffs the two files and says why.
   - **Not acted on:** the git author identity, at the owner's instruction.
 
+- **PR 1 of 3 - the screen** (branch `stage-5-screening`, 2026-09-26). Four commits. The
+  selection rule, the contract, and the batched market-data path. **No engine changes** apart
+  from one count guard, which is what made it the right first piece: it can be run and judged
+  before anything in the engine moves.
+
+  - **Four decisions, taken 2026-09-26.**
+
+    | Decision | Taken | Why |
+    |---|---|---|
+    | What the ranking computes | **Risk-adjusted momentum from bars only - the 3-month return over realised volatility - filtered on liquidity** | It needs no fundamentals, and fundamentals are the only part of the source that does not batch. Raw momentum would rank an illiquid share that doubled on one headline first, which is the candidate that cannot be bought at the price that ranked it |
+    | Who owns the universe | **The engine sends it in the request**, with the shortlist size and the liquidity floor | The engine owns what it trades. It also makes `/v1/screen` a pure function of its input and a stored shortlist reproducible from the request - which is what stage 5's own question needs |
+    | Where liquidity comes from | **`volume` on a new `ScreeningBar`**, and the median of price x volume over 30 bars | Volume arrives in the same response as the closes, so it costs no extra request. Market cap was dropped: it needs the per-instrument call and it is a number that almost never moves a candidate across a line |
+    | A symbol that cannot be fetched | **Skipped and named in `rejected`** | A screen is a ranking, not an all-or-nothing fetch. 49 of 50 ranked is a good answer; a 503 for one delisted name would close the cycle. Naming them is the point - a universe that quietly shrinks reads, months later, as a decision not to hold anything in that sector |
+
+  - **Valuation is deliberately not in the ranking**, although the roadmap offers it as an
+    example. It is not lost: the shortlist goes through the ordinary `FactSheet` path, so
+    every agent still sees P/E for the instruments it is actually asked about. The screen is
+    a sieve, not the analysis.
+
+  - **The liquidity decision had to move, and verifying why was the useful part.** The plan
+    was `volume` on `PriceBar`. Three checked-in facts say no: `InstrumentHistory.bars` is
+    `tuple[PriceBar, ...]`, `contracts/quote-history.schema.json` declares the bar with
+    `unevaluatedProperties: false`, and the engine's `BarDto` carries
+    `[JsonUnmappedMemberHandling(Disallow)]`. A field added there would make every history
+    response unreadable to the engine and stop outcome measurement dead. `ScreeningBar` is
+    its own type, and `facts.py` grew a `ClosingBar` protocol so the returns and the
+    volatility are reused rather than copied - read-only properties, because a protocol
+    attribute is mutable and invariant and a frozen pydantic field does not satisfy one.
+
+  - *Verified live, and it settles the stage's stated risk.* The roadmap warned that
+    yfinance is unofficial, rate-limited, and fetches fundamentals per instrument. Measured:
+    **50 instruments, 127 bars each, volumes throughout, 2.0 seconds** - the same 2.0 seconds
+    as 8 instruments, which is what proves it is one request rather than fifty. Through the
+    endpoint: 12 instruments in 2.4 s, the same 12 again in 1.2 s, 12 plus one new holding in
+    0.3 s. A shortlist of four ranked 1.6536 (MSFT) down to 0.4585 (KO), with
+    0.3866 / 0.2338 = 1.6536 checked by hand.
+
+  - *Mutation-tested:* median to mean turns the spike test red; dropping the tie-break turns
+    the determinism test red; counting a missing volume as zero turns three red, which is
+    right - that rule is load-bearing in three places.
+
+  - **Two new required settings**, `TAS_SCREEN_TIMEOUT_S` and `TAS_SCREEN_TTL_S`. Their own
+    pair rather than reusing the market-data two, because one quote and six months of bars
+    for a hundred instruments are not comparable calls. The settings suite was the first
+    caller to run against a stale environment and failed exactly as designed - the hole
+    written into the resuming checklist the day before.
+
+  - **Two things left open rather than fixed.** A symbol that came back empty is not cached
+    as empty, because "not listed today" and "the batch dropped it" look the same from here
+    and only one is permanent - so a universe that permanently holds a dead symbol pays one
+    failed lookup per screen. And `annualised_volatility` guards on closes rather than on
+    returns, so `window=1` passes the check and then raises inside `statistics.stdev`;
+    unreachable, since every caller passes a fixed window, and widening a shared function's
+    guard belongs in its own change.
+
 ---
 
 ## Lessons and gotchas
 
 Things that cost time or were not obvious. Most are also recorded where they apply.
+
+**Editing files with a script**
+- **Assert on a whole line, not a prefix of one.** A replacement anchored on `from app.application.pipeline import SignalPipeline` matched a line that continued `, TeamRuntime`, so the insertion landed mid-statement and moved a name onto the wrong module. The match count was 1 and the assertion passed, because a substring is a match. Anchor on text that reaches the end of the line, or include the following line.
+- **Check every edit before writing any of them.** The pattern that keeps this safe: build the whole list of (path, old, new), assert every `old` appears exactly once, and only then write. A heredoc that dies halfway has otherwise left some edits applied and some not, and once a commit has gone out on top of that the difference is invisible.
 
 **Keeping this file honest**
 - **Correcting a document means finding every place, not the places you remember.** A commit that argued this point in its own message then corrected four claims and left six, including two naming a `team_version` the same session had proved existed in no database row. A new sentence beside a stale one is worse than the stale one alone, because a reader now has to pick. Grep the specific phrase and the specific value across the whole file, then read the neighbouring bullets, before claiming a correction is done.
