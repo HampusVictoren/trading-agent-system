@@ -67,7 +67,11 @@ public class QuoteContractTests
     [Theory]
     [InlineData("../internal")]
     [InlineData("")]
-    [InlineData("toolongsymbol")]
+    // 17 characters, one past the cap. It was 13 until the rule widened for Swedish tickers,
+    // and 13 then normalised to a perfectly valid symbol - the case had stopped testing
+    // anything. Ticker upper-cases before validating, so the case of the letters is not what
+    // this is about.
+    [InlineData("toolongsymbolxxxx")]
     public void A_symbol_that_is_not_a_ticker_is_refused(string symbol)
     {
         Should.Throw<AgentResponseInvalidException>(
