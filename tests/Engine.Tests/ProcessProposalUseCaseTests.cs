@@ -46,7 +46,7 @@ public class ProcessProposalUseCaseTests
         public DecisionRecord OfTheCycle => _records.ShouldHaveSingleItem();
     }
 
-    private static Portfolio NewPortfolio(decimal cash = 10_000m) => new(new Money(cash, "USD"));
+    private static Portfolio NewPortfolio(decimal cash = 10_000m) => new(new Money(cash, Money.DefaultCurrency));
 
     private static TradeSignalDto Signal(
         string stance = "BUY",
@@ -71,7 +71,7 @@ public class ProcessProposalUseCaseTests
     {
         Instrument = new EquityInstrumentDto { Symbol = symbol },
         Price = price,
-        Currency = "USD",
+        Currency = Money.DefaultCurrency,
         AsOf = asOf ?? Now
     };
 
@@ -218,7 +218,7 @@ public class ProcessProposalUseCaseTests
             // Adding to a position is a different question from opening one, and the
             // portfolio manager is the only step that is told.
             var portfolio = NewPortfolio();
-            portfolio.ExecuteBuy(new Ticker(Requested), 3m, new Money(210.4m, "USD"));
+            portfolio.ExecuteBuy(new Ticker(Requested), 3m, new Money(210.4m, Money.DefaultCurrency));
 
             var position = (await Sent(portfolio)).ExistingPosition.ShouldNotBeNull();
 
@@ -302,7 +302,7 @@ public class ProcessProposalUseCaseTests
             // have given a different number, and sizing on what MSFT cost would have given a
             // third - which is the point of asking.
             var portfolio = NewPortfolio();
-            portfolio.ExecuteBuy(new Ticker("MSFT"), 2m, new Money(400m, "USD"));
+            portfolio.ExecuteBuy(new Ticker("MSFT"), 2m, new Money(400m, Money.DefaultCurrency));
 
             var (sut, client, _) = Build(Signal(), quote: Quote("MSFT", 500m));
 
@@ -319,7 +319,7 @@ public class ProcessProposalUseCaseTests
             // agents never saw - and asking for it again would be a second price for the same
             // decision.
             var portfolio = NewPortfolio();
-            portfolio.ExecuteBuy(new Ticker(Requested), 1m, new Money(100m, "USD"));
+            portfolio.ExecuteBuy(new Ticker(Requested), 1m, new Money(100m, Money.DefaultCurrency));
 
             var (sut, client, _) = Build(Signal());
 
@@ -336,7 +336,7 @@ public class ProcessProposalUseCaseTests
             // rather than valuing it at what it cost - which would overstate a loser and raise
             // the allowance for everything else at exactly the wrong moment.
             var portfolio = NewPortfolio();
-            portfolio.ExecuteBuy(new Ticker("MSFT"), 2m, new Money(400m, "USD"));
+            portfolio.ExecuteBuy(new Ticker("MSFT"), 2m, new Money(400m, Money.DefaultCurrency));
 
             var result = await Run(Build(Signal(), quote: null).Sut, portfolio);
 
@@ -351,7 +351,7 @@ public class ProcessProposalUseCaseTests
             // position limit is a share of the portfolio's value, so an out-of-date holding
             // moves the allowance for everything else.
             var portfolio = NewPortfolio();
-            portfolio.ExecuteBuy(new Ticker("MSFT"), 2m, new Money(400m, "USD"));
+            portfolio.ExecuteBuy(new Ticker("MSFT"), 2m, new Money(400m, Money.DefaultCurrency));
 
             var stale = Quote("MSFT", 500m, asOf: Now.AddMinutes(-10));
             var result = await Run(Build(Signal(), quote: stale).Sut, portfolio);
@@ -443,7 +443,7 @@ public class ProcessProposalUseCaseTests
 
             // The room the decision was made in. No agent reads either figure, but a decision
             // is only interpretable next to the limits it was made under.
-            recorded.AvailableRiskBudgetUsd.ShouldBe(10_000m);
+            recorded.AvailableRiskBudget.ShouldBe(10_000m);
             recorded.MaxPositionPct.ShouldBe(0.05m);
             recorded.ExistingQuantity.ShouldBeNull();
         }
@@ -467,7 +467,7 @@ public class ProcessProposalUseCaseTests
             recorded.KeyRisks.ShouldBe(["a risk"]);
             recorded.HorizonDays.ShouldBe(5);
             recorded.ReferencePrice.ShouldBe(100m);
-            recorded.ReferenceCurrency.ShouldBe("USD");
+            recorded.ReferenceCurrency.ShouldBe(Money.DefaultCurrency);
             recorded.QuoteAsOf.ShouldBe(Now);
 
             // The ledger line and the reasoning that produced it, joined.

@@ -87,7 +87,7 @@ public class MeasurementSweepTests : IAsyncLifetime
         await using var context = _database.NewContext();
 
         var portfolio = context.Portfolios.SingleOrDefault()
-            ?? context.Portfolios.Add(new Portfolio(new Money(10_000m, "USD"))).Entity;
+            ?? context.Portfolios.Add(new Portfolio(new Money(10_000m, Money.DefaultCurrency))).Entity;
 
         var decision = new DecisionRecord
         {
@@ -96,7 +96,7 @@ public class MeasurementSweepTests : IAsyncLifetime
             Symbol = Aapl,
             TeamId = "default",
             RequestedAt = new DateTimeOffset(2026, 9, 21, 14, 0, 0, TimeSpan.Zero),
-            AvailableRiskBudgetUsd = 10_000m,
+            AvailableRiskBudget = 10_000m,
             MaxPositionPct = 0.05m,
             TeamVersion = teamVersion,
             Revisions = 0,
@@ -106,7 +106,7 @@ public class MeasurementSweepTests : IAsyncLifetime
             KeyRisks = ["a risk"],
             HorizonDays = horizonDays,
             ReferencePrice = referencePrice,
-            ReferenceCurrency = "USD",
+            ReferenceCurrency = Money.DefaultCurrency,
             QuoteAsOf = new DateTimeOffset(2026, 9, 21, 14, 3, 0, TimeSpan.Zero),
             Outcome = DecisionOutcome.Executed,
         };
@@ -130,7 +130,7 @@ public class MeasurementSweepTests : IAsyncLifetime
             Symbol = Aapl,
             TeamId = "default",
             RequestedAt = new DateTimeOffset(2026, 9, 21, 14, 0, 0, TimeSpan.Zero),
-            AvailableRiskBudgetUsd = 10_000m,
+            AvailableRiskBudget = 10_000m,
             MaxPositionPct = 0.05m,
             Outcome = DecisionOutcome.AgentUnavailable,
             OutcomeReason = "the agent service answered 503",

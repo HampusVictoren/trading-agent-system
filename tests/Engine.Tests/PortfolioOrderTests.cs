@@ -14,7 +14,7 @@ public class PortfolioOrderTests
     private static readonly Ticker Aapl = new("AAPL");
     private static readonly Ticker Msft = new("MSFT");
 
-    private static Portfolio APortfolioWith(decimal cash) => new(new Money(cash, "USD"));
+    private static Portfolio APortfolioWith(decimal cash) => new(new Money(cash, Money.DefaultCurrency));
 
     [Fact]
     public void A_buy_leaves_an_order_describing_it()
@@ -26,8 +26,8 @@ public class PortfolioOrderTests
         order.Ticker.ShouldBe(Aapl);
         order.Side.ShouldBe(OrderSide.Buy);
         order.Quantity.ShouldBe(3m);
-        order.Price.ShouldBe(new Money(210.40m, "USD"));
-        order.Notional.ShouldBe(new Money(631.20m, "USD"));
+        order.Price.ShouldBe(new Money(210.40m, Money.DefaultCurrency));
+        order.Notional.ShouldBe(new Money(631.20m, Money.DefaultCurrency));
         order.PortfolioId.ShouldBe(portfolio.Id);
     }
 
@@ -68,7 +68,7 @@ public class PortfolioOrderTests
 
         portfolio.NewOrders.ShouldBeEmpty();
         portfolio.Positions.ShouldBeEmpty();
-        portfolio.CashBalance.ShouldBe(new Money(100m, "USD"));
+        portfolio.CashBalance.ShouldBe(new Money(100m, Money.DefaultCurrency));
     }
 
     [Fact]

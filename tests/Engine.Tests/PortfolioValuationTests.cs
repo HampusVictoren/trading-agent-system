@@ -17,7 +17,7 @@ public class PortfolioValuationTests
     private static readonly Ticker Aapl = new("AAPL");
     private static readonly Ticker Msft = new("MSFT");
 
-    private static Portfolio WithCash(decimal cash = 10_000m) => new(new Money(cash, "USD"));
+    private static Portfolio WithCash(decimal cash = 10_000m) => new(new Money(cash, Money.DefaultCurrency));
 
     private static Money Nav(PortfolioValuation valuation) =>
         valuation.ShouldBeOfType<PortfolioValuation.Valued>().NetAssetValue;

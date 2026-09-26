@@ -44,7 +44,7 @@ public class OutcomeDeliveryTests : IAsyncLifetime
         await using var context = _database.NewContext();
 
         var portfolio = context.Portfolios.SingleOrDefault()
-            ?? context.Portfolios.Add(new Portfolio(new Money(10_000m, "USD"))).Entity;
+            ?? context.Portfolios.Add(new Portfolio(new Money(10_000m, Money.DefaultCurrency))).Entity;
 
         var decision = new DecisionRecord
         {
@@ -53,7 +53,7 @@ public class OutcomeDeliveryTests : IAsyncLifetime
             Symbol = new Ticker("AAPL"),
             TeamId = "default",
             RequestedAt = new DateTimeOffset(2026, 9, 21, 14, 0, 0, TimeSpan.Zero),
-            AvailableRiskBudgetUsd = 10_000m,
+            AvailableRiskBudget = 10_000m,
             MaxPositionPct = 0.05m,
             TeamVersion = "abc123",
             Revisions = 0,
@@ -63,7 +63,7 @@ public class OutcomeDeliveryTests : IAsyncLifetime
             KeyRisks = ["a risk"],
             HorizonDays = horizonDays,
             ReferencePrice = 100m,
-            ReferenceCurrency = "USD",
+            ReferenceCurrency = Money.DefaultCurrency,
             QuoteAsOf = new DateTimeOffset(2026, 9, 21, 14, 3, 0, TimeSpan.Zero),
             Outcome = DecisionOutcome.Executed,
         };

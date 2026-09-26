@@ -23,7 +23,7 @@ public class RiskEngineEvaluateTests
     private static readonly RiskPolicy Policy =
         new(maxPositionPct: 0.05m, cashBufferPct: 0.10m, maxQuoteAge: TimeSpan.FromMinutes(5));
 
-    private static Portfolio WithCash(decimal cash = 10_000m) => new(new Money(cash, "USD"));
+    private static Portfolio WithCash(decimal cash = 10_000m) => new(new Money(cash, Money.DefaultCurrency));
 
     private static TradeSignal Signal(DateTimeOffset? quoteAsOf = null, decimal price = 100m) =>
         new(
@@ -33,12 +33,12 @@ public class RiskEngineEvaluateTests
             "thesis",
             ["a risk"],
             HorizonDays: 5,
-            new Money(price, "USD"),
+            new Money(price, Money.DefaultCurrency),
             quoteAsOf ?? Now.AddSeconds(-13),
             new RunMetadata("default", "v1", Revisions: 0));
 
     private static OrderIntent.Buy Order(decimal quantity, decimal price = 100m) =>
-        new(new Instrument.Equity(Aapl), quantity, new Money(price, "USD"));
+        new(new Instrument.Equity(Aapl), quantity, new Money(price, Money.DefaultCurrency));
 
     private static string RejectionOf(RiskDecision decision) =>
         decision.ShouldBeOfType<RiskDecision.Rejected>().Reason;

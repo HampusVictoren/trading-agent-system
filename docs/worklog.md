@@ -835,7 +835,7 @@ steps* rather than here, because they are still being spent.
     the engine refuses to start when the database is behind the build - applying at startup
     would move the schema before anyone could decide to, and the migration was tested in both
     directions precisely so that undoing it stays possible. The opening balance becomes
-    `Trading:OpeningBalanceUsd`, because it is used once and then sets the size of every trade
+    `Trading:OpeningBalance`, because it is used once and then sets the size of every trade
     that follows. A failed commit is an error line and the loop carries on.
   - **A failed commit loses nothing but an LLM call.** The buy is in the same transaction as
     the decision, so a commit that fails means no trade happened - there is no evidence hole,

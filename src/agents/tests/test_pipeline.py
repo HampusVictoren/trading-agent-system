@@ -132,7 +132,7 @@ def a_request(**overrides) -> SignalRequest:
         "team_id": "default",
         "as_of": "2026-09-23T14:00:00Z",
         "existing_position": None,
-        "available_risk_budget_usd": 412.75,
+        "available_risk_budget": 412.75,
         "max_position_pct": 0.05,
         "correlation_id": "c-1",
     }
@@ -235,7 +235,7 @@ class TestWhatEachStepIsTold:
         # field stays in the contract for stage 4; it just never reaches a model.
         pipeline, runner = a_pipeline()
 
-        await pipeline.run(a_request(available_risk_budget_usd=412.75, max_position_pct=0.05))
+        await pipeline.run(a_request(available_risk_budget=412.75, max_position_pct=0.05))
 
         for _, message, _ in runner.calls:
             assert "412.75" not in message

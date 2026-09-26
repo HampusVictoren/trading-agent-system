@@ -187,6 +187,6 @@ class SignalRequest(BaseModel):
     # Required and nullable, not optional: "no position" is something the engine states,
     # not something it may leave out.
     existing_position: ExistingPosition | None
-    available_risk_budget_usd: Annotated[float, Field(ge=0)]
+    available_risk_budget: Annotated[float, Field(ge=0)]
     max_position_pct: Annotated[float, Field(gt=0, le=1)]
     correlation_id: Annotated[str, Field(min_length=1, max_length=MAX_IDENTIFIER_LENGTH)]

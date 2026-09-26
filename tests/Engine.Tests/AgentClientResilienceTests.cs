@@ -22,7 +22,7 @@ public class AgentClientResilienceTests
         TeamId = "default",
         AsOf = new DateTimeOffset(2026, 9, 23, 14, 0, 0, TimeSpan.Zero),
         ExistingPosition = null,
-        AvailableRiskBudgetUsd = 10_000m,
+        AvailableRiskBudget = 10_000m,
         MaxPositionPct = 0.05m,
         CorrelationId = "cycle-1"
     };

@@ -21,7 +21,7 @@ public class PositionSizerTests
     private static readonly RiskPolicy Policy = new(maxPositionPct: 0.05m, cashBufferPct: 0.10m, maxQuoteAge: TimeSpan.FromMinutes(5));
     private static readonly PositionSizer Sizer = new();
 
-    private static Portfolio WithCash(decimal cash = 10_000m) => new(new Money(cash, "USD"));
+    private static Portfolio WithCash(decimal cash = 10_000m) => new(new Money(cash, Money.DefaultCurrency));
 
     private static TradeSignal Signal(
         Stance stance = Stance.Buy, double conviction = 0.8, decimal price = 100m, Ticker? about = null) =>
@@ -32,7 +32,7 @@ public class PositionSizerTests
             "thesis",
             ["a risk"],
             HorizonDays: 5,
-            new Money(price, "USD"),
+            new Money(price, Money.DefaultCurrency),
             DateTimeOffset.UtcNow,
             new RunMetadata("default", "v1", Revisions: 0));
 
@@ -167,7 +167,7 @@ public class PositionSizerTests
     {
         // The caller passes prices for other holdings. Letting it override the instrument's
         // own price would size the order against a quote the agents never saw.
-        var caller = PriceSnapshot.Of(Aapl, new Money(1m, "USD"));
+        var caller = PriceSnapshot.Of(Aapl, new Money(1m, Money.DefaultCurrency));
 
         QuantityOf(Sizer.Size(Signal(price: 100m), WithCash(), caller, Policy)).ShouldBe(5m);
     }

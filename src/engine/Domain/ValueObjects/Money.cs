@@ -6,7 +6,18 @@ public record Money
 {
     private readonly string _currency = DefaultCurrency;
 
-    public const string DefaultCurrency = "USD";
+    /// <summary>
+    /// The currency the account is kept in. SEK since the universe moved to Stockholm: the
+    /// instruments trade in kronor, so the portfolio, the prices and the benchmark are all
+    /// one currency and there is no conversion anywhere in the system.
+    /// </summary>
+    /// <remarks>
+    /// That is a measurement decision as much as a bookkeeping one. With a krona account and
+    /// dollar instruments, an outcome could not say whether a position did well because of
+    /// the share or because of the exchange rate - and the whole point of stage 4 is to be
+    /// able to say which.
+    /// </remarks>
+    public const string DefaultCurrency = "SEK";
 
     public decimal Amount { get; init; }
 

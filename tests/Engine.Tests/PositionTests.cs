@@ -54,6 +54,6 @@ public class PositionTests
         Should.Throw<CurrencyMismatchException>(() => position.AddQuantity(1m, new Money(200m, "EUR")));
 
         position.Quantity.ShouldBe(1m);
-        position.AveragePurchasePrice.ShouldBe(new Money(100m, "USD"));
+        position.AveragePurchasePrice.ShouldBe(new Money(100m, Money.DefaultCurrency));
     }
 }

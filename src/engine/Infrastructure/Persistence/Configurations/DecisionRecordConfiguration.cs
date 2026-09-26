@@ -50,7 +50,7 @@ public sealed class DecisionRecordConfiguration : IEntityTypeConfiguration<Decis
         builder.Property(decision => decision.TeamId).HasMaxLength(64);
         builder.Property(decision => decision.TeamVersion).HasMaxLength(MaxTeamVersionLength);
 
-        builder.Property(decision => decision.AvailableRiskBudgetUsd)
+        builder.Property(decision => decision.AvailableRiskBudget)
             .HasPrecision(MoneyPrecision.Digits, MoneyPrecision.Decimals);
         builder.Property(decision => decision.MaxPositionPct).HasPrecision(9, 6);
         builder.Property(decision => decision.ExistingQuantity)

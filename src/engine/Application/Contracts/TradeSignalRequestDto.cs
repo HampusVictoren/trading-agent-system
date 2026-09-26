@@ -23,8 +23,8 @@ public sealed record TradeSignalRequestDto
     [JsonPropertyName("existing_position")]
     public required ExistingPositionDto? ExistingPosition { get; init; }
 
-    [JsonPropertyName("available_risk_budget_usd")]
-    public required decimal AvailableRiskBudgetUsd { get; init; }
+    [JsonPropertyName("available_risk_budget")]
+    public required decimal AvailableRiskBudget { get; init; }
 
     [JsonPropertyName("max_position_pct")]
     public required decimal MaxPositionPct { get; init; }
