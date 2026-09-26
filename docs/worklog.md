@@ -73,7 +73,8 @@ Two things that are easy to misread as broken:
 
 - **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21, **stage 3 done** 2026-09-23. **Stage 4 started** 2026-09-23. PR 5 and PR 6 were each split in two, so the stage is eight pull requests, and **all eight are merged** as of 2026-09-25. **Stage 5 has started**, with the model and the horizon settled first; stages 6-8 exist only as plan.
 - **`master` is at PR #41**, and stage 4 is fully merged: 6a (#39), 6b (#40) and the docs-only record of finding G (#41), all on 2026-09-25. Nothing reaches `master` without the three required checks passing, so what is there is green by construction.
-- **One branch is open:** `stage-5-screening`, PR 1 of stage 5's three - the screen. `stage-5-model-and-horizon` merged as #42 on 2026-09-25.
+- **One branch is open:** `stage-5-sek`, PR 2 of stage 5's four. `stage-5-model-and-horizon` merged as #42 and `stage-5-screening` as #43.
+- **The account and the universe are Swedish, and there is no currency conversion anywhere.** `Money.DefaultCurrency` is SEK, the engine trades ERIC-B.ST and VOLV-B.ST, and outcomes are measured against XACT-OMXS30.ST. The opening balance is 100 000 kr, which is what makes the conviction tiers differ in share counts rather than both rounding to one. The 36 USD decisions and 21 SPY measurements from before the move are **kept**: `decisions.reference_currency` and `signal_outcomes.benchmark_symbol` make them self-describing, and finding G's reproduction reads them.
 - **The system can find candidates now.** `POST /v1/screen` ranks a universe with no LLM call at all: risk-adjusted momentum from bars, filtered on liquidity, with everything it left out named and the reason attached. The stage's stated practical risk turned out to be a measurement rather than a worry - **50 instruments in 2.0 seconds**, the same as 8, because `yf.download` batches and the ranking asks for no fundamentals. Nothing calls it yet; the engine starts driving the cycle in PR 3.
 - **`b1234878670a` never reached a row, and that is worth knowing rather than forgetting.** On 2026-09-25 `default`'s hash moved from `6c6da0e6edad` to `b1234878670a` without a word of the team changing: adding `sees_memory` to the payload wrote `sees_memory: false` onto every step. The payload was made sparse the same day, before the engine ran again, so the accidental hash was never stored - `SELECT team_id, team_version, count(*) FROM trading.decisions` returns only `6c6da0e6edad` and `79dfb7307b57`. Nothing has to be pooled and nothing has to be written down; the earlier warning in this file that the two hashes had to be reconciled by hand is obsolete, not wrong at the time. The lesson survives the hash: a version payload that lists every flag with its default ties the version to the shape of the payload rather than to the team.
 - **There is one path now.** `POST /v1/signals` is the only endpoint that costs money, the engine calls it every cycle, and the old three-agent chain, `InvestmentProposal`, `ValidateTrade`, `RiskViolationException` and the FastMCP server are gone. Running the engine today produces real quantities at real prices, with the position cap holding across cycles.
@@ -166,14 +167,17 @@ The model and the horizon are now settled - see *Before stage 5*, and the measur
 SELL, SELL, SELL where `llama3.2` gave three different answers. What is left of finding G is
 the population, and that is **stage 5** itself.
 
-**Stage 5 goes out as three pull requests**, decided 2026-09-25. The roadmap calls it 3-4
-days, which is too much for one review:
+**Stage 5 goes out as four pull requests.** Three were decided 2026-09-25; the second was
+inserted on 2026-09-26 when the account moved to kronor, because a contract rename and a
+migration have no business sharing a review with selling logic. The roadmap calls the stage
+3-4 days, which is too much for one review:
 
 | | What | Why it is its own review |
 |---|---|---|
 | 1 | `app/screening/` and `POST /v1/screen` - a universe, the factors from `facts.py` over all of it, filters and a ranking | Pure functions over fixed datasets, TDD, and **no engine changes at all**. It can be run and judged before anything else moves. The stage's stated practical risk lives here: yfinance is unofficial and rate-limited, and fundamentals are fetched per instrument |
-| 2 | Selling: the SELL branch in `PositionSizer`, `Portfolio.ExecuteSell` with realised profit and loss, and the deterministic exits - stop-loss, time limit, minimum holding period | Test-first with the same table technique as stage 2. The exits are the half that does not depend on the LLM answering, which is decision 1 applied to selling |
-| 3 | The engine drives the cycle: universe to shortlist, shortlist union holdings, one analysis per fact-sheet change, and the shortlist stored per cycle | This is where the regime column goes, and where "do the agents beat the screening that picked their candidates?" becomes answerable |
+| 2 | **SEK end to end**: the symbol rule widens for Swedish tickers, the account currency becomes SEK, `available_risk_budget_usd` is renamed on the wire and in the database, and the engine points at Stockholm | A contract rename plus a migration. Inserted before selling because everything after it is written against whichever currency world exists, and because mixing it into the selling review would make it impossible to tell which change broke what |
+| 3 | Selling: the SELL branch in `PositionSizer`, `Portfolio.ExecuteSell` with realised profit and loss, and the deterministic exits - stop-loss, time limit, minimum holding period | Test-first with the same table technique as stage 2. The exits are the half that does not depend on the LLM answering, which is decision 1 applied to selling |
+| 4 | The engine drives the cycle: universe to shortlist, shortlist union holdings, one analysis per fact-sheet change, and the shortlist stored per cycle | This is where the regime column goes, and where "do the agents beat the screening that picked their candidates?" becomes answerable |
 
 Stage 8's condition survives untouched, because stage 5
 does not touch the team.
@@ -1203,7 +1207,7 @@ steps* rather than here, because they are still being spent.
     resuming checklist now diffs the two files and says why.
   - **Not acted on:** the git author identity, at the owner's instruction.
 
-- **PR 1 of 3 - the screen** (branch `stage-5-screening`, 2026-09-26). Four commits. The
+- **PR 1 of 4 - the screen** (branch `stage-5-screening`, 2026-09-26). Four commits. The
   selection rule, the contract, and the batched market-data path. **No engine changes** apart
   from one count guard, which is what made it the right first piece: it can be run and judged
   before anything in the engine moves.
@@ -1258,11 +1262,92 @@ steps* rather than here, because they are still being spent.
     unreachable, since every caller passes a fixed window, and widening a shared function's
     guard belongs in its own change.
 
+
+- **PR 2 of 4 - SEK end to end** (branch `stage-5-sek`, 2026-09-26). Four commits. The account
+  and the universe both move to Sweden, which turns out to be a measurement decision rather
+  than a locale one: with a krona account and dollar instruments, an outcome cannot say
+  whether a position did well because of the share or because of the exchange rate, and
+  saying which is the whole point of stage 4. There is now no currency conversion anywhere in
+  the system.
+
+  - **Asked for as "default currency should be SEK", which had three readings.** Swedish
+    universe with SEK throughout; a SEK account still holding dollar instruments, needing an
+    FX source and making every measurement ambiguous; or flipping `Money.DefaultCurrency`
+    alone, which cannot work on its own because prices arrive through
+    `TradeSignalMapper.ContractCurrency` and the first buy would throw. The first was chosen.
+    Verified before asking: all 30 OMXS30 tickers fetch, 128 bars each, volumes, P/E and
+    sector, everything in SEK.
+
+  - **Two symbols would have been rejected, and neither was found by trying one.** Checking
+    every OMXS30 ticker against the pattern showed `ESSITY-B.ST` at 11 characters - a real
+    index member, so one instrument in thirty would have been silently unbuyable - and
+    `XACT-OMXS30.ST` at 14, which is the benchmark. A benchmark the pattern rejects is an
+    outcome that can never be measured at all, and it would have failed in the nightly sweep
+    rather than at startup. The cap is 16: fourteen is the longest in play, and that leaves
+    room without leaving the field unbounded.
+
+  - **`^OMX` stays refused on purpose.** It is the index itself and the purer comparison, but
+    a leading `^` is not something a tradeable instrument has, and the symbol rule is shared
+    with the instruments the engine can own. The fund tracking it passes as it stands, and its
+    management fee is about 0.008 % over twenty trading days - two orders of magnitude below
+    the 3 bps of commission and spread already subtracted.
+
+  - **The rule was spelled two ways in five contracts**, `[A-Z0-9.-]` in one and
+    `[A-Z0-9.\\-]` in four. Behaviourally identical, textually not. All five now carry the
+    unescaped spelling, which is the one that decodes to exactly the Python constant, and a
+    test asserts string equality against it; a second test finds every contract carrying a
+    symbol, so a sixth growing one cannot quietly differ.
+
+  - **The opening balance is the change with a real argument behind it.** 10 000 was dollars;
+    as kronor it would have broken the measurement rather than just being small. At a 5 %
+    position cap that is 500 kr, which at the half conviction tier buys **zero** shares of
+    Volvo or Investor and one at the full tier - so two thirds of the universe would be
+    unbuyable at moderate conviction and conviction would stop affecting size at all, which is
+    the one thing stage 8's calibration needs it to do. 100 000 gives 7 shares against 15. The
+    arithmetic sits in `appsettings.json` next to the number.
+
+  - **Nothing was deleted, and that was worth checking rather than assuming.**
+    `trading.decisions` carries `reference_currency` per row and `trading.signal_outcomes`
+    carries `benchmark_symbol`, so the 36 USD decisions and the 21 SPY measurements stay
+    readable beside SEK rows. That matters because **finding G's reproduction reads exactly
+    those rows** - truncating would have left the conclusion in this file with no way to
+    re-derive it. The `RenameColumn` migration was applied locally and all 36 kept their
+    values.
+
+  - **The portfolio state does have to be reset**, and only that: `portfolios` and `positions`
+    are the two trading tables without an append-only trigger, and nothing references
+    `positions`. So `DELETE FROM trading.positions` plus an `UPDATE` of the cash balance to
+    100 000 SEK leaves every append-only table intact. It is a fresh start for a paper
+    account, not a conversion - the ledger still says an AAPL share was bought for dollars,
+    which is what happened.
+
+  - *Verified live:* 473 Python and 318 .NET green. The benchmark was checked on **both** paths
+    it is used on, not only the convenient one - `yf.download` for the screen and the
+    per-instrument fetch that the history endpoint runs on, 490.65 SEK and 500 bars, with P/E
+    and sector correctly None rather than fabricated.
+
+  - **Three tests had stopped testing anything**, the third time this week the same mistake has
+    appeared: a boundary written as a literal rather than derived from the constant it is
+    about. `TOOLONGSYMBOL` (13), `toolongsymbol` (13) and `ABCDEFGHIJK` (11) all sat in
+    "refuses" lists and all became valid symbols the moment the cap moved.
+
+  - **Two mistakes of my own, both from replacing text without reading its context.** A blanket
+    `"USD"` to `Money.DefaultCurrency` rewrite hit a JSON payload inside a raw string literal
+    and produced an unquoted `"currency":Money.DefaultCurrency`; it is now a constant
+    interpolated string, so the fixture tracks the constant rather than repeating it. And the
+    `using` added for that file went after the last one instead of in order. `MoneyTests` and
+    `QuoteContractTests` were deliberately skipped by that rewrite, because their `"USD"` is
+    about a specific currency rather than about the account's.
+
 ---
 
 ## Lessons and gotchas
 
 Things that cost time or were not obvious. Most are also recorded where they apply.
+
+**Verifying an external symbol**
+- **Check a benchmark on every path it is used on, not the convenient one.** `XACT-OMXS30.ST` works through `yf.download`, which is what the screen uses - but the nightly sweep reaches it through the per-instrument fetch, which raises `InstrumentNotFound` when `.info` carries no price. A benchmark that worked on one path and not the other would have failed at night, in the one job nobody is watching.
+- **Check the whole list against the rule, not one member of it.** Two of thirty OMXS30 tickers would have been rejected by the ten-character symbol cap, and neither was among the ones tried by hand. Generating the full list and matching every entry took one command and found both.
 
 **Editing files with a script**
 - **Assert on a whole line, not a prefix of one.** A replacement anchored on `from app.application.pipeline import SignalPipeline` matched a line that continued `, TeamRuntime`, so the insertion landed mid-statement and moved a name onto the wrong module. The match count was 1 and the assertion passed, because a substring is a match. Anchor on text that reaches the end of the line, or include the following line.
