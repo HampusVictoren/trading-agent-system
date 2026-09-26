@@ -123,7 +123,20 @@ class TestTheModelsAndTheSchemaAgree:
         # Not free text, so it gets its own test. The number is in three places - here, the
         # schema, and the engine's TradeSignalMapper - and the engine's suite reads the same
         # file, so all three are held together rather than pairwise.
-        assert schema()["properties"]["horizon_days"]["maximum"] == MAX_HORIZON_DAYS
+        #
+        # Both bounds, not only the cap. The lower one is the less interesting number and
+        # exactly the sort that drifts unwatched, and comparing what pydantic *emits* against
+        # the file is a stronger check than comparing a constant: it catches the field being
+        # changed without the constant, which is a different mistake from the constant being
+        # changed at all.
+        contract = schema()["properties"]["horizon_days"]
+        emitted = TradeSignal.model_json_schema()["properties"]["horizon_days"]
+
+        assert contract["maximum"] == MAX_HORIZON_DAYS
+        assert (emitted["minimum"], emitted["maximum"]) == (
+            contract["minimum"],
+            contract["maximum"],
+        )
 
 
 class TestTheAgentsAreNotAskedForFacts:
@@ -223,6 +236,12 @@ class TestAnAnswerThatIsNotTheContractIsRefused:
         # time-limit exit that never fires. The prompt now names the range; this is what
         # holds when the prompt is ignored, which it has been before.
         payload = example("signal-buy.json") | {"horizon_days": MAX_HORIZON_DAYS + 1}
+
+        with pytest.raises(ValidationError):
+            TradeSignal.model_validate(payload)
+
+    def test_a_horizon_of_no_days_is_refused(self):
+        payload = example("signal-buy.json") | {"horizon_days": 0}
 
         with pytest.raises(ValidationError):
             TradeSignal.model_validate(payload)

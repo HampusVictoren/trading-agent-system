@@ -226,18 +226,34 @@ public class TradeSignalContractTests
             .Message.ShouldContain(expected);
     }
 
-    [Theory]
-    [InlineData(0, "not a period")]
-    [InlineData(31, "past the 30 day limit")]
-    public void A_horizon_outside_the_contracts_range_is_refused(int days, string expected)
+    [Fact]
+    public void A_horizon_of_no_days_is_not_a_period()
     {
-        // The cap is new, and it exists because the model reached for a year: of 36 signals
-        // stored before it, 26 asked for 180 days or more. That is a measurement landing in
-        // 2027 and, from stage 5, a time-limit exit that never fires.
-        var dto = Signal(Example("signal-buy.json"))! with { HorizonDays = days };
+        var dto = Signal(Example("signal-buy.json"))! with { HorizonDays = 0 };
 
         Should.Throw<AgentResponseInvalidException>(() => TradeSignalMapper.ToDomain(dto))
-            .Message.ShouldContain(expected);
+            .Message.ShouldContain("not a period");
+    }
+
+    [Fact]
+    public void A_horizon_past_the_cap_is_refused_and_the_message_says_what_the_cap_is()
+    {
+        // The cap exists because the model reached for a year: of 36 signals stored before
+        // it, 26 asked for 180 days or more. That is a measurement landing in 2027 and, from
+        // stage 5, a time-limit exit that never fires.
+        //
+        // Both the input and the expected text come from the constant. Written out as 31 and
+        // "past the 30 day limit", this failed on a *correct* change - moving the cap to 21
+        // with all three places updated - for a reason that was only a string, while
+        // Every_cap_the_engine_enforces_is_the_one_the_contract_states already holds the
+        // three places together.
+        var dto = Signal(Example("signal-buy.json"))! with
+        {
+            HorizonDays = TradeSignalMapper.MaxHorizonDays + 1
+        };
+
+        Should.Throw<AgentResponseInvalidException>(() => TradeSignalMapper.ToDomain(dto))
+            .Message.ShouldContain($"past the {TradeSignalMapper.MaxHorizonDays} day limit");
     }
 
     [Fact]
