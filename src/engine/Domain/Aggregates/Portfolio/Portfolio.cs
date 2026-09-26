@@ -74,7 +74,8 @@ public class Portfolio
     /// record of it cannot come apart - and it is appended only once the balance has been
     /// checked, so a refused buy leaves nothing behind.
     /// </summary>
-    public Order ExecuteBuy(Ticker ticker, decimal quantity, Money price)
+    public Order ExecuteBuy(
+        Ticker ticker, decimal quantity, Money price, DateTimeOffset at, int horizonDays)
     {
         var totalCost = price.Amount * quantity;
         if (CashBalance.Amount < totalCost)
@@ -85,14 +86,51 @@ public class Portfolio
         var existing = _positions.FirstOrDefault(p => p.Ticker == ticker);
         if (existing != null)
         {
-            existing.AddQuantity(quantity, price);
+            existing.AddQuantity(quantity, price, at, horizonDays);
         }
         else
         {
-            _positions.Add(new Position(ticker, quantity, price));
+            _positions.Add(new Position(ticker, quantity, price, at, horizonDays));
         }
 
         var order = new Order(Guid.CreateVersion7(), Id, ticker, OrderSide.Buy, quantity, price);
+        _newOrders.Add(order);
+        return order;
+    }
+
+    /// <summary>
+    /// Sells part or all of a holding, moves the cash, and returns the ledger line for it.
+    /// </summary>
+    /// <remarks>
+    /// The mirror of <see cref="ExecuteBuy"/>, and asymmetric in the ways selling actually is.
+    /// There is no cash check, because a sale raises cash rather than spending it, and no
+    /// position limit, because a sale can only reduce one. What there is instead is the one
+    /// thing a buy never has to ask: whether the shares are there. A holding that is sold out
+    /// is removed rather than left at zero, so "one row per holding" keeps meaning what it
+    /// says and the position cap sees a clean slate on the next buy.
+    ///
+    /// No short selling: this refuses to sell what is not held rather than opening a negative
+    /// position. That is a deliberate no, and it is enforced here as well as above because this
+    /// is the only code that moves shares.
+    /// </remarks>
+    public Order ExecuteSell(Ticker ticker, decimal quantity, Money price)
+    {
+        var position = _positions.FirstOrDefault(held => held.Ticker == ticker)
+            ?? throw new InvalidOperationException(
+                $"Nothing is held of {ticker.Value}, so there is nothing to sell.");
+
+        // Reduce before the cash moves: the position is what refuses an impossible quantity,
+        // and a refused sale must leave the balance alone.
+        var realised = position.ReduceQuantity(quantity, price);
+
+        CashBalance = CashBalance.Add(price.Multiply(quantity));
+
+        if (position.IsClosed)
+            _positions.Remove(position);
+
+        var order = new Order(
+            Guid.CreateVersion7(), Id, ticker, OrderSide.Sell, quantity, price, realised);
+
         _newOrders.Add(order);
         return order;
     }

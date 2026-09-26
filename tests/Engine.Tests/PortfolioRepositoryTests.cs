@@ -85,8 +85,12 @@ public class PortfolioRepositoryTests : IAsyncLifetime
 
         await InAScope(async (portfolios, _, commit) =>
         {
-            var portfolio = await portfolios.FindAsync(TestContext.Current.CancellationToken);
-            portfolio!.ExecuteBuy(Aapl, quantity: 1m, new Money(120m));
+            // Asserted non-null in the local rather than with `!` at each use: ExecuteBuy is
+            // reached through a test extension now, and an extension takes its receiver as an
+            // ordinary parameter - so it does not update the compiler's null state the way a
+            // dereference did, and the later `portfolio.Id` would warn.
+            var portfolio = (await portfolios.FindAsync(TestContext.Current.CancellationToken))!;
+            portfolio.ExecuteBuy(Aapl, quantity: 1m, new Money(120m));
             await commit.SaveChangesAsync(TestContext.Current.CancellationToken);
             return portfolio.Id;
         });

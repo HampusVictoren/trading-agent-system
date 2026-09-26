@@ -36,11 +36,20 @@ public sealed class PositionConfiguration : IEntityTypeConfiguration<Position>
             price.Property(money => money.Amount).HasPrecision(MoneyPrecision.Digits, MoneyPrecision.Decimals);
             price.Property(money => money.Currency).HasMaxLength(3).IsFixedLength();
         });
+
+        // Domain data rather than audit metadata, unlike orders.PlacedAt: the deterministic
+        // exits read both of these, so they come from the engine's clock and the signal rather
+        // than from the database's `now()`. A position restored from these two columns knows
+        // what thesis it is still running on.
+        builder.Property(position => position.LastPurchasedAt);
+        builder.Property(position => position.ThesisHorizonDays);
+
+        builder.Ignore(position => position.IsClosed);
     }
 }
 
-/// <summary>The contract caps a symbol at ten characters, and Ticker enforces the same rule.
-/// The column says so too, so a value that could not exist cannot be stored.</summary>
+/// <summary>The contract caps a symbol's length, and Ticker enforces the same rule. The
+/// column says so too, so a value that could not exist cannot be stored.</summary>
 internal static class TickerColumn
 {
     /// <summary>

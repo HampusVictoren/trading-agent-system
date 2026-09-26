@@ -8,7 +8,12 @@ namespace Engine.Tests.Domain.Aggregates;
 public class PositionTests
 {
     private static Position AaplAt(decimal quantity, decimal price) =>
-        new(new Ticker("AAPL"), quantity, new Money(price));
+        new(
+            new Ticker("AAPL"),
+            quantity,
+            new Money(price),
+            PortfolioTestExtensions.BoughtAt,
+            PortfolioTestExtensions.ThesisHorizonDays);
 
     [Fact]
     public void AddQuantity_averages_two_equal_lots()

@@ -45,6 +45,22 @@ public sealed class OrderConfiguration : IEntityTypeConfiguration<Order>
         // second copy of the same fact that nothing keeps in step.
         builder.Ignore(order => order.Notional);
 
+        // Owned rather than a complex property, because it is optional - null on a buy - and a
+        // complex property cannot be. Unlike Notional this one *is* stored: it is the only
+        // number here that cannot be recomputed from the row, since the average purchase price
+        // it was measured against is gone once the holding closes.
+        builder.OwnsOne(order => order.RealisedProfitAndLoss, realised =>
+        {
+            realised.Property(money => money.Amount)
+                .HasColumnName("realised_pnl_amount")
+                .HasPrecision(MoneyPrecision.Digits, MoneyPrecision.Decimals);
+
+            realised.Property(money => money.Currency)
+                .HasColumnName("realised_pnl_currency")
+                .HasMaxLength(3)
+                .IsFixedLength();
+        });
+
         builder.Property<DateTimeOffset>(PlacedAtColumn)
             .HasDefaultValueSql("now()")
             .ValueGeneratedOnAdd();
@@ -55,8 +71,11 @@ public sealed class OrderConfiguration : IEntityTypeConfiguration<Order>
     /// <summary>
     /// When the order was recorded, kept as a shadow property. It is audit metadata rather
     /// than something the domain reasons about, and the database's clock is the one clock
-    /// every row agrees on. Stage 5 counts a holding period from the last purchase; that is
-    /// when it becomes domain data and starts coming from the engine's injected clock.
+    /// every row agrees on. It stayed that way: stage 5 does count a holding period from the
+    /// last purchase, but from `positions.last_purchased_at`, which the engine's own clock
+    /// writes. A holding period measured off the ledger would have had to reconstruct which
+    /// order was the last buy, and would have read the database's clock to answer a question
+    /// about the engine's.
     /// </summary>
     public const string PlacedAtColumn = "PlacedAt";
 }

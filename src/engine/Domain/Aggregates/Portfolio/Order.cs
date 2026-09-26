@@ -31,7 +31,27 @@ public sealed class Order
     public decimal Quantity { get; }
     public Money Price { get; }
 
-    public Order(Guid id, Guid portfolioId, Ticker ticker, OrderSide side, decimal quantity, Money price)
+    /// <summary>
+    /// What the shares sold made or lost against what they cost. Null on a buy, because a
+    /// purchase realises nothing - the position it opens is where the result lives until it
+    /// is sold. Negative on a loss, which is a figure rather than an error.
+    /// </summary>
+    /// <remarks>
+    /// On the order rather than on the position, because it is a fact about a transaction and
+    /// the position it came from may no longer exist by the time anybody asks. It is also the
+    /// only number in this ledger that cannot be recomputed from the row: the average purchase
+    /// price it was measured against is gone once the holding is closed.
+    /// </remarks>
+    public Money? RealisedProfitAndLoss { get; }
+
+    public Order(
+        Guid id,
+        Guid portfolioId,
+        Ticker ticker,
+        OrderSide side,
+        decimal quantity,
+        Money price,
+        Money? realisedProfitAndLoss = null)
     {
         Id = id;
         PortfolioId = portfolioId;
@@ -39,6 +59,7 @@ public sealed class Order
         Side = side;
         Quantity = quantity;
         Price = price;
+        RealisedProfitAndLoss = realisedProfitAndLoss;
     }
 
     /// <summary>For the ORM only. EF Core writes every value through the backing fields

@@ -169,7 +169,14 @@ public class ProcessProposalUseCase
                 signal);
         }
 
-        var placed = portfolio.ExecuteBuy(requested, order.Quantity, order.Price);
+        // request.AsOf rather than the clock read again, so the purchase is stamped with the
+        // same instant the risk gate judged the quote against. A holding period is counted in
+        // days; the seconds between the two would be precision that means nothing.
+        //
+        // The horizon travels with the purchase because the position is what the deterministic
+        // exits read, and they need to know what thesis they are enforcing.
+        var placed = portfolio.ExecuteBuy(
+            requested, order.Quantity, order.Price, request.AsOf, signal.HorizonDays);
 
         return new Cycle(
             new TradeDecisionResult.Executed(requested, order.Quantity, order.Price),
