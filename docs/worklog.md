@@ -7,8 +7,11 @@ A running record of what has been done, what was learned along the way, and what
 
 This file answers "where are we, how did we get here, and what is next". When resuming, read *Current state* and *Next steps* first, then the roadmap section for the next stage.
 
-**Last updated:** 2026-09-25. **Stage 4's code is complete and merged** - all eight pull
-requests. The machinery runs end to end: decisions are stored, the portfolio survives a
+**Last updated:** 2026-09-26. **Stage 5's third pull request is half written and not yet
+pushed** - three of its four commits are on `stage-5-selling`, the engine can sell and the
+deterministic exits work, but nothing calls either yet. Tomorrow's first job is commit 4, and
+*Stage 5 log* spells out exactly what it changes. **Stage 4's code is complete and merged** -
+all eight pull requests. The machinery runs end to end: decisions are stored, the portfolio survives a
 restart, a sweep scores every signal whose horizon has passed, the engine posts what it
 measured to the agent service, and memory reads the journal back. 21 signals are scored and
 `trading.hit_rate` has rows in it.
@@ -73,7 +76,8 @@ Two things that are easy to misread as broken:
 
 - **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21, **stage 3 done** 2026-09-23. **Stage 4 started** 2026-09-23. PR 5 and PR 6 were each split in two, so the stage is eight pull requests, and **all eight are merged** as of 2026-09-25. **Stage 5 has started**, with the model and the horizon settled first; stages 6-8 exist only as plan.
 - **`master` is at PR #41**, and stage 4 is fully merged: 6a (#39), 6b (#40) and the docs-only record of finding G (#41), all on 2026-09-25. Nothing reaches `master` without the three required checks passing, so what is there is green by construction.
-- **One branch is open:** `stage-5-sek`, PR 2 of stage 5's four. `stage-5-model-and-horizon` merged as #42 and `stage-5-screening` as #43.
+- **Dependabot has open bumps on `master`**, flagged 2026-09-26 and not yet looked at. Review them before `stage-5-selling` is rebased or pushed: a bump that touches `uv.lock` or a `csproj` is the kind that conflicts with a branch, and `gh` is unavailable here so they have to be read in the browser.
+- **One branch is open:** `stage-5-selling`, PR 3 of stage 5's four, with three of four commits made and **nothing pushed yet**. `stage-5-model-and-horizon` merged as #42, `stage-5-screening` as #43, `stage-5-sek` as #44 and `stage-5-symbol-columns` as #45 - the last of those repairing #44, which merged four of its six commits and left `master` with the widened pattern and the old columns for a few minutes.
 - **The account and the universe are Swedish, and there is no currency conversion anywhere.** `Money.DefaultCurrency` is SEK, the engine trades ERIC-B.ST and VOLV-B.ST, and outcomes are measured against XACT-OMXS30.ST. The opening balance is 100 000 kr, which is what makes the conviction tiers differ in share counts rather than both rounding to one. The 36 USD decisions and 21 SPY measurements from before the move are **kept**: `decisions.reference_currency` and `signal_outcomes.benchmark_symbol` make them self-describing, and finding G's reproduction reads them.
 - **The system can find candidates now.** `POST /v1/screen` ranks a universe with no LLM call at all: risk-adjusted momentum from bars, filtered on liquidity, with everything it left out named and the reason attached. The stage's stated practical risk turned out to be a measurement rather than a worry - **50 instruments in 2.0 seconds**, the same as 8, because `yf.download` batches and the ranking asks for no fundamentals. Nothing calls it yet; the engine starts driving the cycle in PR 3.
 - **`b1234878670a` never reached a row, and that is worth knowing rather than forgetting.** On 2026-09-25 `default`'s hash moved from `6c6da0e6edad` to `b1234878670a` without a word of the team changing: adding `sees_memory` to the payload wrote `sees_memory: false` onto every step. The payload was made sparse the same day, before the engine ran again, so the accidental hash was never stored - `SELECT team_id, team_version, count(*) FROM trading.decisions` returns only `6c6da0e6edad` and `79dfb7307b57`. Nothing has to be pooled and nothing has to be written down; the earlier warning in this file that the two hashes had to be reconciled by hand is obsolete, not wrong at the time. The lesson survives the hash: a version payload that lists every flag with its default ties the version to the shape of the payload rather than to the team.
@@ -91,7 +95,7 @@ Two things that are easy to misread as broken:
 - **The `trading` schema is live and has real rows in it.** Runs on 2026-09-24 opened the account at 10 000 USD and bought one AAPL at 337.445 and one MSFT at 497.56, with a second engine process picking the same portfolio up rather than opening another. The local database has **all three** engine migrations and **all three** Alembic revisions applied, which `master` has carried since PR 6a (#39) merged on 2026-09-25 - so the two are level. Delete the rows with `TRUNCATE trading.signal_outcomes, trading.decisions, trading.orders, trading.positions, trading.portfolios RESTART IDENTITY CASCADE` if a clean baseline matters; the append-only triggers deliberately do not block that.
 - **The engine now needs `Database:ConnectionString`** or it refuses to start. It is in the user secrets store on this machine, set 2026-09-23. `dotnet user-secrets list --project src/engine` prints it, so do not run that where anyone can see the screen.
 - **Migrations are applied by hand, and the engine refuses to start without them.** Decided 2026-09-24: `dotnet dotnet-ef database update` stays a deploy step, but startup names the pending migrations and the command instead of failing on a missing column mid-cycle.
-- **What is now impossible** rather than merely unlikely: the agents cannot name an amount (the contract has no `amount_usd`, and a test refuses one that reappears); an answer that is not the contract cannot deserialise into nulls; a position cannot be sized against cash instead of net asset value; and an order cannot be placed on a quote that is stale or dated in the future.
+- **What is now impossible** rather than merely unlikely: the agents cannot name an amount (the contract has no `amount_usd`, and a test refuses one that reappears); an answer that is not the contract cannot deserialise into nulls; a position cannot be sized against cash instead of net asset value; an order cannot be placed on a quote that is stale or dated in the future; nothing can sell shares it does not hold, or sell a holding the agents bought less than three days ago on a new opinion; and a HOLD cannot extend the clock the exits read, because only a purchase moves it.
 
 ## Next steps
 
@@ -176,7 +180,7 @@ migration have no business sharing a review with selling logic. The roadmap call
 |---|---|---|
 | 1 | `app/screening/` and `POST /v1/screen` - a universe, the factors from `facts.py` over all of it, filters and a ranking | Pure functions over fixed datasets, TDD, and **no engine changes at all**. It can be run and judged before anything else moves. The stage's stated practical risk lives here: yfinance is unofficial and rate-limited, and fundamentals are fetched per instrument |
 | 2 | **SEK end to end**: the symbol rule widens for Swedish tickers, the account currency becomes SEK, `available_risk_budget_usd` is renamed on the wire and in the database, and the engine points at Stockholm | A contract rename plus a migration. Inserted before selling because everything after it is written against whichever currency world exists, and because mixing it into the selling review would make it impossible to tell which change broke what |
-| 3 | Selling: the SELL branch in `PositionSizer`, `Portfolio.ExecuteSell` with realised profit and loss, and the deterministic exits - stop-loss, time limit, minimum holding period | Test-first with the same table technique as stage 2. The exits are the half that does not depend on the LLM answering, which is decision 1 applied to selling |
+| 3 | Selling: the SELL branch in `PositionSizer`, `Portfolio.ExecuteSell` with realised profit and loss, and the deterministic exits - stop-loss, time limit, minimum holding period | Test-first with the same table technique as stage 2. The exits are the half that does not depend on the LLM answering, which is decision 1 applied to selling. **In progress**, four commits: the aggregate, sizing and the gate, the exits, then the wiring |
 | 4 | The engine drives the cycle: universe to shortlist, shortlist union holdings, one analysis per fact-sheet change, and the shortlist stored per cycle | This is where the regime column goes, and where "do the agents beat the screening that picked their candidates?" becomes answerable |
 
 Stage 8's condition survives untouched, because stage 5
@@ -1373,11 +1377,118 @@ steps* rather than here, because they are still being spent.
     `QuoteContractTests` were deliberately skipped by that rewrite, because their `"USD"` is
     about a specific currency rather than about the account's.
 
+- **PR 3 - selling, and the exits that do not need an LLM** (branch `stage-5-selling`,
+  2026-09-26, **three of four commits made, nothing pushed**). The half of trading the agents
+  cannot do. They are asked about one instrument at a time with no memory of having bought it,
+  and HOLD is the answer they give most often, so until now a thesis that stopped being true had
+  no way to end.
+
+  - **Commit 1 `8984e22` - the portfolio can sell.** `Position.ReduceQuantity` returns what was
+    realised and refuses to sell more than is held; `Portfolio.ExecuteSell` reduces *before* the
+    cash moves, so a refusal cannot half-happen, and removes a holding that is sold out rather
+    than leaving a row of no shares. `Order.RealisedProfitAndLoss` is owned rather than a
+    complex property, because it is optional - null on a buy - and it is the only number in the
+    ledger that cannot be recomputed from its own row, since the average purchase price it was
+    measured against is gone once the holding closes. **The average price is deliberately not
+    recomputed on a sale:** selling does not change what the remaining shares cost, and an
+    average that moved would make every later realised figure wrong. `Position` gained
+    `LastPurchasedAt` and `ThesisHorizonDays`, and **only `AddQuantity` moves them**, which is
+    what makes "a HOLD does not extend the clock" a property of the design rather than a rule
+    someone has to remember.
+  - **The migration backfilled from the ledger instead of accepting EF's defaults.** Generated,
+    they were `0001-01-01` and horizon 0 - which the time limit would have read as "older than
+    every thesis" and the first cycle would have sold the live ERIC-B.ST position. A migration
+    that *invents* a purchase date is worse than one that looks it up, so both values come from
+    `trading.orders` and `trading.decisions`. Verified on the real row: the true timestamp and
+    horizon 15.
+  - **Commit 2 `ba072c8` - sizing and the gate.** `OrderIntent.Sell` carries the price's
+    timestamp and an `OrderTrigger`. `PositionSizer` scales the *holding* by the same
+    `ConvictionTier` that scales a buy's budget, rounded down, so a single share at moderate
+    conviction stays where it is. `RiskEngine.Evaluate` gained an overload that takes **no
+    signal and no prices**, which is the design rather than a shortcut: a sale has two authors,
+    and a sale needs no net asset value. `RiskPolicy.MinHoldingPeriod` is three days and **only
+    a sale the agents asked for waits for it** - that exemption is the whole reason an order
+    carries a trigger.
+  - **Commit 3 `38c2f34` - the exits.** `ExitRules` is a pure domain function: a stop-loss at
+    `RiskPolicy.StopLossPct` (10 %) below the average purchase price, and a time limit once the
+    thesis's own horizon has passed since the last buy. The stop-loss is checked first, so a
+    holding that has both fallen and expired reads as cut rather than as expired - which changes
+    the ledger and not the trade, and the ledger is what stage 8 compares from.
+    `ApplyExitsUseCase` sells **whole** positions: a stop-loss that sold half would leave the
+    position it just judged to be wrong, and a thesis is not half expired.
+    `PricesForOtherHoldingsAsync` became `HoldingQuoteReader`, shared by both use cases, and the
+    difference between the two callers is one parameter.
+  - **The stop is measured against what the shares cost, not the high since purchase.** A
+    trailing stop needs a high-water mark the position does not keep, and keeping one means a
+    column updated every cycle from a price the engine does not always manage to fetch - so a
+    missed quote would quietly lower the mark and the stop with it.
+  - **An exit writes no row in `trading.decisions`, on purpose.** That table is one row per
+    analysis: it requires a team, a request and the room the engine had at the time, and an exit
+    asked nobody anything. A row there would need a `team_id` that is not true, in the one table
+    stage 8 groups teams by. What an exit leaves behind is a ledger line whose `triggered_by`
+    says which rule fired and whose `realised_pnl` says what it cost or made. **The consequence
+    is a real gap:** an exit is not scored against the index the way a signal is, because a
+    measurement hangs off a decision. Closing it means first deciding whether a sale nobody
+    argued for is a thing to score at all.
+  - *Mutation-tested, three per commit, each turning exactly the intended tests red.* The ones
+    worth naming: cash before shares on a sale (1 red), a buy that no longer restarts the clock
+    (1), a minimum hold that also blocks a stop-loss (2), half a holding rounding up (2), the
+    time limit winning over the stop-loss (1), only the first exit firing (1), and an exit
+    claiming the agents asked for it, which puts it behind the minimum holding period (4).
+  - *Green as of the third commit:* 393 .NET and 476 Python, `dotnet format` clean, no model
+    drift, and both migrations applied to the live database - the three historical buys read as
+    `Signal`.
+
+  **Two decisions I asked about twice and never got an answer to**, so I took them and said so:
+  a sale reuses `ConvictionTier` (above 0.7 the whole position, 0.4-0.7 a half, below nothing),
+  and the stop-loss is measured against the average purchase price. Both are reversible and both
+  are argued where the code is.
+
+  **Commit 4, tomorrow's first job.** Nothing calls either new path yet, which is why the branch
+  is not pushed: the engine still answers `NoAction` to every SELL and the exits are registered
+  in `Program.cs` but never invoked. What it changes, in order:
+
+  1. `ProcessProposalUseCase.DecideAsync`: the early return becomes `if (signal.Stance ==
+     Stance.Hold)` instead of `!= Stance.Buy`. **Fetch quotes only for a buy** - a sale needs no
+     valuation, so a SELL cycle should make zero quote calls and pass `PriceSnapshot.Empty`.
+     Then dispatch on the intent for both `Evaluate` overloads and for
+     `ExecuteBuy`/`ExecuteSell`.
+  2. `TradeDecisionResult.Executed` gains an `OrderSide`, so the worker's log line can say
+     "Sold". **No new database column:** `decisions.stance` already says which way, and
+     `order_id` points at the ledger line that carries the side.
+  3. `TradingWorker`: run `ApplyExitsUseCase` once per cycle, **before** the ticker loop, in its
+     own scope, transaction and correlation id, logging what it placed only after the commit -
+     the same order `RunCycleAsync` already uses, so a line in the log means a row. Before the
+     analyses because a cycle's buying should see the cash and the position headroom the exits
+     have just released.
+  4. Tests: a SELL that executes, a SELL inside the minimum hold that is `RejectedByRisk`, a
+     SELL of nothing held that is `NotSized`, a SELL that fetched no quotes, and a worker test
+     that the exits run first. `TradingWorkerPersistenceTests` builds its own container and will
+     need `AddTransient<ApplyExitsUseCase>()`.
+  5. Then: fold this worklog commit into commit 4 with `git reset --soft HEAD~1` so the pull
+     request stays at four, re-run every CI step in a throwaway `git worktree --detach`, push,
+     and open the PR from the compare URL.
+
+  **Still open on this branch**, and worth deciding rather than discovering: the exits can only
+  reach the gate through prices the reader already validated, so the gate's own price-age and
+  quantity checks are unreachable from that path today - the second gate does no work there,
+  which is correct but means its warning branch is untested through the use case and tested
+  directly on `RiskEngine` instead.
+
 ---
 
 ## Lessons and gotchas
 
 Things that cost time or were not obvious. Most are also recorded where they apply.
+
+**Working on uncommitted code**
+- **`git checkout -- <file>` on a file that is only in the working tree deletes the work.** It restores from `HEAD`, which for uncommitted work means "before I started". Used as the revert step of a mutation test, it silently wiped the sell branch of `PositionSizer` and the sell overload of `RiskEngine`; the next mutation then failed to build, and its own revert wiped the second file too. **Back the file up to the scratchpad and copy it back.** The tell that something was wrong was a test run that printed no summary at all - a build failure, not a failing test.
+- **Mutate one thing, run, restore, and check the restore.** `grep` for the original text after copying back costs nothing and is the difference between noticing this in a minute and noticing it at the commit.
+
+**Time, ids and append-only tables**
+- **A version 7 GUID is ordered to the millisecond and no further.** .NET fills the bits after the timestamp at random, so two ids created in the same millisecond sort arbitrarily. A test that ordered the ledger by id passed in a full run and failed when it ran alone. `placed_at` cannot break the tie either: it defaults to `now()`, which is the *transaction's* clock and identical for every row the transaction writes. Nothing in the engine reads the ledger in order today, and the configuration comment claiming the primary key gives it one is now honest about the limit.
+- **`ADD COLUMN ... DEFAULT` is how you backfill an append-only table.** `trading.orders` raises on `UPDATE`, so a migration's backfill statement would be refused by the table's own trigger - but adding a column with a default is not an UPDATE and never fires it. Drop the default in the next statement, or an `INSERT` that forgets the column silently records the default as though somebody meant it.
+- **A generated migration's default is a placeholder, not a value.** EF proposed `defaultValue: ""` for the new enum column - a value the enum cannot produce and nothing downstream could read. The right default was the one that is *true about the history*: every order in the table was a buy the agents argued for, so `Signal`.
 
 **Widths, and the tests that never wrote anything wide**
 - **Widening a validation rule is not widening the column behind it.** The symbol pattern went from 10 characters to 16 for Swedish tickers, and six database columns across two schemas stayed at `varchar(10)`. The first real write would have been `22001: value too long for type character varying(10)` - and for the benchmark it would have been every night, in the sweep. Grep for every column that holds the value, not only the places that validate it.
