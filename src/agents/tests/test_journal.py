@@ -16,7 +16,7 @@ import pytest_asyncio
 
 from app.application.journal import AnalysisRun, RecordedStep
 from app.domain.facts import FactSheet
-from app.domain.signals import Stance, TradeView
+from app.domain.signals import MAX_SYMBOL_LENGTH, Stance, TradeView
 from app.domain.steps import MarketRead, RiskAssessment, Severity, Trend, Valuation
 from app.infrastructure.db.journal import PostgresJournal
 
@@ -59,13 +59,17 @@ STEPS = (
 )
 
 
-def a_run(correlation_id: str = "c-1", steps: tuple[RecordedStep, ...] = STEPS) -> AnalysisRun:
+def a_run(
+    correlation_id: str = "c-1",
+    steps: tuple[RecordedStep, ...] = STEPS,
+    symbol: str = "AAPL",
+) -> AnalysisRun:
     return AnalysisRun(
         correlation_id=correlation_id,
         team_id="default",
         team_version="a" * 64,
         instrument_type="equity",
-        symbol="AAPL",
+        symbol=symbol,
         facts=FACTS,
         steps=steps,
     )
@@ -86,6 +90,26 @@ async def test_the_fact_sheet_comes_back_exactly_as_it_went_in(pool: asyncpg.Poo
     stored = await pool.fetchval("SELECT fact_sheet FROM agent.analysis_runs")
 
     assert FactSheet.model_validate(json.loads(stored)) == FACTS
+
+
+async def test_the_longest_symbol_the_contract_allows_fits_the_column(
+    pool: asyncpg.Pool,
+) -> None:
+    """The same guard the outcome store has, for the other column that holds a symbol.
+
+    `analysis_runs.symbol` was `varchar(10)` while the contract allowed sixteen, and nothing
+    in this suite had ever written a symbol longer than four characters to a real column - so
+    the mismatch was invisible until `ESSITY-B.ST` entered the universe. Every symbol the
+    contract admits has to survive the trip, not only the short ones.
+    """
+    for symbol in ("A" * MAX_SYMBOL_LENGTH, "ESSITY-B.ST", "XACT-OMXS30.ST"):
+        await PostgresJournal(pool).record(a_run(correlation_id=f"c-{symbol}", symbol=symbol))
+
+        stored = await pool.fetchval(
+            "SELECT symbol FROM agent.analysis_runs WHERE correlation_id = $1", f"c-{symbol}"
+        )
+
+        assert stored == symbol
 
 
 async def test_every_step_is_stored_with_its_place_and_its_schema(pool: asyncpg.Pool) -> None:

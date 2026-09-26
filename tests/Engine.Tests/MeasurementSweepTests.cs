@@ -405,6 +405,51 @@ public class MeasurementSweepTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Two_benchmarks_are_two_rows_in_the_report_rather_than_one()
+    {
+        // The unique index is on (decision_id, horizon_unit, horizon_days), so one decision
+        // cannot be scored against two benchmarks at one horizon - but two decisions alike in
+        // every column the view groups by certainly can be, and before this the two pooled
+        // into one hit rate. A hit rate against two markets is two numbers.
+        await ASignalWasMade(correlationId: "cycle-spy");
+        await ASignalWasMade(correlationId: "cycle-omx", referencePrice: 101m);
+
+        await using var context = _database.NewContext();
+        var decisions = await context.Decisions
+            .OrderBy(decision => decision.Id)
+            .ToListAsync(TestContext.Current.CancellationToken);
+
+        foreach (var (decision, benchmark) in decisions.Zip(new[] { "SPY", "XACT-OMXS30.ST" }))
+        {
+            context.SignalOutcomes.Add(new SignalOutcomeRecord
+            {
+                DecisionId = decision.Id,
+                HorizonUnit = HorizonUnit.TradingDays,
+                HorizonDays = 1,
+                Status = OutcomeStatus.Measured,
+                BenchmarkSymbol = benchmark,
+                MeasuredOn = new DateOnly(2026, 9, 25),
+                MeasuredPrice = 102m,
+                InstrumentReturn = 0.02m,
+                BenchmarkReturn = 0.01m,
+                ExcessReturn = 0.01m,
+                CostFraction = 0.0006m,
+                NetEdge = 0.0094m,
+                Hit = true
+            });
+        }
+
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var rows = await context.Database
+            .SqlQueryRaw<long>("SELECT count(*) AS \"Value\" FROM trading.hit_rate")
+            .SingleAsync(TestContext.Current.CancellationToken);
+
+        // One row each, not one row of two. Everything else about them is identical.
+        rows.ShouldBe(2);
+    }
+
+    [Fact]
     public async Task A_row_that_could_not_be_measured_stays_out_of_the_report()
     {
         // It is in the table so the sweep stops retrying it, and out of the view because a

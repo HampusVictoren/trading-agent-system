@@ -168,6 +168,18 @@ def migrated(agent_database: str) -> Iterator[str]:
     test looking at a schema that already exists, and the failure is immediate.
 
     Function-scoped on purpose: the container is what is slow, not the migrations.
+
+    The rows a test wrote are cleared **before** the downgrade, and the reason is a property
+    of the migrations rather than of any test. A migration that widens a column in place - as
+    the one for Swedish symbols does - cannot be reversed while a stored value needs the extra
+    width, and refusing is the right behaviour for an operator: narrowing would have to lose
+    information, and losing it quietly is worse than stopping. The tables are append-only, so
+    a downgrade cannot tidy up after itself either. `TRUNCATE` is the one statement the
+    triggers deliberately allow, because it is the owner clearing a table on purpose.
+
+    What that costs is real and worth naming: the downgrade is exercised against an empty
+    schema rather than against data. The other migrations drop their tables, so they were
+    never getting more than that anyway.
     """
     config = alembic_config(agent_database)
     upgrade(config)
@@ -175,4 +187,21 @@ def migrated(agent_database: str) -> Iterator[str]:
     try:
         yield agent_database
     finally:
+        _clear_append_only_tables(agent_database)
         downgrade(config)
+
+
+def _clear_append_only_tables(dsn: str) -> None:
+    """Empty every `agent` table, in one statement so foreign keys do not dictate an order."""
+
+    async def truncate() -> None:
+        connection = await asyncpg.connect(dsn)
+        try:
+            await connection.execute(
+                "TRUNCATE agent.analysis_embeddings, agent.step_outputs, "
+                "agent.analysis_runs, agent.signal_outcomes"
+            )
+        finally:
+            await connection.close()
+
+    _off_the_event_loop(lambda: asyncio.run(truncate()))
