@@ -1150,7 +1150,8 @@ steps* rather than here, because they are still being spent.
 
 - **PR - the model, the clock and the horizon** (branch `stage-5-model-and-horizon`,
   2026-09-25). Not stage 5's own work: the thing finding G said to settle before it, while
-  four independent events was the whole cost of moving `team_version`. Three commits.
+  four independent events was the whole cost of moving `team_version`. Five commits: three,
+  then two answering a review.
 
   - **The horizon is capped at 30 calendar days**, in pydantic, in the schema and in the
     engine's mapper, with the range named in the prompt. 26 of 36 stored signals had asked
@@ -1167,15 +1168,50 @@ steps* rather than here, because they are still being spent.
     the Python constant drifting from the schema turns the agreement test red; the field
     ignoring the constant turns the behaviour test red. The last two fail on different
     mistakes, which is why both exist.
-  - *Verified live:* 307 .NET and 345 Python tests green; a real `POST /v1/signals` answered
-    in 28.4 s cold and 19-20 s warm, asking for a 15 day horizon; three identical requests
-    answered SELL, SELL, SELL at conviction 0.85/0.80/0.80.
+  - *Verified live:* 307 .NET and 346 Python tests green, re-run in a throwaway worktree of
+    tracked files only; a real `POST /v1/signals` answered in 28.4 s cold and 19-20 s warm,
+    asking for a 15 day horizon; three identical requests answered SELL, SELL, SELL at
+    conviction 0.85/0.80/0.80.
+
+  *Reviewed externally, 2026-09-25*, verdict "accept with nits" and no blockers in contract
+  or wiring. Everything raised was either fixed on the branch or recorded; nothing was
+  deferred to a later pull request.
+
+  - **The worklog contradicted itself about its own corrections**, which is the finding worth
+    keeping. The commit that introduced the contradictions argued in its own message that a
+    resume document describing a plan which no longer holds is one you stop trusting - and
+    then corrected four places and left six. Two of them named `b1234878670a` as `default`'s
+    version, a hash this session had already proved exists in no row. Writing a new sentence
+    beside a stale one leaves the file *worse* than it was, because now a reader has to
+    decide which to believe. Fixed in the commit above; the sixth was found by re-running the
+    reviewer's own check over the whole file rather than the parts I had touched.
+  - **A test that fails on a correct change.** The seam test hardcoded `31` and `"past the 30
+    day limit"`, so moving the cap - consistently, in all three places - turned it red on a
+    string. Both now come from `MaxHorizonDays`. The mutation that proves it is the one where
+    *everything* stays green.
+  - **`Trading:CycleIntervalSeconds` was called a structural mismatch**, and it is not:
+    `TradingWorker` delays *after* the loop over tickers, so nothing overlaps and nothing
+    queues. The period is simply (analysis time x tickers) + 15 s, which the model change
+    moved from about 30 s to 55-70 s. So the number no longer describes the cadence, which is
+    a documentation problem and count 2 of finding G - recorded under *Open decisions*, not
+    bumped, because stage 5's third pull request deletes the cadence.
+  - **The stale-`.env` hole** was the most useful thing in the review after the worklog. No
+    setting has a default, which makes an incomplete environment fail fast but makes a *stale*
+    value silent: an `.env` from before today still says `llama3.2`, and the service starts on
+    it happily, running a third team that matches neither the docs nor the current hash. The
+    resuming checklist now diffs the two files and says why.
+  - **Not acted on:** the git author identity, at the owner's instruction.
 
 ---
 
 ## Lessons and gotchas
 
 Things that cost time or were not obvious. Most are also recorded where they apply.
+
+**Keeping this file honest**
+- **Correcting a document means finding every place, not the places you remember.** A commit that argued this point in its own message then corrected four claims and left six, including two naming a `team_version` the same session had proved existed in no database row. A new sentence beside a stale one is worse than the stale one alone, because a reader now has to pick. Grep the specific phrase and the specific value across the whole file, then read the neighbouring bullets, before claiming a correction is done.
+- **A test that fails on a correct change is a liability.** Hardcoding both the input and the expected message (`31`, `"past the 30 day limit"`) meant a consistent cap change turned it red for a string reason, while the test actually guarding consistency stayed green. The mutation worth running is the one where everything should stay green - that is what tells you a test is pinning behaviour rather than pinning a literal.
+- **"Structural" is a strong word to check before repeating.** A review called the cycle interval a structural mismatch; `TradingWorker` delays after the loop, so nothing overlaps or queues. The finding was real, the severity was not, and accepting the framing would have bought a config change that stage 5 deletes.
 
 **Models and Ollama**
 - **`Win32_VideoController.AdapterRAM` is a 32-bit field and saturates at 4 GB.** It reported 4 GB for a 16 GB card, which would have ruled out every model worth switching to. `HardwareInformation.qwMemorySize` under the display class key in the registry is the real number. Two weeks of treating the machine as smaller than it is.
