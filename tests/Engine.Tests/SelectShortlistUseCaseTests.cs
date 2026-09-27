@@ -91,11 +91,10 @@ public class SelectShortlistUseCaseTests
 
         var options = Options.Create(new TradingOptions
         {
-            Tickers = ["NVDA"],
             Universe = universe ?? ["NVDA", "AAPL", "TINY"],
             ShortlistSize = 2,
             MinDollarVolume = 5_000_000m,
-            CycleIntervalSeconds = 15,
+            CycleIntervalMinutes = 15,
             TeamId = "default",
             OpeningBalance = 100_000m
         });

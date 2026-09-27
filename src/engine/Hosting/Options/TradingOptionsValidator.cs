@@ -8,10 +8,10 @@ using Microsoft.Extensions.Options;
 /// configuration should stop the service at startup rather than reach the agent service.
 /// </summary>
 /// <remarks>
-/// The universe gets the same treatment as the ticker list, and one rule of its own: no symbol
-/// twice. A duplicate would come back from the screen as one instrument ranked twice, which the
-/// contract seam refuses - so every cycle would fail on a configuration mistake that is one
-/// line to find here and confusing to find there.
+/// The universe also has one rule of its own: no symbol twice. A duplicate would come back from
+/// the screen as one instrument ranked twice, which the contract seam refuses - so every cycle
+/// would fail on a configuration mistake that is one line to find here and confusing to find
+/// there.
 /// </remarks>
 public sealed class TradingOptionsValidator : IValidateOptions<TradingOptions>
 {
@@ -19,7 +19,6 @@ public sealed class TradingOptionsValidator : IValidateOptions<TradingOptions>
     {
         var failures = new List<string>();
 
-        failures.AddRange(NotTickers(nameof(options.Tickers), options.Tickers));
         failures.AddRange(NotTickers(nameof(options.Universe), options.Universe));
 
         var duplicates = options.Universe

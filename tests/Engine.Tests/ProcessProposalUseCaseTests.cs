@@ -116,8 +116,10 @@ public class ProcessProposalUseCaseTests
 
         var options = Options.Create(new TradingOptions
         {
-            Tickers = [Requested],
-            CycleIntervalSeconds = 15,
+            Universe = [Requested],
+            ShortlistSize = 10,
+            MinDollarVolume = 10_000_000m,
+            CycleIntervalMinutes = 15,
             TeamId = TeamId
         });
 

@@ -7,10 +7,6 @@ public sealed class TradingOptions
 {
     public const string SectionName = "Trading";
 
-    [Required]
-    [MinLength(1)]
-    public string[] Tickers { get; init; } = [];
-
     /// <summary>
     /// Every instrument the screen may consider. The engine owns what it trades, so the
     /// universe is sent with each screen rather than held by the agent service - which also
@@ -59,8 +55,19 @@ public sealed class TradingOptions
     [Range(typeof(decimal), "0", "1000000000")]
     public decimal? MinDollarVolume { get; init; }
 
-    [Range(1, 3600)]
-    public int CycleIntervalSeconds { get; init; }
+    /// <summary>
+    /// How long to wait between cycles. Minutes rather than seconds, and the reason is that the
+    /// number has stopped meaning what it used to.
+    /// </summary>
+    /// <remarks>
+    /// It no longer paces the analyses at all: an instrument is screened once a trading day and
+    /// analysed once a trading day, so a shorter interval buys nothing but a faster answer to
+    /// "has anything changed?". What it does pace is the deterministic exits, which run every
+    /// cycle and are the half that has to be timely - a stop-loss checked once an hour is a
+    /// stop-loss with an hour of slack in it.
+    /// </remarks>
+    [Range(1, 1440)]
+    public int CycleIntervalMinutes { get; init; }
 
     /// <summary>
     /// Which team setup the agent service should run. Configuration rather than code, because
@@ -84,5 +91,5 @@ public sealed class TradingOptions
     [Range(typeof(decimal), "1", "100000000")]
     public decimal OpeningBalance { get; init; }
 
-    public TimeSpan CycleInterval => TimeSpan.FromSeconds(CycleIntervalSeconds);
+    public TimeSpan CycleInterval => TimeSpan.FromMinutes(CycleIntervalMinutes);
 }

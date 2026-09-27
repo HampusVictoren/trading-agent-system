@@ -19,11 +19,10 @@ public class EngineOptionsTests
         ["RiskPolicy:MaxQuoteAgeSeconds"] = "300",
         ["RiskPolicy:MinHoldingPeriodDays"] = "3",
         ["RiskPolicy:StopLossPercentage"] = "0.10",
-        ["Trading:Tickers:0"] = "AAPL",
         ["Trading:Universe:0"] = "ERIC-B.ST",
         ["Trading:ShortlistSize"] = "10",
         ["Trading:MinDollarVolume"] = "10000000",
-        ["Trading:CycleIntervalSeconds"] = "15",
+        ["Trading:CycleIntervalMinutes"] = "15",
         ["Trading:TeamId"] = "default",
         ["Trading:OpeningBalance"] = "10000",
         ["Database:ConnectionString"] = "Host=127.0.0.1;Database=tradingdb;Username=engine_svc",
@@ -66,8 +65,9 @@ public class EngineOptionsTests
         Resolve<AgentServiceOptions>().BaseUrl.ShouldBe("http://127.0.0.1:8000");
         Resolve<AgentServiceOptions>().RequestTimeoutSeconds.ShouldBe(30);
         Resolve<RiskPolicyOptions>().MaxPositionPercentage.ShouldBe(0.05m);
-        Resolve<TradingOptions>().Tickers.ShouldBe(["AAPL"]);
-        Resolve<TradingOptions>().CycleInterval.ShouldBe(TimeSpan.FromSeconds(15));
+        Resolve<TradingOptions>().Universe.ShouldBe(["ERIC-B.ST"]);
+        Resolve<TradingOptions>().ShortlistSize.ShouldBe(10);
+        Resolve<TradingOptions>().CycleInterval.ShouldBe(TimeSpan.FromMinutes(15));
         Resolve<TradingOptions>().TeamId.ShouldBe("default");
         Resolve<TradingOptions>().OpeningBalance.ShouldBe(10_000m);
     }
@@ -299,25 +299,9 @@ public class EngineOptionsTests
     }
 
     [Fact]
-    public void A_missing_ticker_list_is_rejected()
-    {
-        Should.Throw<OptionsValidationException>(() => Resolve<TradingOptions>(("Trading:Tickers:0", null)));
-    }
-
-    [Theory]
-    [InlineData("")]
-    [InlineData("   ")]
-    public void A_ticker_the_domain_would_refuse_is_rejected(string ticker)
-    {
-        var exception = Should.Throw<OptionsValidationException>(() => Resolve<TradingOptions>(("Trading:Tickers:0", ticker)));
-
-        exception.Message.ShouldContain("Trading:Tickers");
-    }
-
-    [Fact]
     public void A_cycle_interval_of_zero_is_rejected()
     {
-        Should.Throw<OptionsValidationException>(() => Resolve<TradingOptions>(("Trading:CycleIntervalSeconds", "0")));
+        Should.Throw<OptionsValidationException>(() => Resolve<TradingOptions>(("Trading:CycleIntervalMinutes", "0")));
     }
 
     [Fact]
