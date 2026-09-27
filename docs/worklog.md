@@ -8,9 +8,9 @@ A running record of what has been done, what was learned along the way, and what
 This file answers "where are we, how did we get here, and what is next". When resuming, read *Current state* and *Next steps* first, then the roadmap section for the next stage.
 
 **Last updated:** 2026-09-27, late. **Stage 5's third pull request is merged as #48.** The
-fourth is written - four commits on `stage-5-cycle`, 473 .NET and 476 Python green - but **not
-pushed, and the PR is not open.** Read *Next steps* first: four things are left, and the first of
-them is one command.
+fourth is written and pushed - four commits plus this log on `stage-5-cycle`, with every CI step
+re-run in a throwaway worktree at `20c2ffa` - but **the pull request is not open yet.** Read
+*Next steps* first: four things are left, and the first of them is one click.
 
 **What the fourth pull request does:** the engine stops trading a list somebody typed. It screens
 31 OMXS30 names without an LLM, analyses the best ten plus everything it holds, and asks about an
@@ -82,7 +82,7 @@ Two things that are easy to misread as broken:
 - **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21, **stage 3 done** 2026-09-23. **Stage 4 started** 2026-09-23. PR 5 and PR 6 were each split in two, so the stage is eight pull requests, and **all eight are merged** as of 2026-09-25. **Stage 5 has started**, with the model and the horizon settled first; stages 6-8 exist only as plan.
 - **`master` is at PR #41**, and stage 4 is fully merged: 6a (#39), 6b (#40) and the docs-only record of finding G (#41), all on 2026-09-25. Nothing reaches `master` without the three required checks passing, so what is there is green by construction.
 - **Dependabot's bumps are in.** #46 (setup-uv) and #47 (six Python packages) merged to `master` on 2026-09-26 and were merged *into* `stage-5-selling` rather than rebased onto, because the branch was already pushed and a rebase would need a force-push. Two of the six matter behaviourally - **ag2 1.0.5 to 1.0.6** and **openai 3.16.1 to 3.19.1** - and the lock also *downgraded* SQLAlchemy from 2.1.1 to 2.0.54, which the Alembic fixture exercises on every database test. 476 Python tests green on all of it.
-- **One branch is open:** `stage-5-cycle`, PR 4 of stage 5's four, **four commits committed locally and not yet pushed.** `stage-5-model-and-horizon` merged as #42, `stage-5-screening` as #43, `stage-5-sek` as #44, `stage-5-symbol-columns` as #45 - the last of those repairing #44, which merged four of its six commits and left `master` with the widened pattern and the old columns for a few minutes - and `stage-5-selling` as #48.
+- **One branch is open:** `stage-5-cycle`, PR 4 of stage 5's five, **five commits pushed at `20c2ffa`, pull request not yet opened.** `stage-5-model-and-horizon` merged as #42, `stage-5-screening` as #43, `stage-5-sek` as #44, `stage-5-symbol-columns` as #45 - the last of those repairing #44, which merged four of its six commits and left `master` with the widened pattern and the old columns for a few minutes - and `stage-5-selling` as #48.
 - **`stage-5-selling` still exists on both sides.** Deleting it was refused by this session's tooling as a destructive git action, so it needs `git branch -d stage-5-selling` and `git push origin --delete stage-5-selling` by hand. The rule is master plus one working branch; right now there are three.
 - **Stage 5 gained a fifth pull request**, split out of the fourth on 2026-09-27: the shortlist as a benchmark. Comparing buys against the shortlist average needs the members that were *not* bought measured too, which is a new population in `MeasurementWorker` and a column on `trading.hit_rate`. It touches no decision path and cannot be verified until a horizon has passed, so it reviews on its own.
 - **The account and the universe are Swedish, and there is no currency conversion anywhere.** `Money.DefaultCurrency` is SEK, the engine trades ERIC-B.ST and VOLV-B.ST, and outcomes are measured against XACT-OMXS30.ST. The opening balance is 100 000 kr, which is what makes the conviction tiers differ in share counts rather than both rounding to one. The 36 USD decisions and 21 SPY measurements from before the move are **kept**: `decisions.reference_currency` and `signal_outcomes.benchmark_symbol` make them self-describing, and finding G's reproduction reads them.
@@ -111,22 +111,12 @@ Two things that are easy to misread as broken:
 Stage 5's fourth pull request is written and green on `stage-5-cycle`. Nothing about it is
 half-finished; what is left is the part that needs a shell and a browser.
 
-1. **Reproduce CI in a throwaway worktree, then push.** This is the step that catches anything
-   passing only because this machine has something CI does not, and it has not been run against
-   these four commits - only the working tree has.
-
-   ```bash
-   cd ~/repos/trading-agent-system
-   git worktree add --detach /tmp/ci stage-5-cycle
-   cd /tmp/ci && dotnet test --solution TradingSystem.slnx && dotnet format TradingSystem.slnx --verify-no-changes
-   cd /tmp/ci/src/agents && uv sync --locked && uv run pytest && uv run ruff check app/ tests/ migrations/ \
-       && uv run ruff format --check app/ tests/ migrations/ && uv run mypy app/ migrations/
-   cd ~/repos/trading-agent-system && git worktree remove --force /tmp/ci
-   git push -u origin stage-5-cycle
-   ```
-
-   Expect **473 .NET** and **476 Python**. `gh` is unavailable, so the PR opens from a pre-filled
-   compare URL - build it the way PR 3's was built.
+1. **Open the pull request.** Everything before it is done: CI was re-run in a throwaway
+   `git worktree --detach` at `20c2ffa` - **473 .NET**, **476 Python**, `dotnet format`, ruff and
+   mypy all clean, no model drift - and the branch is pushed. `gh` is unavailable, so the PR opens
+   from a pre-filled compare URL, which is saved in the scratchpad as `pr4-url.txt` with the body
+   beside it as `pr4-body.md`. If the scratchpad is gone, open
+   `compare/master...stage-5-cycle?expand=1` and write the body from this log entry.
 
 2. **Run it live, because this pull request's main claim is that a cycle does *less*.** Every
    other claim has a test; "the second cycle of the day analyses nothing" is only convincing from
@@ -1557,8 +1547,9 @@ steps* rather than here, because they are still being spent.
   it, this is a known thing and not a new one.
 
 - **PR 4 of 4 - the engine drives the cycle** (branch `stage-5-cycle`, 2026-09-27). Four commits,
-  all green at **473 .NET** and 476 Python, `dotnet format` clean, no model drift. **Not pushed
-  yet, and the PR is not open** - see *Next steps* for the four things left.
+  all green at **473 .NET** and 476 Python, `dotnet format` clean, no model drift, every step
+  re-run in a throwaway worktree. **Pushed at `20c2ffa`; the pull request is not open yet** - see
+  *Next steps* for the four things left.
 
   The stage's last review, and the one that turns "bedöm en ticker som någon annan valt" into
   the target: a universe of 31 OMXS30 names, ranked without an LLM, ten of them analysed, and an
