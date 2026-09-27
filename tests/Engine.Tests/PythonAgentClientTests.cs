@@ -311,4 +311,75 @@ public class PythonAgentClientTests
 
         exception.Message.ShouldContain("503");
     }
+
+    private const string ValidScreen =
+        """
+        {"candidates":[{"instrument":{"type":"equity","symbol":"NVDA"},"score":1.421,
+          "return_3m":0.2842,"volatility_30d":0.2,"median_dollar_volume":41250000.0}],
+         "rejected":[{"instrument":{"type":"equity","symbol":"TINY"},"reason":"too thin"}],
+         "as_of":"2026-09-26T13:45:02.117Z"}
+        """;
+
+    private static readonly ScreenRequestDto AScreenRequest = new()
+    {
+        Universe = [new EquityInstrumentDto { Symbol = "NVDA" }, new EquityInstrumentDto { Symbol = "TINY" }],
+        Limit = 10,
+        MinDollarVolume = 5_000_000m,
+        CorrelationId = "cycle-9"
+    };
+
+    [Fact]
+    public async Task Returns_the_screen_when_the_service_honours_the_contract()
+    {
+        var client = ClientWith(new StubHandler(HttpStatusCode.OK, ValidScreen));
+
+        var screen = await client.GetScreenAsync(AScreenRequest, TestContext.Current.CancellationToken);
+
+        screen.ShouldNotBeNull();
+        screen.Candidates.Count.ShouldBe(1);
+        screen.Candidates[0].Score.ShouldBe(1.421m);
+        screen.Rejected.Count.ShouldBe(1);
+        screen.Rejected[0].Reason.ShouldBe("too thin");
+    }
+
+    [Fact]
+    public async Task A_screen_request_carries_the_universe_in_its_body_and_its_cycle_in_a_header()
+    {
+        // The universe goes in the body rather than a query string, which is what keeps a list
+        // of a hundred symbols from ever becoming part of a URL. The header comes from the
+        // body's own correlation id, so the two cannot name different cycles.
+        var recorder = new RecordingHandler(ValidScreen);
+        var client = ClientWith(recorder);
+
+        await client.GetScreenAsync(AScreenRequest, TestContext.Current.CancellationToken);
+
+        recorder.Seen!.RequestUri!.AbsolutePath.ShouldBe("/v1/screen");
+        recorder.Seen.Headers.GetValues(PythonAgentClient.CorrelationIdHeader).ShouldBe(["cycle-9"]);
+        recorder.Body.ShouldContain("\"symbol\":\"TINY\"");
+        recorder.Body.ShouldContain("\"min_dollar_volume\":5000000");
+    }
+
+    [Fact]
+    public async Task A_screen_the_service_could_not_give_is_an_unavailable_agent_service()
+    {
+        // 503 is the realistic one: the screen is the call that reaches market data for up to a
+        // hundred instruments at once. The message names the size, because a screen that fails
+        // at fifty and not at five is the shape of a rate limit.
+        var client = ClientWith(new StubHandler(HttpStatusCode.ServiceUnavailable, "{}"));
+
+        var exception = await Should.ThrowAsync<AgentServiceUnavailableException>(
+            () => client.GetScreenAsync(AScreenRequest, TestContext.Current.CancellationToken));
+
+        exception.Message.ShouldContain("503");
+        exception.Message.ShouldContain("2 instrument(s)");
+    }
+
+    [Fact]
+    public async Task A_screen_answer_that_is_not_the_contract_is_refused()
+    {
+        var client = ClientWith(new StubHandler(HttpStatusCode.OK, """{"candidates":[]}"""));
+
+        await Should.ThrowAsync<AgentResponseInvalidException>(
+            () => client.GetScreenAsync(AScreenRequest, TestContext.Current.CancellationToken));
+    }
 }

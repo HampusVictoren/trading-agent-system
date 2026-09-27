@@ -11,6 +11,54 @@ public sealed class TradingOptions
     [MinLength(1)]
     public string[] Tickers { get; init; } = [];
 
+    /// <summary>
+    /// Every instrument the screen may consider. The engine owns what it trades, so the
+    /// universe is sent with each screen rather than held by the agent service - which also
+    /// makes that endpoint a pure function of its input, and a stored shortlist reproducible
+    /// from the request that produced it.
+    /// </summary>
+    /// <remarks>
+    /// The cap mirrors <c>maxItems</c> on the universe in contracts/screen.schema.json, because
+    /// a request is a unit of work with a timeout rather than a bulk load. A symbol in here
+    /// that cannot be fetched does not fail the screen: it comes back named in the rejections,
+    /// which is how a universe that is quietly rotting becomes visible.
+    /// </remarks>
+    [Required]
+    [MinLength(1)]
+    [MaxLength(100)]
+    public string[] Universe { get; init; } = [];
+
+    /// <summary>
+    /// How many of the ranked instruments to actually analyse. This is the setting that bounds
+    /// a cycle's cost: everything upstream of it is arithmetic, and everything downstream is
+    /// three LLM calls per instrument.
+    /// </summary>
+    /// <remarks>The cap mirrors <c>maximum</c> on <c>limit</c> in the same contract.</remarks>
+    [Range(1, 50)]
+    public int ShortlistSize { get; init; }
+
+    /// <summary>
+    /// The liquidity floor the screen filters on, as typical daily turnover in the account's
+    /// currency.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Nullable and <c>[Required]</c> rather than a plain <c>decimal</c>, because zero is a
+    /// legitimate value here - it means "no floor" - so the usual trick of letting a missing
+    /// setting bind to zero and fall outside the range would not catch an absent key.
+    /// </para>
+    /// <para>
+    /// It is a data-quality guard rather than a liquidity constraint at this account size. A
+    /// position is a few percent of a hundred thousand kronor, so no Stockholm large cap is
+    /// anywhere near too thin to buy; what the floor actually catches is a symbol whose
+    /// listing has gone inactive or whose data has gone stale. It has to be revisited if the
+    /// account ever grows enough for the order size to matter.
+    /// </para>
+    /// </remarks>
+    [Required]
+    [Range(typeof(decimal), "0", "1000000000")]
+    public decimal? MinDollarVolume { get; init; }
+
     [Range(1, 3600)]
     public int CycleIntervalSeconds { get; init; }
 
