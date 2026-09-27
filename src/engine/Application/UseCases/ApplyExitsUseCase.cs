@@ -59,6 +59,7 @@ public sealed class ApplyExitsUseCase
     {
         var now = _clock.GetUtcNow();
         var placed = new List<Order>();
+        var held = portfolio.Positions.Count;
 
         // Every holding, including one an analysis is about later in the same cycle: an exit is
         // not an opinion the agents could contradict, and a position the rules say to close
@@ -84,6 +85,15 @@ public sealed class ApplyExitsUseCase
             if (order is not null)
                 placed.Add(order);
         }
+
+        // One line per pass, whether or not anything sold. A pass that judged its holdings and
+        // was content used to say nothing at all, which a live run made the case against: with
+        // no decision row and no order, silence was indistinguishable from the exits not having
+        // run, or from every holding being unpriceable. The two counts are what tells those
+        // apart - a judged count below the held count is holdings the engine could not price.
+        _logger.LogInformation(
+            "The exits judged {Judged} of {Held} holding(s) and sold {Sold}.",
+            quotes.Count, held, placed.Count);
 
         return placed;
     }

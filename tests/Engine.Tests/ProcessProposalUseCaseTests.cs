@@ -4,6 +4,7 @@ using Engine.Application.Persistence;
 using Engine.Application.UseCases;
 using Engine.Domain.Aggregates.Portfolio;
 using Engine.Domain.Risk;
+using Engine.Domain.Signals;
 using Engine.Domain.ValueObjects;
 using Engine.Hosting.Options;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -49,6 +50,21 @@ public class ProcessProposalUseCaseTests
     }
 
     private static Portfolio NewPortfolio(decimal cash = 10_000m) => new(new Money(cash, Money.DefaultCurrency));
+
+    /// <summary>
+    /// A portfolio already holding the instrument under analysis, bought <paramref name="daysAgo"/>
+    /// before <see cref="Now"/> - seven days by default, which is past the minimum holding period.
+    /// </summary>
+    private static Portfolio Holding(decimal quantity = 10m, decimal at = 90m, int daysAgo = 7)
+    {
+        var portfolio = NewPortfolio();
+
+        portfolio.ExecuteBuy(
+            new Ticker(Requested), quantity, new Money(at, Money.DefaultCurrency),
+            Now.AddDays(-daysAgo), horizonDays: 15);
+
+        return portfolio;
+    }
 
     private static TradeSignalDto Signal(
         string stance = "BUY",
@@ -184,6 +200,91 @@ public class ProcessProposalUseCaseTests
         }
     }
 
+    public class ASellThatGoesThrough
+    {
+        [Fact]
+        public async Task Sells_the_whole_holding_at_full_conviction()
+        {
+            // Ten shares bought at 90, sold at the signal's 100. The tier scales the holding
+            // here rather than a budget, which is the same number meaning the same thing in the
+            // other direction.
+            var portfolio = Holding();
+            var (sut, _, _) = Build(Signal(stance: "SELL"));
+
+            var executed = (await Run(sut, portfolio)).ShouldBeOfType<TradeDecisionResult.Executed>();
+
+            executed.Side.ShouldBe(OrderSide.Sell);
+            executed.Quantity.ShouldBe(10m);
+            portfolio.Positions.ShouldBeEmpty();
+
+            // 10 000 less 900 spent, plus 1 000 raised.
+            portfolio.CashBalance.Amount.ShouldBe(10_100m);
+        }
+
+        [Fact]
+        public async Task Sells_half_of_it_at_the_middle_tier()
+        {
+            var portfolio = Holding();
+            var (sut, _, _) = Build(Signal(stance: "SELL", conviction: 0.6));
+
+            (await Run(sut, portfolio)).ShouldBeOfType<TradeDecisionResult.Executed>().Quantity.ShouldBe(5m);
+
+            portfolio.Positions.ShouldHaveSingleItem().Quantity.ShouldBe(5m);
+        }
+
+        [Fact]
+        public async Task A_holding_bought_yesterday_is_rejected_by_risk()
+        {
+            // Not NotSized: the sale was sized perfectly well and a portfolio rule refused it.
+            // This is the churn guard, and the exits are exempt from it by carrying a trigger.
+            var portfolio = Holding(daysAgo: 1);
+            var (sut, _, _) = Build(Signal(stance: "SELL"));
+
+            var result = await Run(sut, portfolio);
+
+            result.ShouldBeOfType<TradeDecisionResult.RejectedByRisk>()
+                .Reason.ShouldContain("minimum holding period");
+
+            portfolio.Positions.ShouldHaveSingleItem().Quantity.ShouldBe(10m);
+        }
+
+        [Fact]
+        public async Task Asks_for_no_quotes_at_all()
+        {
+            // A sale needs no net asset value, so a SELL cycle makes no quote calls. That is not
+            // only saved work: it is what keeps a holding the engine cannot price from standing
+            // between the agents and a position they have argued should be closed. MSFT here is
+            // exactly the holding a buy would have had to fetch.
+            var portfolio = Holding();
+            portfolio.ExecuteBuy(
+                new Ticker("MSFT"), quantity: 1m, new Money(400m, Money.DefaultCurrency),
+                Now.AddDays(-7), horizonDays: 15);
+
+            var (sut, client, _) = Build(Signal(stance: "SELL"));
+
+            await Run(sut, portfolio);
+
+            await client.DidNotReceive().GetQuoteAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+        }
+
+        [Fact]
+        public async Task Is_recorded_as_executed_with_the_stance_that_asked_for_it()
+        {
+            // No side column in trading.decisions: the stance says which way, and order_id
+            // points at the ledger line that records the side as a fact about what was done.
+            var portfolio = Holding();
+            var (sut, _, decisions) = Build(Signal(stance: "SELL"));
+
+            await Run(sut, portfolio);
+
+            var row = decisions.OfTheCycle;
+            row.Outcome.ShouldBe(DecisionOutcome.Executed);
+            row.Stance.ShouldBe(Stance.Sell);
+            row.OrderId.ShouldNotBeNull();
+        }
+    }
+
     public class WhatTheEngineAsks
     {
         private static async Task<TradeSignalRequestDto> Sent(Portfolio portfolio)
@@ -250,19 +351,31 @@ public class ProcessProposalUseCaseTests
 
     public class WhenNothingIsBought
     {
-        [Theory]
-        [InlineData("HOLD")]
-        [InlineData("SELL")]
-        public async Task A_view_that_is_not_a_buy_is_no_action(string stance)
+        [Fact]
+        public async Task A_hold_is_no_action()
         {
-            // Separate from NotSized on purpose: the agents having no case is a different
-            // fact from a case that could not be sized. Selling arrives in stage 5.
+            // Separate from NotSized on purpose: the agents having no case is a different fact
+            // from a case that could not be sized. HOLD is now the only stance that stops here,
+            // and it is the one they answer most often.
             var portfolio = NewPortfolio();
 
-            var result = await Run(Build(Signal(stance: stance)).Sut, portfolio);
+            var result = await Run(Build(Signal(stance: "HOLD")).Sut, portfolio);
 
-            result.ShouldBeOfType<TradeDecisionResult.NoAction>().Action.ShouldBe(stance);
+            result.ShouldBeOfType<TradeDecisionResult.NoAction>().Action.ShouldBe("HOLD");
             portfolio.Positions.ShouldBeEmpty();
+        }
+
+        [Fact]
+        public async Task A_sell_of_something_that_is_not_held_is_not_sized()
+        {
+            // Not NoAction: the agents did make a case, and the portfolio is the reason nothing
+            // happened. Telling those apart is what the two outcomes are for - one says
+            // something about the team and the other about what it was asked to act on.
+            var portfolio = NewPortfolio();
+
+            var result = await Run(Build(Signal(stance: "SELL")).Sut, portfolio);
+
+            result.ShouldBeOfType<TradeDecisionResult.NotSized>().Reason.ShouldContain("nothing is held");
         }
 
         [Fact]

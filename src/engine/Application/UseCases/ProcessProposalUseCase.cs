@@ -135,35 +135,36 @@ public class ProcessProposalUseCase
                 signal);
         }
 
-        // Separated from sizing so that "the agents did not argue for a buy" stays a
-        // different fact from "the buy could not be sized". Selling arrives in stage 5.
-        if (signal.Stance != Stance.Buy)
+        // Separated from sizing so that "the agents did not argue for a trade" stays a
+        // different fact from "the trade could not be sized". HOLD is the only stance that
+        // stops here now, and it is the one they answer most often.
+        if (signal.Stance == Stance.Hold)
         {
             return new Cycle(
                 new TradeDecisionResult.NoAction(requested, signal.Stance.ToString().ToUpperInvariant()),
                 signal);
         }
 
-        // The price for the instrument being analysed always comes from the signal, so an
-        // order is never sized against a quote the agents never saw. Everything else the
-        // portfolio holds is asked for here, because the position limit is a share of the
-        // portfolio's value and a holding without a price makes that value unknowable.
-        var quotes = await _quotes.ForHoldingsAsync(
-            portfolio, request.AsOf, request.CorrelationId, except: requested, cancellationToken);
-
-        var prices = quotes.Aggregate(
-            PriceSnapshot.Empty, (snapshot, quote) => snapshot.With(quote.Ticker, quote.Price));
+        var prices = await PricesForSizingAsync(portfolio, signal, requested, request, cancellationToken);
 
         var intent = _sizer.Size(signal, portfolio, prices, _policy);
 
-        if (intent is not OrderIntent.Buy order)
-        {
-            return new Cycle(
-                new TradeDecisionResult.NotSized(requested, ((OrderIntent.None)intent).Reason),
-                signal);
-        }
+        if (intent is OrderIntent.None nothing)
+            return new Cycle(new TradeDecisionResult.NotSized(requested, nothing.Reason), signal);
 
-        var decision = _riskEngine.Evaluate(order, signal, portfolio, prices, _policy, request.AsOf);
+        // Each direction is judged by the gate written for it. A sale is not put through the
+        // buy overload with the arguments it does not need: it has no budget to breach and no
+        // valuation to make, and it has a rule of its own about how long the holding has been
+        // held. That the two take different parameters is what says so.
+        var decision = intent switch
+        {
+            OrderIntent.Buy buy => _riskEngine.Evaluate(buy, signal, portfolio, prices, _policy, request.AsOf),
+            OrderIntent.Sell sell => _riskEngine.Evaluate(sell, portfolio, _policy, request.AsOf),
+
+            // Unreachable: None returned above, and the hierarchy is closed. Throwing rather
+            // than defaulting to approved, because the wrong answer here places an order.
+            _ => throw new InvalidOperationException($"Sizing produced {intent.GetType().Name}, which has no gate.")
+        };
 
         if (decision is RiskDecision.Rejected rejected)
         {
@@ -172,19 +173,59 @@ public class ProcessProposalUseCase
                 signal);
         }
 
-        // request.AsOf rather than the clock read again, so the purchase is stamped with the
-        // same instant the risk gate judged the quote against. A holding period is counted in
-        // days; the seconds between the two would be precision that means nothing.
+        // request.AsOf rather than the clock read again, so the trade is stamped with the same
+        // instant the risk gate judged the quote against. A holding period is counted in days;
+        // the seconds between the two would be precision that means nothing.
         //
-        // The horizon travels with the purchase because the position is what the deterministic
-        // exits read, and they need to know what thesis they are enforcing.
-        var placed = portfolio.ExecuteBuy(
-            requested, order.Quantity, order.Price, request.AsOf, signal.HorizonDays);
+        // The horizon travels with a purchase because the position is what the deterministic
+        // exits read, and they need to know what thesis they are enforcing. A sale carries a
+        // trigger instead, saying who asked for it - here, always the agents.
+        var placed = intent switch
+        {
+            OrderIntent.Buy buy =>
+                portfolio.ExecuteBuy(requested, buy.Quantity, buy.Price, request.AsOf, signal.HorizonDays),
+
+            OrderIntent.Sell sell =>
+                portfolio.ExecuteSell(requested, sell.Quantity, sell.Price, sell.Trigger),
+
+            _ => throw new InvalidOperationException(
+                $"Sizing produced {intent.GetType().Name}, which the portfolio cannot execute.")
+        };
 
         return new Cycle(
-            new TradeDecisionResult.Executed(requested, order.Quantity, order.Price),
+            new TradeDecisionResult.Executed(requested, placed.Side, placed.Quantity, placed.Price),
             signal,
             placed);
+    }
+
+    /// <summary>
+    /// The prices sizing needs, which is none for a sale.
+    /// </summary>
+    /// <remarks>
+    /// The price for the instrument being analysed always comes from the signal, so an order is
+    /// never sized against a quote the agents never saw. Everything else the portfolio holds is
+    /// asked for only when a buy is being sized, because the position limit is a share of the
+    /// portfolio's value and a holding without a price makes that value unknowable.
+    ///
+    /// A sale needs no valuation, so a SELL cycle makes no quote calls at all - which is not
+    /// only saved work. It is what keeps a holding the engine cannot price from standing between
+    /// the agents and a position they have argued should be closed.
+    /// </remarks>
+    private async Task<PriceSnapshot> PricesForSizingAsync(
+        Portfolio portfolio,
+        TradeSignal signal,
+        Ticker requested,
+        TradeSignalRequestDto request,
+        CancellationToken cancellationToken)
+    {
+        if (signal.Stance != Stance.Buy)
+            return PriceSnapshot.Empty;
+
+        var quotes = await _quotes.ForHoldingsAsync(
+            portfolio, request.AsOf, request.CorrelationId, except: requested, cancellationToken);
+
+        return quotes.Aggregate(
+            PriceSnapshot.Empty, (snapshot, quote) => snapshot.With(quote.Ticker, quote.Price));
     }
 
     /// <summary>

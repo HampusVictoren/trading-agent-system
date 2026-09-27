@@ -1,7 +1,9 @@
 using Engine.Application.Contracts;
 using Engine.Application.Interfaces;
 using Engine.Application.UseCases;
+using Engine.Domain.Aggregates.Portfolio;
 using Engine.Domain.Risk;
+using Engine.Domain.ValueObjects;
 using Engine.Hosting;
 using Engine.Hosting.Options;
 using Engine.Hosting.Workers;
@@ -46,7 +48,7 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
         public override DateTimeOffset GetUtcNow() => now;
     }
 
-    private static TradeSignalDto ABuy(double conviction) => new()
+    private static TradeSignalDto ABuy(double conviction, DateTimeOffset? quoteAsOf = null) => new()
     {
         Instrument = new EquityInstrumentDto { Symbol = Symbol },
         Stance = "BUY",
@@ -55,8 +57,16 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
         KeyRisks = ["Multipelkontraktion"],
         HorizonDays = 5,
         ReferencePrice = 100m,
-        QuoteAsOf = Now,
+        QuoteAsOf = quoteAsOf ?? Now,
         Run = new RunDto { TeamId = "default", TeamVersion = "abc123", Revisions = 0 }
+    };
+
+    private static QuoteDto AQuote(decimal price, DateTimeOffset asOf) => new()
+    {
+        Instrument = new EquityInstrumentDto { Symbol = Symbol },
+        Price = price,
+        Currency = Money.DefaultCurrency,
+        AsOf = asOf
     };
 
     /// <summary>
@@ -64,7 +74,7 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
     /// cycle and then waits, so what the assertions see is one cycle's work rather than
     /// however many fitted into the wait.
     /// </summary>
-    private ServiceProvider AnEngine(IAgentClient agents)
+    private ServiceProvider AnEngine(IAgentClient agents, DateTimeOffset? clock = null)
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -91,11 +101,12 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
         services.AddSingleton<RiskEngine>();
         services.AddSingleton(sp => sp.GetRequiredService<IOptions<RiskPolicyOptions>>().Value.ToRiskPolicy());
         services.AddSingleton<PositionSizer>();
-        services.AddSingleton<TimeProvider>(new FixedClock(Now));
+        services.AddSingleton<TimeProvider>(new FixedClock(clock ?? Now));
         services.AddSingleton(agents);
         services.AddTradingDatabase();
         services.AddTransient<HoldingQuoteReader>();
         services.AddTransient<ProcessProposalUseCase>();
+        services.AddTransient<ApplyExitsUseCase>();
 
         return services.BuildServiceProvider();
     }
@@ -141,10 +152,16 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
         throw new TimeoutException($"The worker did not commit {count} decision(s) within 30 seconds.");
     }
 
-    private static IAgentClient AnAgentServiceThatAnswers(TradeSignalDto signal)
+    /// <param name="quote">
+    /// What the quote endpoint answers. Null means it answers nothing, which is what the
+    /// deterministic exits see when the engine cannot price a holding - so a test that does not
+    /// pass one is a test where the exits cannot fire.
+    /// </param>
+    private static IAgentClient AnAgentServiceThatAnswers(TradeSignalDto signal, QuoteDto? quote = null)
     {
         var client = Substitute.For<IAgentClient>();
         client.GetSignalAsync(Arg.Any<TradeSignalRequestDto>(), Arg.Any<CancellationToken>()).Returns(signal);
+        client.GetQuoteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(quote);
         return client;
     }
 
@@ -194,6 +211,79 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
         // The second cycle saw the money the first one spent.
         decisions[1].AvailableRiskBudget.ShouldBe(9_800m);
         decisions[1].ExistingQuantity.ShouldBe(2m);
+    }
+
+    [Fact]
+    public async Task The_exits_run_before_the_analyses()
+    {
+        // The ordering, proved by what the analysis was told rather than by reading the log.
+        // Cycle one buys 2 shares at 100 on a five day thesis. Cycle two runs six days later,
+        // so the time limit has passed: the exits sell the holding, and only then is the agent
+        // service asked - about an instrument the engine no longer holds.
+        var later = Now.AddDays(6);
+
+        await using (var first = AnEngine(AnAgentServiceThatAnswers(ABuy(conviction: 0.6))))
+        {
+            await RunOneCycleAsync(first, expectedDecisionsAfterwards: 1);
+        }
+
+        var agents = AnAgentServiceThatAnswers(
+            ABuy(conviction: 0.6, quoteAsOf: later), AQuote(price: 100m, asOf: later));
+
+        await using (var second = AnEngine(agents, clock: later))
+        {
+            await RunOneCycleAsync(second, expectedDecisionsAfterwards: 2);
+        }
+
+        await using var context = _database.NewContext();
+
+        var orders = await context.Orders.ToListAsync(TestContext.Current.CancellationToken);
+        orders.Count.ShouldBe(3);
+
+        var sale = orders.Where(order => order.Side == OrderSide.Sell).ShouldHaveSingleItem();
+        sale.Trigger.ShouldBe(OrderTrigger.TimeLimit);
+        sale.Quantity.ShouldBe(2m);
+
+        var decisions = await context.Decisions.OrderBy(row => row.Id).ToListAsync(TestContext.Current.CancellationToken);
+
+        // The assertion that could not pass in the other order. Had the analyses run first, the
+        // request would have carried the two shares that were still held.
+        decisions[1].ExistingQuantity.ShouldBeNull();
+
+        // And the released headroom was there to be used: the whole 5 % cap was free again, so
+        // the half tier bought 2 rather than the 1 it would have had with 200 still held.
+        decisions[1].Outcome.ShouldBe(DecisionOutcome.Executed);
+        orders.Count(order => order.Side == OrderSide.Buy && order.Quantity == 2m).ShouldBe(2);
+
+        var portfolio = await context.Portfolios
+            .Include(held => held.Positions)
+            .SingleAsync(TestContext.Current.CancellationToken);
+
+        // 10 000 less 200, plus 200 raised, less 200 again.
+        portfolio.CashBalance.Amount.ShouldBe(9_800m);
+
+        // A new position on a new thesis, so the clock the exits read starts again.
+        var position = portfolio.Positions.ShouldHaveSingleItem();
+        position.Quantity.ShouldBe(2m);
+        position.LastPurchasedAt.ShouldBe(later);
+    }
+
+    [Fact]
+    public async Task An_empty_account_is_not_opened_by_the_exits()
+    {
+        // The exits run first, and the very first cycle of the account's life finds nothing
+        // stored. Opening the account there would mean the portfolio existed because a sweep for
+        // sales ran, which is an odd thing to have to explain - so they leave it alone and the
+        // analysis opens it, exactly as before.
+        var agents = AnAgentServiceThatAnswers(ABuy(conviction: 0.6), AQuote(price: 100m, asOf: Now));
+
+        await using var engine = AnEngine(agents);
+        await RunOneCycleAsync(engine, expectedDecisionsAfterwards: 1);
+
+        await using var context = _database.NewContext();
+
+        (await context.Portfolios.CountAsync(TestContext.Current.CancellationToken)).ShouldBe(1);
+        (await context.Orders.CountAsync(TestContext.Current.CancellationToken)).ShouldBe(1);
     }
 
     [Fact]

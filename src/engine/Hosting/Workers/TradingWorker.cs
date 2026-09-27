@@ -30,6 +30,11 @@ public class TradingWorker : BackgroundService
     {
         while (!stoppingToken.IsCancellationRequested)
         {
+            // Before the analyses, not after. A cycle's buying should see the cash and the
+            // position headroom the exits have just released, and a position the rules say to
+            // close should not survive because an analysis of it happened to come first.
+            await RunExitsAsync(stoppingToken);
+
             foreach (var tickerSymbol in _options.Tickers)
             {
                 if (stoppingToken.IsCancellationRequested)
@@ -81,6 +86,72 @@ public class TradingWorker : BackgroundService
     }
 
     /// <summary>
+    /// One pass of the deterministic exits, in a scope and a transaction of its own.
+    /// </summary>
+    /// <remarks>
+    /// Separate from the analyses rather than folded into the first one, because it is one pass
+    /// over the whole portfolio rather than something about a ticker - and because a failed
+    /// commit here should cost the exits and not an LLM call that had already been paid for.
+    /// It has its own correlation id, which is what ties a sale in the ledger to the lines this
+    /// log wrote about it; there is no analysis on the other side to share one with.
+    ///
+    /// An empty database is left alone. Opening the account here would mean the exits created
+    /// the portfolio the analyses then traded, and an account that exists because a sweep for
+    /// sales ran is an odd thing to have to explain.
+    /// </remarks>
+    private async Task RunExitsAsync(CancellationToken cancellationToken)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var services = scope.ServiceProvider;
+
+        var correlationId = Guid.NewGuid().ToString();
+
+        try
+        {
+            var portfolios = services.GetRequiredService<IPortfolioRepository>();
+            var exits = services.GetRequiredService<ApplyExitsUseCase>();
+            var unitOfWork = services.GetRequiredService<IUnitOfWork>();
+
+            var portfolio = await portfolios.FindAsync(cancellationToken);
+
+            if (portfolio is null || portfolio.Positions.Count == 0)
+                return;
+
+            var placed = await exits.ExecuteAsync(portfolio, correlationId, cancellationToken);
+
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+
+            // After the commit, like every other outcome in this worker: a line here means a
+            // row. The use case logs each sale as it happens; this is the count that survived.
+            if (placed.Count > 0)
+            {
+                _logger.LogInformation(
+                    "The exits sold {Count} holding(s) as {CorrelationId}. Cash: {Cash} {Currency}.",
+                    placed.Count, correlationId, portfolio.CashBalance.Amount, portfolio.CashBalance.Currency);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Shutting down, which is not a failure.
+        }
+        catch (ConcurrentChangeException ex)
+        {
+            // Nothing was sold: the sales are in the same transaction as nothing else, so a
+            // failed commit costs one pass. The next cycle reads the portfolio again, and a
+            // stop-loss that should have fired still should.
+            _logger.LogError(
+                "The exits were not stored under {CorrelationId}: {Reason}", correlationId, ex.Message);
+        }
+        catch (Exception ex)
+        {
+            // Deliberately does not stop the cycle. The analyses are worth running even when
+            // the exits could not, and the alternative is a market data outage that blocks all
+            // trading rather than the half of it that needed prices.
+            _logger.LogError(ex, "Unexpected failure while applying the exits.");
+        }
+    }
+
+    /// <summary>
     /// One cycle: read the portfolio, decide, commit. The outcome is logged only after the
     /// commit, so a line in this log means a row in the database rather than an intention.
     /// </summary>
@@ -110,7 +181,7 @@ public class TradingWorker : BackgroundService
         portfolios.Add(portfolio);
 
         _logger.LogInformation(
-            "No portfolio was stored, so one was opened with ${Balance} {Currency}.",
+            "No portfolio was stored, so one was opened with {Balance} {Currency}.",
             _options.OpeningBalance, Money.DefaultCurrency);
 
         return portfolio;
@@ -126,8 +197,13 @@ public class TradingWorker : BackgroundService
         {
             case TradeDecisionResult.Executed executed:
                 _logger.LogInformation(
-                    "Bought {Quantity} {Ticker} for ${Amount}. Cash left: ${Cash}.",
-                    executed.Quantity, executed.Ticker.Value, executed.Price.Amount, portfolio.CashBalance.Amount);
+                    "{Side} {Quantity} {Ticker} at {Amount} {Currency}. Cash left: {Cash}.",
+                    executed.Side == OrderSide.Buy ? "Bought" : "Sold",
+                    executed.Quantity,
+                    executed.Ticker.Value,
+                    executed.Price.Amount,
+                    executed.Price.Currency,
+                    portfolio.CashBalance.Amount);
                 break;
 
             case TradeDecisionResult.NotSized notSized:

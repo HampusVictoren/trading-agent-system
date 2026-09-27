@@ -6,6 +6,7 @@ using Engine.Application.UseCases;
 using Engine.Domain.Aggregates.Portfolio;
 using Engine.Domain.Risk;
 using Engine.Domain.ValueObjects;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using Shouldly;
@@ -36,6 +37,29 @@ public class ApplyExitsUseCaseTests
         public override DateTimeOffset GetUtcNow() => now;
     }
 
+    /// <summary>
+    /// Keeps what it was told. Used for one assertion only - that a pass which sells nothing
+    /// still says so - because that line is the whole observability of the quiet path: there is
+    /// no decision row and no order to find it by afterwards.
+    /// </summary>
+    private sealed class CapturedLog : ILogger<ApplyExitsUseCase>
+    {
+        private readonly List<string> _lines = [];
+
+        public IReadOnlyList<string> Lines => _lines;
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter) => _lines.Add(formatter(state, exception));
+    }
+
     private static QuoteDto Quote(Ticker ticker, decimal price, DateTimeOffset asOf) => new()
     {
         Instrument = new EquityInstrumentDto { Symbol = ticker.Value },
@@ -62,7 +86,7 @@ public class ApplyExitsUseCaseTests
     /// The use case with a quote per instrument. A symbol left out of <paramref name="prices"/>
     /// is one the engine could not get a price for, which is what an outage looks like from here.
     /// </summary>
-    private static (ApplyExitsUseCase Sut, DateTimeOffset Now) Build(
+    private static (ApplyExitsUseCase Sut, CapturedLog Log) Build(
         DateTimeOffset now, params (Ticker Ticker, decimal Price)[] prices)
     {
         var client = Substitute.For<IAgentClient>();
@@ -77,12 +101,9 @@ public class ApplyExitsUseCaseTests
         }
 
         var reader = new HoldingQuoteReader(client, Policy, NullLogger<HoldingQuoteReader>.Instance);
+        var log = new CapturedLog();
 
-        return (
-            new ApplyExitsUseCase(
-                reader, new RiskEngine(), Policy, new FixedClock(now),
-                NullLogger<ApplyExitsUseCase>.Instance),
-            now);
+        return (new ApplyExitsUseCase(reader, new RiskEngine(), Policy, new FixedClock(now), log), log);
     }
 
     private static Task<IReadOnlyList<Order>> Run(ApplyExitsUseCase sut, Portfolio portfolio) =>
@@ -200,5 +221,20 @@ public class ApplyExitsUseCaseTests
 
         (await Run(sut, portfolio)).ShouldBeEmpty();
         portfolio.Positions.ShouldHaveSingleItem().Quantity.ShouldBe(10m);
+    }
+
+    [Fact]
+    public async Task A_pass_that_sells_nothing_still_says_what_it_judged()
+    {
+        // Found by running it. With no decision row and no order, a quiet pass left nothing
+        // behind at all - so "the exits were content" read exactly like "the exits never ran"
+        // and like "no holding could be priced". The two counts are what tells those apart:
+        // ERIC could be priced and was fine, VOLVO could not be priced at all.
+        var (sut, log) = Build(Bought.AddDays(1), (Eric, 104m));
+        var portfolio = Holding(Eric, Volvo);
+
+        (await Run(sut, portfolio)).ShouldBeEmpty();
+
+        log.Lines.ShouldContain("The exits judged 1 of 2 holding(s) and sold 0.");
     }
 }
