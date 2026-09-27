@@ -4,6 +4,7 @@ using Engine.Application.Persistence;
 using Engine.Application.UseCases;
 using Engine.Domain.Aggregates.Portfolio;
 using Engine.Domain.Screening;
+using Engine.Domain.Signals;
 using Engine.Domain.ValueObjects;
 using Engine.Hosting.Options;
 using Microsoft.Extensions.Options;
@@ -42,7 +43,9 @@ public class TradingWorker : BackgroundService
             // close should not survive because an analysis of it happened to come first.
             await RunExitsAsync(stoppingToken);
 
-            var selection = await SelectAsync(stoppingToken);
+            var today = DateOnly.FromDateTime(_clock.GetUtcNow().UtcDateTime);
+            var selection = await SelectAsync(today, stoppingToken);
+            var verdicts = new Dictionary<AnalysisVerdict, int>();
 
             foreach (var selected in selection)
             {
@@ -59,7 +62,10 @@ public class TradingWorker : BackgroundService
 
                 try
                 {
-                    await RunCycleAsync(scope.ServiceProvider, selected, correlationId, stoppingToken);
+                    var verdict = await RunCycleAsync(
+                        scope.ServiceProvider, selected, today, correlationId, stoppingToken);
+
+                    verdicts[verdict] = verdicts.GetValueOrDefault(verdict) + 1;
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
@@ -83,6 +89,8 @@ public class TradingWorker : BackgroundService
                         ex, "Unexpected failure in the trading cycle for {Ticker}.", selected.Ticker.Value);
                 }
             }
+
+            LogWhatTheCycleDid(selection.Count, verdicts);
 
             try
             {
@@ -165,12 +173,29 @@ public class TradingWorker : BackgroundService
     /// One cycle: read the portfolio, decide, commit. The outcome is logged only after the
     /// commit, so a line in this log means a row in the database rather than an intention.
     /// </summary>
-    private async Task RunCycleAsync(
+    private async Task<AnalysisVerdict> RunCycleAsync(
         IServiceProvider services,
         InstrumentSelection selected,
+        DateOnly today,
         string correlationId,
         CancellationToken cancellationToken)
     {
+        // Before the portfolio is even read, because a cycle that is not due does nothing at all -
+        // including opening an account. Nothing is queued on this scope, so there is nothing to
+        // commit either.
+        var due = services.GetRequiredService<AnalysisDueCheck>();
+
+        var verdict = await due.ForAsync(
+            selected.Ticker, today, _clock.GetUtcNow(), correlationId, cancellationToken);
+
+        if (verdict != AnalysisVerdict.Due)
+        {
+            _logger.LogDebug(
+                "No analysis for {Ticker}: {Verdict}.", selected.Ticker.Value, verdict);
+
+            return verdict;
+        }
+
         var portfolios = services.GetRequiredService<IPortfolioRepository>();
         var useCase = services.GetRequiredService<ProcessProposalUseCase>();
         var unitOfWork = services.GetRequiredService<IUnitOfWork>();
@@ -183,12 +208,40 @@ public class TradingWorker : BackgroundService
             "Requesting analysis for {Ticker} ({Source}) as {CorrelationId}...",
             selected.Ticker.Value, selected.Source, correlationId);
 
-        var result = await useCase.ExecuteAsync(
-            portfolio, selected.Ticker.Value, correlationId, cancellationToken);
+        var result = await useCase.ExecuteAsync(portfolio, selected, correlationId, cancellationToken);
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         LogOutcome(result, portfolio);
+
+        return verdict;
+    }
+
+    /// <summary>
+    /// One line per cycle, whatever it did - including when it did nothing.
+    /// </summary>
+    /// <remarks>
+    /// Written because the alternative is unreadable rather than because the numbers are
+    /// interesting. Nearly every cycle now skips nearly everything: an instrument is analysed once
+    /// a trading day, so fourteen of fifteen cycles have nothing to say, and at a fifteen-minute
+    /// interval that is a log where silence means both "nothing had changed" and "the worker
+    /// stopped". Naming the counts tells those two apart at a glance.
+    /// </remarks>
+    private void LogWhatTheCycleDid(int selected, Dictionary<AnalysisVerdict, int> verdicts)
+    {
+        if (selected == 0)
+        {
+            _logger.LogInformation("Nothing to analyse this cycle: no holdings and no shortlist.");
+            return;
+        }
+
+        _logger.LogInformation(
+            "Cycle over {Selected} instrument(s): {Analysed} analysed, {Today} already done today, "
+            + "{Unmoved} unchanged in price.",
+            selected,
+            verdicts.GetValueOrDefault(AnalysisVerdict.Due),
+            verdicts.GetValueOrDefault(AnalysisVerdict.AlreadyAnalysedToday),
+            verdicts.GetValueOrDefault(AnalysisVerdict.PriceHasNotMoved));
     }
 
     /// <summary>
@@ -205,7 +258,8 @@ public class TradingWorker : BackgroundService
     /// is not in the database - and a shortlist that cannot be read back is one this stage's own
     /// question cannot be asked of. The holdings are analysed either way.
     /// </remarks>
-    private async Task<IReadOnlyList<InstrumentSelection>> SelectAsync(CancellationToken cancellationToken)
+    private async Task<IReadOnlyList<InstrumentSelection>> SelectAsync(
+        DateOnly today, CancellationToken cancellationToken)
     {
         using var scope = _scopeFactory.CreateScope();
         var services = scope.ServiceProvider;
@@ -219,7 +273,6 @@ public class TradingWorker : BackgroundService
             var unitOfWork = services.GetRequiredService<IUnitOfWork>();
 
             var portfolio = await portfolios.FindAsync(cancellationToken);
-            var today = DateOnly.FromDateTime(_clock.GetUtcNow().UtcDateTime);
 
             var shortlist = await shortlists.ExecuteAsync(today, correlationId, cancellationToken);
 

@@ -1,6 +1,7 @@
 using Engine.Application.Persistence;
 using Engine.Application.UseCases;
 using Engine.Domain.Aggregates.Portfolio;
+using Engine.Domain.Screening;
 using Engine.Domain.Signals;
 using Engine.Domain.ValueObjects;
 using Engine.Infrastructure.Persistence;
@@ -242,6 +243,7 @@ public class PortfolioRepositoryTests : IAsyncLifetime
                 PortfolioId = portfolio.Id,
                 Symbol = Msft,
                 TeamId = "default",
+                Selection = SelectionSource.Shortlist,
                 RequestedAt = new DateTimeOffset(2026, 9, 23, 14, 0, 0, TimeSpan.Zero),
                 AvailableRiskBudget = 10_000m,
                 MaxPositionPct = 0.05m,
@@ -260,6 +262,77 @@ public class PortfolioRepositoryTests : IAsyncLifetime
         stored.TeamVersion.ShouldBeNull();
         stored.KeyRisks.ShouldBeEmpty();
         stored.Outcome.ShouldBe(DecisionOutcome.AgentUnavailable);
+    }
+
+    [Fact]
+    public async Task A_cycle_that_never_reached_an_answer_is_not_a_last_analysis()
+    {
+        // The rule that keeps a two-minute outage from costing a trading day. A cycle where the
+        // agent service could not be reached is a row - it has to be, or the service looks more
+        // reliable the worse it gets - but it is not an analysis, so the next cycle asks again.
+        // Found by mutation: dropping the filter left every other test green.
+        await InAScope(async (portfolios, decisions, commit) =>
+        {
+            var portfolio = new Portfolio(new Money(10_000m, Money.DefaultCurrency));
+            portfolios.Add(portfolio);
+            decisions.Record(new DecisionRecord
+            {
+                CorrelationId = "cycle-unreachable",
+                PortfolioId = portfolio.Id,
+                Symbol = Msft,
+                TeamId = "default",
+                Selection = SelectionSource.Shortlist,
+                RequestedAt = new DateTimeOffset(2026, 9, 23, 14, 0, 0, TimeSpan.Zero),
+                AvailableRiskBudget = 10_000m,
+                MaxPositionPct = 0.05m,
+                Outcome = DecisionOutcome.AgentUnavailable,
+                OutcomeReason = "the agent service answered 503",
+            });
+            await commit.SaveChangesAsync(TestContext.Current.CancellationToken);
+            return portfolio.Id;
+        });
+
+        await using var context = _database.NewContext();
+
+        var last = await new DecisionLog(context).LastAnalysisOfAsync(
+            Msft, TestContext.Current.CancellationToken);
+
+        last.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task The_last_analysis_is_the_most_recent_one_that_produced_a_signal()
+    {
+        // Two rows for one instrument: an answer on the 23rd and an outage on the 24th. What the
+        // fact-sheet rule needs is the answer, whichever came last.
+        await InAScope(async (portfolios, decisions, commit) =>
+        {
+            var portfolio = new Portfolio(new Money(10_000m, Money.DefaultCurrency));
+            portfolios.Add(portfolio);
+            decisions.Record(ADecision(portfolio.Id));
+            decisions.Record(new DecisionRecord
+            {
+                CorrelationId = "cycle-later-outage",
+                PortfolioId = portfolio.Id,
+                Symbol = Msft,
+                TeamId = "default",
+                Selection = SelectionSource.Holding,
+                RequestedAt = new DateTimeOffset(2026, 9, 24, 14, 0, 0, TimeSpan.Zero),
+                AvailableRiskBudget = 10_000m,
+                MaxPositionPct = 0.05m,
+                Outcome = DecisionOutcome.AgentUnavailable,
+            });
+            await commit.SaveChangesAsync(TestContext.Current.CancellationToken);
+            return portfolio.Id;
+        });
+
+        await using var context = _database.NewContext();
+
+        var last = await new DecisionLog(context).LastAnalysisOfAsync(
+            Msft, TestContext.Current.CancellationToken);
+
+        last.ShouldNotBeNull();
+        last.On.ShouldBe(new DateOnly(2026, 9, 23));
     }
 
     [Fact]
@@ -292,6 +365,7 @@ public class PortfolioRepositoryTests : IAsyncLifetime
         PortfolioId = portfolioId,
         Symbol = Msft,
         TeamId = "default",
+        Selection = SelectionSource.Shortlist,
         RequestedAt = new DateTimeOffset(2026, 9, 23, 14, 0, 0, TimeSpan.Zero),
         AvailableRiskBudget = 10_000m,
         MaxPositionPct = 0.05m,

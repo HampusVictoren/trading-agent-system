@@ -5,6 +5,7 @@ using Engine.Application.Interfaces;
 using Engine.Application.Persistence;
 using Engine.Domain.Aggregates.Portfolio;
 using Engine.Domain.Risk;
+using Engine.Domain.Screening;
 using Engine.Domain.Signals;
 using Engine.Domain.ValueObjects;
 using Engine.Hosting.Options;
@@ -13,7 +14,7 @@ using Microsoft.Extensions.Options;
 public class ProcessProposalUseCase
 {
     private readonly IAgentClient _agentClient;
-    private readonly HoldingQuoteReader _quotes;
+    private readonly QuoteReader _quotes;
     private readonly IDecisionLog _decisions;
     private readonly PositionSizer _sizer;
     private readonly RiskEngine _riskEngine;
@@ -23,7 +24,7 @@ public class ProcessProposalUseCase
 
     public ProcessProposalUseCase(
         IAgentClient agentClient,
-        HoldingQuoteReader quotes,
+        QuoteReader quotes,
         IDecisionLog decisions,
         PositionSizer sizer,
         RiskEngine riskEngine,
@@ -54,18 +55,16 @@ public class ProcessProposalUseCase
     /// </remarks>
     public async Task<TradeDecisionResult> ExecuteAsync(
         Portfolio portfolio,
-        string tickerSymbol,
+        InstrumentSelection selected,
         string correlationId,
         CancellationToken cancellationToken = default)
     {
-        // Configuration is validated at startup, so a ticker that is not a ticker is a bug
-        // here rather than an outcome.
-        var requested = new Ticker(tickerSymbol);
+        var requested = selected.Ticker;
         var request = BuildRequest(portfolio, requested, _clock.GetUtcNow(), correlationId);
 
         var cycle = await DecideAsync(portfolio, requested, request, cancellationToken);
 
-        _decisions.Record(ToRecord(portfolio.Id, requested, request, cycle));
+        _decisions.Record(ToRecord(portfolio.Id, selected, request, cycle));
 
         return cycle.Result;
     }
@@ -234,11 +233,12 @@ public class ProcessProposalUseCase
     /// the agent service was down, not that the agents were cautious.
     /// </summary>
     private static DecisionRecord ToRecord(
-        Guid portfolioId, Ticker requested, TradeSignalRequestDto request, Cycle cycle) => new()
+        Guid portfolioId, InstrumentSelection selected, TradeSignalRequestDto request, Cycle cycle) => new()
         {
             CorrelationId = request.CorrelationId,
             PortfolioId = portfolioId,
-            Symbol = requested,
+            Symbol = selected.Ticker,
+            Selection = selected.Source,
 
             // The team that was *asked for*, which is known whatever happens. The version is
             // the answer's own, because only an answer has one.

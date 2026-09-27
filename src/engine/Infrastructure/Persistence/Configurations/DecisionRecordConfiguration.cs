@@ -64,6 +64,7 @@ public sealed class DecisionRecordConfiguration : IEntityTypeConfiguration<Decis
         // Both enums are stored as text, for the same reason the order side is: a decision
         // history is read from psql at least as often as from C#.
         builder.Property(decision => decision.Stance).HasConversion<string>().HasMaxLength(8);
+        builder.Property(decision => decision.Selection).HasConversion<string>().HasMaxLength(16);
         builder.Property(decision => decision.Outcome).HasConversion<string>().HasMaxLength(24);
 
         builder.Property(decision => decision.RecordedAt)

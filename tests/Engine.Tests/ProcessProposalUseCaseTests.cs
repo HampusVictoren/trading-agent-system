@@ -4,6 +4,7 @@ using Engine.Application.Persistence;
 using Engine.Application.UseCases;
 using Engine.Domain.Aggregates.Portfolio;
 using Engine.Domain.Risk;
+using Engine.Domain.Screening;
 using Engine.Domain.Signals;
 using Engine.Domain.ValueObjects;
 using Engine.Hosting.Options;
@@ -44,10 +45,20 @@ public class ProcessProposalUseCaseTests
 
         public void Record(DecisionRecord decision) => _records.Add(decision);
 
+        /// <summary>Not this type's business. Whether an analysis is due is decided above the use
+        /// case, precisely so that a skip leaves no row here.</summary>
+        public Task<LastAnalysis?> LastAnalysisOfAsync(
+            Ticker symbol, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException("The use case does not decide whether it should run.");
+
         /// <summary>The one row a cycle must produce. Failing here means a cycle wrote none,
         /// or wrote two.</summary>
         public DecisionRecord OfTheCycle => _records.ShouldHaveSingleItem();
     }
+
+    /// <summary>What the worker hands in: the instrument, and why it is being analysed.</summary>
+    private static readonly InstrumentSelection AShortlistPick =
+        new(new Ticker(Requested), SelectionSource.Shortlist);
 
     private static Portfolio NewPortfolio(decimal cash = 10_000m) => new(new Money(cash, Money.DefaultCurrency));
 
@@ -123,7 +134,7 @@ public class ProcessProposalUseCaseTests
             TeamId = TeamId
         });
 
-        var quotes = new HoldingQuoteReader(client, Policy, NullLogger<HoldingQuoteReader>.Instance);
+        var quotes = new QuoteReader(client, Policy, NullLogger<QuoteReader>.Instance);
 
         return (
             new ProcessProposalUseCase(
@@ -135,7 +146,7 @@ public class ProcessProposalUseCaseTests
 
     private static Task<TradeDecisionResult> Run(
         ProcessProposalUseCase sut, Portfolio portfolio, string correlationId = "cycle-1") =>
-        sut.ExecuteAsync(portfolio, Requested, correlationId, TestContext.Current.CancellationToken);
+        sut.ExecuteAsync(portfolio, AShortlistPick, correlationId, TestContext.Current.CancellationToken);
 
     public class ABuyThatGoesThrough
     {
@@ -535,7 +546,7 @@ public class ProcessProposalUseCaseTests
             var sut = Build(throws: new OperationCanceledException()).Sut;
 
             await Should.ThrowAsync<OperationCanceledException>(
-                () => sut.ExecuteAsync(NewPortfolio(), Requested, "cycle-1", cancelled.Token));
+                () => sut.ExecuteAsync(NewPortfolio(), AShortlistPick, "cycle-1", cancelled.Token));
         }
     }
 

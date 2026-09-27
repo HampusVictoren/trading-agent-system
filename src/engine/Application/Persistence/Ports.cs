@@ -32,6 +32,16 @@ public interface IPortfolioRepository
 public interface IDecisionLog
 {
     void Record(DecisionRecord decision);
+
+    /// <summary>
+    /// When this instrument was last analysed and at what price, or null if it never has been.
+    /// </summary>
+    /// <remarks>
+    /// Only rows that reached an answer count. A decision with no reference price is a cycle where
+    /// the agent service could not be reached, and treating that as an analysis would turn a
+    /// two-minute outage into a lost trading day.
+    /// </remarks>
+    Task<LastAnalysis?> LastAnalysisOfAsync(Ticker symbol, CancellationToken cancellationToken = default);
 }
 
 /// <summary>

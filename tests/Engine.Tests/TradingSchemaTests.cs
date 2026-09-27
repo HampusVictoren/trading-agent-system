@@ -1,6 +1,7 @@
 using Engine.Application.Persistence;
 using Engine.Application.UseCases;
 using Engine.Domain.Aggregates.Portfolio;
+using Engine.Domain.Screening;
 using Engine.Domain.ValueObjects;
 using Engine.Hosting;
 using Engine.Hosting.Options;
@@ -398,6 +399,7 @@ public class TradingSchemaTests : IAsyncLifetime
         PortfolioId = portfolioId,
         Symbol = Aapl,
         TeamId = "default",
+        Selection = SelectionSource.Shortlist,
         RequestedAt = new DateTimeOffset(2026, 9, 23, 14, 0, 0, TimeSpan.Zero),
         AvailableRiskBudget = 10_000m,
         MaxPositionPct = 0.05m,
