@@ -46,6 +46,7 @@ builder.Services.Configure<TelemetryOptions>(options =>
 builder.Services.AddTransient<HoldingQuoteReader>();
 builder.Services.AddTransient<ProcessProposalUseCase>();
 builder.Services.AddTransient<ApplyExitsUseCase>();
+builder.Services.AddTransient<SelectShortlistUseCase>();
 builder.Services.AddTransient<MeasureOutcomesUseCase>();
 builder.Services.AddTransient<ReportOutcomesUseCase>();
 

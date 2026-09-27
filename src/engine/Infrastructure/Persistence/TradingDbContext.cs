@@ -35,6 +35,8 @@ public sealed class TradingDbContext : DbContext
 
     public DbSet<OutcomeDelivery> OutcomeDeliveries => Set<OutcomeDelivery>();
 
+    public DbSet<ShortlistEntry> Shortlists => Set<ShortlistEntry>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema(Schema);

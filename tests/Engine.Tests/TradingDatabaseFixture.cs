@@ -89,8 +89,12 @@ public sealed class TradingDatabaseFixture : IAsyncLifetime
     {
         await using var context = NewContext();
         await context.Database.ExecuteSqlRawAsync(
-            "TRUNCATE trading.decisions, trading.orders, trading.positions, trading.portfolios "
-            + "RESTART IDENTITY CASCADE");
+            // shortlists is named explicitly because it is the one table with no foreign key
+            // into this graph: CASCADE reaches signal_outcomes and outcome_deliveries through
+            // decisions, but nothing points at a screen, so leaving it out leaked rows from one
+            // test into the next.
+            "TRUNCATE trading.decisions, trading.orders, trading.positions, trading.portfolios, "
+            + "trading.shortlists RESTART IDENTITY CASCADE");
     }
 
     public async ValueTask DisposeAsync() => await _container.DisposeAsync();

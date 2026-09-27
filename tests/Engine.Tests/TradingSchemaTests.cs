@@ -134,6 +134,115 @@ public class TradingSchemaTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_shortlist_cannot_be_rewritten_after_the_fact()
+    {
+        // The record this stage's own question is answered from: did the agents beat the screen
+        // that picked their candidates? A shortlist that can be edited afterwards cannot answer
+        // it, which is the same reason decisions and the ledger are append-only.
+        await using (var first = _database.NewContext())
+        {
+            first.Shortlists.Add(AShortlistEntry(rank: 1));
+            await first.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        await using var context = _database.NewContext();
+
+        var exception = await Should.ThrowAsync<Exception>(() => context.Database.ExecuteSqlRawAsync(
+            "UPDATE trading.shortlists SET rank = 2", TestContext.Current.CancellationToken));
+
+        exception.Message.ShouldContain("append-only");
+    }
+
+    [Fact]
+    public async Task One_verdict_per_instrument_per_trading_day_is_a_database_rule()
+    {
+        // What makes the engine's "have I screened today?" safe against itself. Two cycles that
+        // both decided to screen cannot both store a day: the loser's transaction fails, rather
+        // than the day quietly holding two shortlists.
+        await using (var first = _database.NewContext())
+        {
+            first.Shortlists.Add(AShortlistEntry(rank: 1));
+            await first.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        await using var second = _database.NewContext();
+        second.Shortlists.Add(AShortlistEntry(rank: 1, correlationId: "cycle-2"));
+
+        var exception = await Should.ThrowAsync<DbUpdateException>(
+            () => second.SaveChangesAsync(TestContext.Current.CancellationToken));
+
+        exception.InnerException!.Message.ShouldContain("ix_shortlists_screened_on_symbol");
+    }
+
+    [Fact]
+    public async Task A_screen_survives_being_stored_and_read_back()
+    {
+        // Through the log rather than through the context, so the ordering the caller depends on
+        // is the one the SQL actually produces: candidates in rank order, rejections last.
+        await using (var writing = _database.NewContext())
+        {
+            var log = new ShortlistLog(writing);
+
+            log.Record(AShortlistEntry(rank: 2, symbol: "VOLV-B.ST"));
+            log.Record(AShortlistEntry(rank: null, symbol: "SBB-B.ST", reason: "no close 90 days ago"));
+            log.Record(AShortlistEntry(rank: 1, symbol: "ERIC-B.ST"));
+
+            await writing.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        await using var reading = _database.NewContext();
+        var stored = await new ShortlistLog(reading).ForAsync(
+            ScreenedOn, TestContext.Current.CancellationToken);
+
+        stored.Select(entry => entry.Symbol.Value)
+            .ShouldBe(["ERIC-B.ST", "VOLV-B.ST", "SBB-B.ST"]);
+
+        var rejected = stored.Single(entry => entry.Rank is null);
+        rejected.RejectedBecause.ShouldBe("no close 90 days ago");
+        rejected.Score.ShouldBeNull();
+
+        var top = stored[0];
+        top.Score.ShouldBe(1.421m);
+        top.Return3M.ShouldBe(0.2842m);
+        top.Volatility30D.ShouldBe(0.2m);
+        top.MedianDollarVolume.ShouldBe(41_250_000m);
+        top.ScreenedAt.ShouldBe(ScreenedAt);
+        top.RecordedAt.ShouldNotBe(default);
+    }
+
+    [Fact]
+    public async Task A_day_with_no_screen_reads_back_as_nothing()
+    {
+        // The answer the engine acts on: an empty list means "not screened yet", which is the
+        // only question it asks of this table.
+        await using var context = _database.NewContext();
+
+        var stored = await new ShortlistLog(context).ForAsync(
+            ScreenedOn, TestContext.Current.CancellationToken);
+
+        stored.ShouldBeEmpty();
+    }
+
+    private static readonly DateOnly ScreenedOn = new(2026, 9, 27);
+
+    private static readonly DateTimeOffset ScreenedAt = new(2026, 9, 27, 7, 30, 0, TimeSpan.Zero);
+
+    private static ShortlistEntry AShortlistEntry(
+        int? rank, string symbol = "ERIC-B.ST", string? reason = null, string correlationId = "cycle-1") => new()
+        {
+            CorrelationId = correlationId,
+            ScreenedOn = ScreenedOn,
+            ScreenedAt = ScreenedAt,
+            Symbol = new Ticker(symbol),
+            Rank = rank,
+            Score = rank is null ? null : 1.421m,
+            Return3M = rank is null ? null : 0.2842m,
+            Volatility30D = rank is null ? null : 0.2m,
+            MedianDollarVolume = rank is null ? null : 41_250_000m,
+            RejectedBecause = reason
+        };
+
+    [Fact]
     public async Task Two_writers_cannot_both_win()
     {
         // Nothing runs two writers yet - the worker is one loop. The scheduled outcome job
@@ -183,7 +292,7 @@ public class TradingSchemaTests : IAsyncLifetime
 
             await migrator.MigrateAsync(cancellationToken: TestContext.Current.CancellationToken);
 
-            (await TablesInTradingSchema(context)).ShouldBe(6);
+            (await TablesInTradingSchema(context)).ShouldBe(7);
             (await FunctionsInTradingSchema(context)).ShouldBe(1);
 
             // The report view depends on two tables, so it has to be dropped before them and
