@@ -18,7 +18,12 @@ public class PositionSizerTests
 {
     private static readonly Ticker Aapl = new("AAPL");
     private static readonly Ticker Msft = new("MSFT");
-    private static readonly RiskPolicy Policy = new(maxPositionPct: 0.05m, cashBufferPct: 0.10m, maxQuoteAge: TimeSpan.FromMinutes(5));
+    private static readonly RiskPolicy Policy = new(
+        maxPositionPct: 0.05m,
+        cashBufferPct: 0.10m,
+        maxQuoteAge: TimeSpan.FromMinutes(5),
+        minHoldingPeriod: TimeSpan.FromDays(3),
+        stopLossPct: 0.10m);
     private static readonly PositionSizer Sizer = new();
 
     private static Portfolio WithCash(decimal cash = 10_000m) => new(new Money(cash, Money.DefaultCurrency));
@@ -139,14 +144,13 @@ public class PositionSizerTests
             .ShouldContain("one share");
     }
 
-    [Theory]
-    [InlineData(Stance.Sell)]
-    [InlineData(Stance.Hold)]
-    public void Only_a_buy_is_sized(Stance stance)
+    [Fact]
+    public void A_hold_is_not_an_order_in_either_direction()
     {
-        // Selling arrives in stage 5, with its own table.
-        ReasonOf(Sizer.Size(Signal(stance: stance), WithCash(), PriceSnapshot.Empty, Policy))
-            .ShouldContain(stance.ToString());
+        // The only stance that produces nothing now that selling is sized. It is worth its own
+        // test rather than a row in a theory: HOLD is the answer the agents give most often.
+        ReasonOf(Sizer.Size(Signal(stance: Stance.Hold), WithCash(), PriceSnapshot.Empty, Policy))
+            .ShouldContain("Hold");
     }
 
     [Fact]
@@ -170,5 +174,95 @@ public class PositionSizerTests
         var caller = PriceSnapshot.Of(Aapl, new Money(1m, Money.DefaultCurrency));
 
         QuantityOf(Sizer.Size(Signal(price: 100m), WithCash(), caller, Policy)).ShouldBe(5m);
+    }
+
+    /// <summary>
+    /// Selling, where the conviction tier scales the holding rather than a budget. None of the
+    /// rules above apply: there is no cash to run out of and no position limit a reduction
+    /// could breach, so the holding is the only bound.
+    /// </summary>
+    public class SizingASale
+    {
+        private static Portfolio Holding(decimal quantity, decimal at = 100m, decimal cash = 10_000m)
+        {
+            var portfolio = WithCash(cash);
+            portfolio.ExecuteBuy(Aapl, quantity, new Money(at, Money.DefaultCurrency));
+            return portfolio;
+        }
+
+        private static OrderIntent SizeSell(Portfolio portfolio, double conviction = 0.8) =>
+            Sizer.Size(
+                Signal(stance: Stance.Sell, conviction: conviction), portfolio, PriceSnapshot.Empty, Policy);
+
+        [Fact]
+        public void Full_conviction_sells_the_whole_holding()
+        {
+            SizeSell(Holding(quantity: 5m)).ShouldBeOfType<OrderIntent.Sell>().Quantity.ShouldBe(5m);
+        }
+
+        [Fact]
+        public void Half_conviction_sells_half_of_it()
+        {
+            SizeSell(Holding(quantity: 4m), conviction: 0.5)
+                .ShouldBeOfType<OrderIntent.Sell>().Quantity.ShouldBe(2m);
+        }
+
+        [Fact]
+        public void Half_of_an_odd_holding_rounds_down()
+        {
+            // Seven shares at half conviction is three, not four. A fraction of a share is not
+            // something anyone can sell, and rounding down leaves the position, which is the
+            // direction a tie should fall in.
+            SizeSell(Holding(quantity: 7m), conviction: 0.5)
+                .ShouldBeOfType<OrderIntent.Sell>().Quantity.ShouldBe(3m);
+        }
+
+        [Fact]
+        public void A_single_share_at_half_conviction_stays_where_it_is()
+        {
+            // The holding is smaller than the smallest sale. Rounding up instead would let a
+            // moderate conviction close a position, which is what full conviction is for.
+            ReasonOf(SizeSell(Holding(quantity: 1m), conviction: 0.5)).ShouldContain("one share");
+        }
+
+        [Fact]
+        public void A_conviction_below_the_floor_sells_nothing()
+        {
+            ReasonOf(SizeSell(Holding(quantity: 5m), conviction: 0.3)).ShouldContain("conviction");
+        }
+
+        [Fact]
+        public void Selling_what_is_not_held_is_not_an_order()
+        {
+            // No short selling, and it is refused here rather than only in the aggregate: this
+            // is where it is still an outcome with a reason instead of an exception.
+            ReasonOf(SizeSell(WithCash())).ShouldContain("nothing is held of AAPL");
+        }
+
+        [Fact]
+        public void The_sale_is_priced_and_dated_from_the_signal()
+        {
+            var order = SizeSell(Holding(quantity: 5m)).ShouldBeOfType<OrderIntent.Sell>();
+
+            order.Price.Amount.ShouldBe(100m);
+            order.Trigger.ShouldBe(OrderTrigger.Signal);
+
+            // The timestamp travels on the intent because the gate has to judge the price's
+            // age, and an exit that never saw a signal will arrive at the same gate.
+            order.PriceAsOf.ShouldBe(Signal(stance: Stance.Sell).QuoteAsOf, tolerance: TimeSpan.FromMinutes(1));
+        }
+
+        [Fact]
+        public void A_holding_with_no_quote_does_not_stop_a_sale()
+        {
+            // The asymmetry that matters most. A buy needs the portfolio's value and so is
+            // refused when a holding cannot be priced; a sale needs no valuation at all. If it
+            // did, a market data outage would hold every position until the data came back -
+            // with the exits unable to fire for the same reason.
+            var portfolio = Holding(quantity: 5m);
+            portfolio.ExecuteBuy(Msft, quantity: 1m, new Money(400m, Money.DefaultCurrency));
+
+            SizeSell(portfolio).ShouldBeOfType<OrderIntent.Sell>().Quantity.ShouldBe(5m);
+        }
     }
 }

@@ -37,7 +37,43 @@ public sealed class RiskPolicyOptions
     [Range(1, 3600)]
     public int MaxQuoteAgeSeconds { get; init; }
 
+    /// <summary>
+    /// How many days a holding is kept before the agents may sell it on a new opinion. The
+    /// deterministic exits are exempt, so this slows down changes of mind rather than risk
+    /// controls.
+    /// </summary>
+    /// <remarks>
+    /// Nullable and required for the same reason as CashBufferPct: zero is a legitimate value -
+    /// it means the agents may reverse a purchase at once - so a missing key would otherwise be
+    /// indistinguishable from choosing not to wait.
+    ///
+    /// The ceiling is the contract's own horizon cap. A minimum hold longer than the longest
+    /// thesis anyone may propose would mean no position could ever be sold on a new opinion
+    /// within the life of the thesis that bought it, which is a setting that cannot be what
+    /// somebody meant.
+    /// </remarks>
+    [Required]
+    [Range(0, 30)]
+    public int? MinHoldingPeriodDays { get; init; }
+
+    /// <summary>
+    /// How far below what it cost a holding may fall before the engine sells it without asking.
+    /// </summary>
+    /// <remarks>
+    /// Not nullable, unlike the two above, because zero is not a value anybody could mean: it
+    /// would sell every holding that was not up. So the default of zero being outside the range
+    /// is exactly the check a missing key needs. The ceiling is half, above which a stop-loss
+    /// would let a position halve before acting and would not be one.
+    /// </remarks>
+    [Range(typeof(decimal), "0.01", "0.5", ParseLimitsInInvariantCulture = true, ConvertValueInInvariantCulture = true)]
+    public decimal StopLossPercentage { get; init; }
+
     /// <summary>The same limits in the domain's own terms, which guards them a second time.</summary>
     public RiskPolicy ToRiskPolicy() =>
-        new(MaxPositionPercentage, CashBufferPct!.Value, TimeSpan.FromSeconds(MaxQuoteAgeSeconds));
+        new(
+            MaxPositionPercentage,
+            CashBufferPct!.Value,
+            TimeSpan.FromSeconds(MaxQuoteAgeSeconds),
+            TimeSpan.FromDays(MinHoldingPeriodDays!.Value),
+            StopLossPercentage);
 }

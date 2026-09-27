@@ -1,5 +1,6 @@
 namespace Engine.Application.UseCases;
 
+using Engine.Domain.Aggregates.Portfolio;
 using Engine.Domain.ValueObjects;
 
 /// <summary>
@@ -43,8 +44,18 @@ public abstract record TradeDecisionResult
     /// </summary>
     public abstract string? OutcomeReason { get; }
 
-    /// <summary>A buy was executed against the portfolio.</summary>
-    public sealed record Executed(Ticker Ticker, decimal Quantity, Money Price) : TradeDecisionResult
+    /// <summary>
+    /// A trade was executed against the portfolio. The side is carried so a log line can say
+    /// which way it went.
+    /// </summary>
+    /// <remarks>
+    /// It is not a new column in <c>trading.decisions</c>. That row already stores the stance
+    /// the agents answered, which is what decided the direction, and its <c>order_id</c> points
+    /// at the ledger line that records the side as a fact about what was done. A third copy
+    /// would be a third thing to keep in step.
+    /// </remarks>
+    public sealed record Executed(Ticker Ticker, OrderSide Side, decimal Quantity, Money Price)
+        : TradeDecisionResult
     {
         public override DecisionOutcome Outcome => DecisionOutcome.Executed;
         public override string? OutcomeReason => null;
@@ -69,12 +80,12 @@ public abstract record TradeDecisionResult
         public override string? OutcomeReason => Reason;
     }
 
-    /// <summary>The agents did not propose a buy. Selling arrives in stage 5.</summary>
+    /// <summary>The agents proposed no trade, which now means exactly one thing: they held.</summary>
     public sealed record NoAction(Ticker Ticker, string Action) : TradeDecisionResult
     {
         public override DecisionOutcome Outcome => DecisionOutcome.NoAction;
 
-        /// <summary>The stance that was not a buy. It is the whole reason there was no action.</summary>
+        /// <summary>The stance that produced no order. It is the whole reason there was none.</summary>
         public override string? OutcomeReason => Action;
     }
 
