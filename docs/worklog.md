@@ -7,10 +7,15 @@ A running record of what has been done, what was learned along the way, and what
 
 This file answers "where are we, how did we get here, and what is next". When resuming, read *Current state* and *Next steps* first, then the roadmap section for the next stage.
 
-**Last updated:** 2026-09-27. **Stage 5's third pull request is complete and open for
-review:** the engine sells on the agents' say-so, and the deterministic exits - stop-loss and
-time limit - run before every cycle's analyses without asking anybody. Verified live: the exits
-fetch a real quote for the one holding and judge it *before* the first `POST /v1/signals`.
+**Last updated:** 2026-09-27, late. **Stage 5's third pull request is merged as #48.** The
+fourth is written - four commits on `stage-5-cycle`, 473 .NET and 476 Python green - but **not
+pushed, and the PR is not open.** Read *Next steps* first: four things are left, and the first of
+them is one command.
+
+**What the fourth pull request does:** the engine stops trading a list somebody typed. It screens
+31 OMXS30 names without an LLM, analyses the best ten plus everything it holds, and asks about an
+instrument **once a trading day** instead of once every fifteen seconds. That is the last count of
+finding G, and it is also the first cycle that has a population worth measuring.
 **Stage 4's code is complete and merged** - all eight pull requests. The machinery runs end to end: decisions are stored, the portfolio survives a
 restart, a sweep scores every signal whose horizon has passed, the engine posts what it
 measured to the agent service, and memory reads the journal back. 21 signals are scored and
@@ -77,7 +82,9 @@ Two things that are easy to misread as broken:
 - **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21, **stage 3 done** 2026-09-23. **Stage 4 started** 2026-09-23. PR 5 and PR 6 were each split in two, so the stage is eight pull requests, and **all eight are merged** as of 2026-09-25. **Stage 5 has started**, with the model and the horizon settled first; stages 6-8 exist only as plan.
 - **`master` is at PR #41**, and stage 4 is fully merged: 6a (#39), 6b (#40) and the docs-only record of finding G (#41), all on 2026-09-25. Nothing reaches `master` without the three required checks passing, so what is there is green by construction.
 - **Dependabot's bumps are in.** #46 (setup-uv) and #47 (six Python packages) merged to `master` on 2026-09-26 and were merged *into* `stage-5-selling` rather than rebased onto, because the branch was already pushed and a rebase would need a force-push. Two of the six matter behaviourally - **ag2 1.0.5 to 1.0.6** and **openai 3.16.1 to 3.19.1** - and the lock also *downgraded* SQLAlchemy from 2.1.1 to 2.0.54, which the Alembic fixture exercises on every database test. 476 Python tests green on all of it.
-- **One branch is open:** `stage-5-selling`, PR 3 of stage 5's four, all four commits made and pushed. `stage-5-model-and-horizon` merged as #42, `stage-5-screening` as #43, `stage-5-sek` as #44 and `stage-5-symbol-columns` as #45 - the last of those repairing #44, which merged four of its six commits and left `master` with the widened pattern and the old columns for a few minutes.
+- **One branch is open:** `stage-5-cycle`, PR 4 of stage 5's four, **four commits committed locally and not yet pushed.** `stage-5-model-and-horizon` merged as #42, `stage-5-screening` as #43, `stage-5-sek` as #44, `stage-5-symbol-columns` as #45 - the last of those repairing #44, which merged four of its six commits and left `master` with the widened pattern and the old columns for a few minutes - and `stage-5-selling` as #48.
+- **`stage-5-selling` still exists on both sides.** Deleting it was refused by this session's tooling as a destructive git action, so it needs `git branch -d stage-5-selling` and `git push origin --delete stage-5-selling` by hand. The rule is master plus one working branch; right now there are three.
+- **Stage 5 gained a fifth pull request**, split out of the fourth on 2026-09-27: the shortlist as a benchmark. Comparing buys against the shortlist average needs the members that were *not* bought measured too, which is a new population in `MeasurementWorker` and a column on `trading.hit_rate`. It touches no decision path and cannot be verified until a horizon has passed, so it reviews on its own.
 - **The account and the universe are Swedish, and there is no currency conversion anywhere.** `Money.DefaultCurrency` is SEK, the engine trades ERIC-B.ST and VOLV-B.ST, and outcomes are measured against XACT-OMXS30.ST. The opening balance is 100 000 kr, which is what makes the conviction tiers differ in share counts rather than both rounding to one. The 36 USD decisions and 21 SPY measurements from before the move are **kept**: `decisions.reference_currency` and `signal_outcomes.benchmark_symbol` make them self-describing, and finding G's reproduction reads them.
 - **The system can find candidates now.** `POST /v1/screen` ranks a universe with no LLM call at all: risk-adjusted momentum from bars, filtered on liquidity, with everything it left out named and the reason attached. The stage's stated practical risk turned out to be a measurement rather than a worry - **50 instruments in 2.0 seconds**, the same as 8, because `yf.download` batches and the ranking asks for no fundamentals. Nothing calls it yet; the engine starts driving the cycle in PR 3.
 - **`b1234878670a` never reached a row, and that is worth knowing rather than forgetting.** On 2026-09-25 `default`'s hash moved from `6c6da0e6edad` to `b1234878670a` without a word of the team changing: adding `sees_memory` to the payload wrote `sees_memory: false` onto every step. The payload was made sparse the same day, before the engine ran again, so the accidental hash was never stored - `SELECT team_id, team_version, count(*) FROM trading.decisions` returns only `6c6da0e6edad` and `79dfb7307b57`. Nothing has to be pooled and nothing has to be written down; the earlier warning in this file that the two hashes had to be reconciled by hand is obsolete, not wrong at the time. The lesson survives the hash: a version payload that lists every flag with its default ties the version to the shape of the payload rather than to the team.
@@ -99,8 +106,62 @@ Two things that are easy to misread as broken:
 
 ## Next steps
 
+### Resume here — four things, in this order (2026-09-27, late)
+
+Stage 5's fourth pull request is written and green on `stage-5-cycle`. Nothing about it is
+half-finished; what is left is the part that needs a shell and a browser.
+
+1. **Reproduce CI in a throwaway worktree, then push.** This is the step that catches anything
+   passing only because this machine has something CI does not, and it has not been run against
+   these four commits - only the working tree has.
+
+   ```bash
+   cd ~/repos/trading-agent-system
+   git worktree add --detach /tmp/ci stage-5-cycle
+   cd /tmp/ci && dotnet test --solution TradingSystem.slnx && dotnet format TradingSystem.slnx --verify-no-changes
+   cd /tmp/ci/src/agents && uv sync --locked && uv run pytest && uv run ruff check app/ tests/ migrations/ \
+       && uv run ruff format --check app/ tests/ migrations/ && uv run mypy app/ migrations/
+   cd ~/repos/trading-agent-system && git worktree remove --force /tmp/ci
+   git push -u origin stage-5-cycle
+   ```
+
+   Expect **473 .NET** and **476 Python**. `gh` is unavailable, so the PR opens from a pre-filled
+   compare URL - build it the way PR 3's was built.
+
+2. **Run it live, because this pull request's main claim is that a cycle does *less*.** Every
+   other claim has a test; "the second cycle of the day analyses nothing" is only convincing from
+   a log. Apply the two migrations first (`Shortlists` and `DecisionSelection`), start the agent
+   service, and watch for three things:
+
+   - one `Screened 31 instrument(s) for <date>: N shortlisted, M rejected.` and **exactly one** -
+     a second cycle must print no screen line at all;
+   - the cycle summary, `Cycle over N instrument(s): X analysed, Y already done today, Z unchanged
+     in price.` The second cycle's X should be **0**;
+   - `select screened_on, count(*) from trading.shortlists group by 1;` - one row per trading day.
+
+   Note what the real universe does that no test can: 31 names against yfinance in one batched
+   request, and which of them come back as rejections. A dead symbol costing one failed lookup per
+   screen is already a known open item, and this is where it shows up with a name attached.
+
+3. **Delete `stage-5-selling` on both sides.** It merged as #48 and is still there. This session's
+   tooling refused it as a destructive git action, so it is two commands by hand:
+   `git branch -d stage-5-selling` and `git push origin --delete stage-5-selling`.
+
+4. **Then PR 5, the last of the stage:** measure the shortlist members that were never bought, and
+   add the comparison to `trading.hit_rate`. Read the *Open decisions* note about `rejected` first
+   - the screen truncates to the shortlist size, so the ranks of the names that were passed over
+   are not stored anywhere, and whether to start storing them is that PR's first decision.
+
+**One judgement call worth re-examining with a clear head.** `MinDollarVolume` is 10 000 000 SEK
+and every name in the universe clears it by two orders of magnitude, so it filters nothing today.
+That is deliberate - at a hundred thousand kronor an order is a few thousand, so liquidity is not
+the binding constraint and the floor is really a staleness guard - but a filter that never fires is
+also a filter nobody has tested against real data. The live run in step 2 is what would show it.
+
+---
+
 **Stage 4 - persistence and outcome measurement** is merged, all eight pull requests. **Stage
-5 - finding candidates and selling** is next, in three pull requests; read that stage in
+5 - finding candidates and selling** is next, in five pull requests; read that stage in
 `docs/arkitektur-roadmap.md` before continuing, since it carries several decisions that are
 easy to miss.
 
@@ -171,7 +232,7 @@ The model and the horizon are now settled - see *Before stage 5*, and the measur
 SELL, SELL, SELL where `llama3.2` gave three different answers. What is left of finding G is
 the population, and that is **stage 5** itself.
 
-**Stage 5 goes out as four pull requests.** Three were decided 2026-09-25; the second was
+**Stage 5 goes out as five pull requests.** Three were decided 2026-09-25; the second was
 inserted on 2026-09-26 when the account moved to kronor, because a contract rename and a
 migration have no business sharing a review with selling logic. The roadmap calls the stage
 3-4 days, which is too much for one review:
@@ -181,7 +242,8 @@ migration have no business sharing a review with selling logic. The roadmap call
 | 1 | `app/screening/` and `POST /v1/screen` - a universe, the factors from `facts.py` over all of it, filters and a ranking | Pure functions over fixed datasets, TDD, and **no engine changes at all**. It can be run and judged before anything else moves. The stage's stated practical risk lives here: yfinance is unofficial and rate-limited, and fundamentals are fetched per instrument |
 | 2 | **SEK end to end**: the symbol rule widens for Swedish tickers, the account currency becomes SEK, `available_risk_budget_usd` is renamed on the wire and in the database, and the engine points at Stockholm | A contract rename plus a migration. Inserted before selling because everything after it is written against whichever currency world exists, and because mixing it into the selling review would make it impossible to tell which change broke what |
 | 3 | Selling: the SELL branch in `PositionSizer`, `Portfolio.ExecuteSell` with realised profit and loss, and the deterministic exits - stop-loss, time limit, minimum holding period | Test-first with the same table technique as stage 2. The exits are the half that does not depend on the LLM answering, which is decision 1 applied to selling. **In progress**, four commits: the aggregate, sizing and the gate, the exits, then the wiring |
-| 4 | The engine drives the cycle: universe to shortlist, shortlist union holdings, one analysis per fact-sheet change, and the shortlist stored per cycle | This is where the regime column goes, and where "do the agents beat the screening that picked their candidates?" becomes answerable |
+| 4 | The engine drives the cycle: universe to shortlist, shortlist union holdings, one analysis per fact-sheet change, and the shortlist stored per trading day | This is where the regime column goes. **Written, four commits, not pushed** - see the stage 5 log |
+| 5 | The shortlist as a benchmark: measure the candidates that were never bought, and add the comparison to `trading.hit_rate` | Split out of PR 4 on 2026-09-27. It is where "do the agents beat the screening that picked their candidates?" becomes answerable, and it is a new measured population rather than a change to any decision path - so it reviews on its own and cannot be judged until a horizon has passed |
 
 Stage 8's condition survives untouched, because stage 5
 does not touch the team.
@@ -553,6 +615,8 @@ open until then.
 - **`orders.placed_at` is a shadow property** filled by the database's `now()`. It is audit metadata today; stage 5 counts a holding period from the last purchase, and that is when it becomes domain data and has to come from the engine's injected clock instead.
 - **Quotes share the analysis client's resilience policy**, which does not retry a failing response. That rule was written for a call costing 12-15 s of LLM time and is stricter than an idempotent GET needs; the cost of leaving it is one cycle without a price for one holding, and the cost of a second typed client is a second place for the key and the timeouts to drift. Revisit if missing quotes ever show up in the decision rows.
 - **A quote for a symbol that is not a symbol answers 404, not 422.** FastAPI rejects it at routing, before validation, so it never reaches the error vocabulary. Honest but inconsistent with every other refusal in the contract; worth a `Path` converter or a catch-all route if the difference ever matters to a caller.
+- **The screen's ranking cannot be validated against the names it passed over.** `rank(candidates, limit)` truncates, so an instrument that ranked 15th of 31 appears in neither `candidates` nor `rejected` and is therefore in no row of `trading.shortlists`. The agents can be compared against the shortlist; the *ranking* cannot be compared against what it left out. Fixing it means adding the un-shortlisted to `rejected` with their ranks, which grows a screen's rejections from a handful to about twenty rows a day. It is PR 5's first decision, because it is PR 5's question.
+- **`Trading:MinDollarVolume` is a filter that never fires.** 10 000 000 SEK, against a universe where every name clears it by two orders of magnitude. Deliberate - at this account size an order is a few thousand kronor, so the floor is a staleness guard rather than a liquidity constraint - but a filter with no evidence behind it is worth checking against a real screen's output before it is trusted.
 - **Nothing translates a duplicate `correlation_id`.** `UnitOfWork` turns EF's concurrency exception into `ConcurrentChangeException`, but a unique-index violation still surfaces as `DbUpdateException` and lands in the worker's general handler with a stack trace. That is arguably right - the ids are fresh Guids, so a duplicate is a bug - but it has never been seen, so it has never been read.
 
 ---
@@ -1492,6 +1556,81 @@ steps* rather than here, because they are still being spent.
   reason. The shape says the shared testcontainers fixture rather than any assertion. If CI shows
   it, this is a known thing and not a new one.
 
+- **PR 4 of 4 - the engine drives the cycle** (branch `stage-5-cycle`, 2026-09-27). Four commits,
+  all green at **473 .NET** and 476 Python, `dotnet format` clean, no model drift. **Not pushed
+  yet, and the PR is not open** - see *Next steps* for the four things left.
+
+  The stage's last review, and the one that turns "bedöm en ticker som någon annan valt" into
+  the target: a universe of 31 OMXS30 names, ranked without an LLM, ten of them analysed, and an
+  instrument asked about once a trading day instead of once every fifteen seconds.
+
+  | Commit | What |
+  |---|---|
+  | `0a1a35e` | The screen reaches the engine: DTOs, `ScreenMapper`, `GetScreenAsync`, `Trading:Universe`/`ShortlistSize`/`MinDollarVolume` |
+  | `6ef7ab7` | `trading.shortlists` and `SelectShortlistUseCase` - one screen per trading day, read back on every cycle after the first |
+  | `84bcabd` | The cycle is the holdings ∪ today's shortlist. `Trading:Tickers` deleted, the cadence moved to minutes |
+  | `c589c7c` | An instrument is analysed once a day and once a price. `decisions.selection`, and `hit_rate` grouped by it |
+
+  - **Three decisions, all taken the recommended way 2026-09-27.**
+
+    | Decision | Taken | Why |
+    |---|---|---|
+    | What counts as the fact sheet having changed | **Neither today nor this price**: skip if the last analysis was today, or was at the price the quote shows now | Gives one analysis per instrument per trading day during market hours, and silence at night and at weekends - without a calendar. A closed market cannot move a price, so the engine waits for the open by itself |
+    | Whether the screen runs every cycle | **Once per trading day**, read back from `trading.shortlists` otherwise | The contract already says two screens on the same day rank the same way, because the factors are daily bars. It makes yfinance's rate limit a non-issue and the cycle idempotent per day |
+    | The shortlist as a benchmark | **Split into its own pull request** | Comparing buys against the shortlist average needs the *unbought* members measured too, which is a new population in `MeasurementWorker`. PR 4 is what the engine does; PR 5 is how it is scored. Six to eight commits in one review otherwise |
+
+    Two more I took without asking, both argued in the code: `trading.shortlists` stores the
+    rejections as well (nullable rank and score, nullable reason), because a universe that quietly
+    rots is otherwise invisible; and the cycle interval is **15 minutes**, which is now the slack
+    in a stop-loss rather than the pace of the analyses.
+
+  - **The roadmap was half wrong about daily data, and reading the source is what showed it.**
+    It says an instrument need only be analysed when its `FactSheet` changes, "vilket med dagsdata
+    blir en gång per handelsdag". The returns, the volatility and the turnover are daily - but the
+    *price* is `currentPrice`/`regularMarketPrice` from `.info`, and `pct_below_52w_high` is
+    computed from it. So the fact sheet moves continuously while the market is open, and a rule
+    written on the price alone would never skip anything between nine and half past five. Hence
+    two conditions, each covering the other's blind spot.
+
+  - **The contract claimed more than the code does.** `contracts/screen.schema.json` said
+    `rejected` holds "every instrument that was looked at and left out". It does not:
+    `screening.py` truncates to the requested limit, so an instrument that ranked 15th of 31
+    appears in neither array. The description now says so and names the consequence - the agents
+    can be compared against the shortlist, but **the ranking itself cannot be checked against the
+    names it passed over**. Whether to fix that (by adding the un-shortlisted to `rejected` with
+    their ranks) is a decision for PR 5, because it is that PR's question.
+
+  - **Mutation testing found two holes rather than confirming the tests**, which had not happened
+    on this branch before:
+
+    | Mutation | What it revealed |
+    |---|---|
+    | Swapping the order of the two conditions turned **nothing** red | The commonest case of all was missing: analysed today **and** the price unchanged. Both verdicts skip, so nothing about trading depends on which - but the cycle's summary line counts them separately, and that line exists to tell "already done today" apart from "the market is shut" |
+    | Dropping the `ReferencePrice != null` filter turned **nothing** red | So the rule that keeps an agent-service outage from costing a whole trading day was untested. An attempt is a row - it has to be - but it is not an analysis |
+
+    Both have tests now, and the mutations turn exactly those red. The other mutations behaved:
+    trusting the promised ranking order, a duplicate check over one list, universe duplicates
+    compared as raw strings, a rank counted from zero, rejections not stored (five red, two of
+    them looking like they were about something else), a table created without its trigger,
+    dropping the holdings from the selection (eight red, including two about restarting), and
+    analysing the shortlist before the holdings.
+
+  - **Four worker tests were rewritten rather than fixed.** They analysed one instrument twice on
+    the same day at the same price, which is exactly what no longer happens - so they now run a
+    day apart at a moved price. One was removed: the harness waits on committed decisions, and the
+    cycle it wanted to observe deliberately produces none, so it could only ever have proved its
+    point by waiting on something it did not control.
+
+  - **The fixture leaked rows** until `trading.shortlists` was named in its `TRUNCATE`. It is the
+    one table with no foreign key into the portfolio graph, so `CASCADE` never reached it.
+
+  - **`git checkout --` destroyed uncommitted work again.** Same file-level mistake as PR 3, same
+    lesson already written down, used this time to revert a mutation on `DecisionLog.cs` - which
+    took `LastAnalysisOfAsync` with it. Rewritten verbatim from my own heredoc, and the guard is
+    not "remember": it is to copy the file to the scratchpad *before* mutating, every time, which
+    is what the other mutations in this branch did do.
+
+
 ---
 
 ## Lessons and gotchas
@@ -1505,11 +1644,20 @@ Things that cost time or were not obvious. Most are also recorded where they app
 **Working on uncommitted code**
 - **`git checkout -- <file>` on a file that is only in the working tree deletes the work.** It restores from `HEAD`, which for uncommitted work means "before I started". Used as the revert step of a mutation test, it silently wiped the sell branch of `PositionSizer` and the sell overload of `RiskEngine`; the next mutation then failed to build, and its own revert wiped the second file too. **Back the file up to the scratchpad and copy it back.** The tell that something was wrong was a test run that printed no summary at all - a build failure, not a failing test.
 - **Mutate one thing, run, restore, and check the restore.** `grep` for the original text after copying back costs nothing and is the difference between noticing this in a minute and noticing it at the commit.
+- **It happened again in PR 4**, on `DecisionLog.cs`, with this lesson already written down - so the guard is not remembering it. The guard is that the *first* command of every mutation copies the file to the scratchpad, in the same shell line as the edit, so there is never a moment where the only copy is the one about to be overwritten. Every mutation on that branch that did so was fine; the one that reached for `git checkout --` instead lost a method.
+- **A mutation that does not compile is not a passing mutation.** `if (false)` trips unreachable-code analysis under `TreatWarningsAsErrors`, and `GroupBy(x => x)` changes the key's type. In both cases the test run printed no summary at all, which reads exactly like "nothing went red" if you are only grepping for failures. Grep for `Build succeeded` too.
 
 **Time, ids and append-only tables**
 - **A version 7 GUID is ordered to the millisecond and no further.** .NET fills the bits after the timestamp at random, so two ids created in the same millisecond sort arbitrarily. A test that ordered the ledger by id passed in a full run and failed when it ran alone. `placed_at` cannot break the tie either: it defaults to `now()`, which is the *transaction's* clock and identical for every row the transaction writes. Nothing in the engine reads the ledger in order today, and the configuration comment claiming the primary key gives it one is now honest about the limit.
 - **`ADD COLUMN ... DEFAULT` is how you backfill an append-only table.** `trading.orders` raises on `UPDATE`, so a migration's backfill statement would be refused by the table's own trigger - but adding a column with a default is not an UPDATE and never fires it. Drop the default in the next statement, or an `INSERT` that forgets the column silently records the default as though somebody meant it.
 - **A generated migration's default is a placeholder, not a value.** EF proposed `defaultValue: ""` for the new enum column - a value the enum cannot produce and nothing downstream could read. The right default was the one that is *true about the history*: every order in the table was a buy the agents argued for, so `Signal`.
+
+**Rules that only bite outside a test's imagination**
+- **Mutation testing earns its keep when it fails to kill a mutation.** Twice in PR 4 a mutation left the suite green, and both times the tests were wrong rather than the mutation harmless: the missing cases were "analysed today *and* the price unchanged" and "a cycle that never reached an answer". Both are the *commonest* states the rule meets in production, and both were invisible because every existing test happened to vary two things at once.
+- **A pure function's two conditions need a test where both are true.** Ordering two guards is itself a rule, and it is unobservable from cases where only one of them fires. If swapping two `if`s changes nothing, there is a missing test rather than a redundant check.
+- **A new table with no foreign key escapes `TRUNCATE ... CASCADE`.** The test fixture cleared the portfolio graph and `shortlists` sat outside it, so rows leaked between tests and three assertions failed for reasons that had nothing to do with what they were testing. Name every table in the reset, or make the reset enumerate the schema.
+- **Read the implementation before trusting a contract's prose.** `contracts/screen.schema.json` said `rejected` holds every instrument that was looked at and left out; the service truncates to the shortlist size, so a name that ranked 15th of 31 is in neither array. The schema validated everything either way - prose is not a constraint, and only reading `screening.py` showed the difference.
+- **"Daily data" is not the same as "a daily fact sheet".** The returns, the volatility and the turnover come from daily bars, but the price comes from the provider's live quote and one derived field is computed from it. A rule written on the roadmap's summary of the data would have been wrong in exactly the hours it mattered.
 
 **Widths, and the tests that never wrote anything wide**
 - **Widening a validation rule is not widening the column behind it.** The symbol pattern went from 10 characters to 16 for Swedish tickers, and six database columns across two schemas stayed at `varchar(10)`. The first real write would have been `22001: value too long for type character varying(10)` - and for the benchmark it would have been every night, in the sweep. Grep for every column that holds the value, not only the places that validate it.
