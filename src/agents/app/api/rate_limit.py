@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Annotated
 
 from fastapi import Depends, Header, Request
@@ -107,7 +107,7 @@ def _limit_dependency(
     endpoint: str,
     per_key_attr: str,
     global_attr: str,
-) -> Callable[..., None]:
+) -> Callable[..., Awaitable[None]]:
     async def dependency(
         request: Request,
         settings: Annotated[Settings, Depends(get_settings)],
