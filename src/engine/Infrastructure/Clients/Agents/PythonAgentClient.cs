@@ -5,6 +5,9 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Engine.Application.Contracts;
 using Engine.Application.Interfaces;
+using Engine.Hosting;
+using Engine.Hosting.Options;
+using Microsoft.Extensions.Options;
 using Polly.Timeout;
 
 public class PythonAgentClient : IAgentClient
@@ -20,9 +23,12 @@ public class PythonAgentClient : IAgentClient
 
     private readonly HttpClient _httpClient;
 
-    public PythonAgentClient(HttpClient httpClient)
+    private readonly AgentServiceOptions _options;
+
+    public PythonAgentClient(HttpClient httpClient, IOptions<AgentServiceOptions> options)
     {
         _httpClient = httpClient;
+        _options = options.Value;
     }
 
     /// <summary>
@@ -45,6 +51,7 @@ public class PythonAgentClient : IAgentClient
             // Set from the request rather than passed separately, so no call path can send a
             // body with one id and a header with another - or forget the header entirely.
             message.Headers.Add(CorrelationIdHeader, request.CorrelationId);
+            AddApiKey(message, AgentServiceOptions.ScopeSignalsWrite);
 
             var response = await _httpClient.SendAsync(message, cancellationToken);
 
@@ -97,6 +104,7 @@ public class PythonAgentClient : IAgentClient
             // The cycle's own id, so the line the agent service writes about this quote can
             // be found next to the line about the decision it priced.
             message.Headers.Add(CorrelationIdHeader, correlationId);
+            AddApiKey(message, AgentServiceOptions.ScopeMarketRead);
 
             var response = await _httpClient.SendAsync(message, cancellationToken);
 
@@ -140,6 +148,7 @@ public class PythonAgentClient : IAgentClient
         {
             using var message = new HttpRequestMessage(HttpMethod.Get, path);
             message.Headers.Add(CorrelationIdHeader, correlationId);
+            AddApiKey(message, AgentServiceOptions.ScopeMarketRead);
 
             var response = await _httpClient.SendAsync(message, cancellationToken);
 
@@ -183,6 +192,7 @@ public class PythonAgentClient : IAgentClient
             };
 
             message.Headers.Add(CorrelationIdHeader, correlationId);
+            AddApiKey(message, AgentServiceOptions.ScopeOutcomesWrite);
 
             var response = await _httpClient.SendAsync(message, cancellationToken);
 
@@ -203,6 +213,9 @@ public class PythonAgentClient : IAgentClient
                 $"The agent service did not answer for {report.Outcomes.Count} outcomes.", ex);
         }
     }
+
+    private void AddApiKey(HttpRequestMessage message, string scope) =>
+        message.Headers.Add(AgentClientExtensions.ApiKeyHeader, _options.ApiKeyFor(scope));
 
     private static string Describe(TradeSignalRequestDto request) =>
         request.Instrument is EquityInstrumentDto equity ? equity.Symbol : request.Instrument.GetType().Name;
