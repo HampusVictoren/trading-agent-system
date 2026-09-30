@@ -2,6 +2,8 @@ namespace Engine.Infrastructure.Clients.Agents;
 
 using System.Globalization;
 using System.Net.Http.Json;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Engine.Application.Contracts;
 using Engine.Application.Interfaces;
@@ -14,6 +16,8 @@ public class PythonAgentClient : IAgentClient
 {
     /// <summary>The agent service echoes this and puts it in every log line it writes.</summary>
     public const string CorrelationIdHeader = "X-Correlation-Id";
+
+    public const string OutcomesSignatureHeader = "X-Outcomes-Signature";
 
     private const string SignalsPath = "v1/signals";
 
@@ -188,13 +192,21 @@ public class PythonAgentClient : IAgentClient
     {
         try
         {
+            // Serialize once so the bytes we sign are exactly the bytes we send. A second
+            // serialization could reorder properties and make a valid signature fail.
+            var body = JsonSerializer.SerializeToUtf8Bytes(report, ContractSerialization.Options);
             using var message = new HttpRequestMessage(HttpMethod.Post, OutcomesPath)
             {
-                Content = JsonContent.Create(report, options: ContractSerialization.Options)
+                Content = new ByteArrayContent(body)
+            };
+            message.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json")
+            {
+                CharSet = "utf-8"
             };
 
             message.Headers.Add(CorrelationIdHeader, correlationId);
             AddApiKey(message, AgentServiceOptions.ScopeOutcomesWrite);
+            message.Headers.Add(OutcomesSignatureHeader, SignOutcomes(body));
 
             var response = await _httpClient.SendAsync(message, cancellationToken);
 
@@ -263,6 +275,14 @@ public class PythonAgentClient : IAgentClient
                 "The agent service answered a screen with something other than the agreed JSON.", ex);
         }
     }
+
+    private string SignOutcomes(byte[] body)
+    {
+        var key = Encoding.UTF8.GetBytes(_options.OutcomesHmacSecret);
+        var hash = HMACSHA256.HashData(key, body);
+        return "sha256=" + Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
 
     private void AddApiKey(HttpRequestMessage message, string scope) =>
         message.Headers.Add(AgentClientExtensions.ApiKeyHeader, _options.ApiKeyFor(scope));

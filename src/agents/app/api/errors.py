@@ -11,6 +11,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from app.api.outcomes_integrity import OutcomesIntegrityError
 from app.api.rate_limit import RateLimited
 from app.api.security import NotAuthenticated
 from app.application.errors import (
@@ -84,6 +85,7 @@ async def handle_unexpected(request: Request, exc: Exception) -> JSONResponse:
 def register_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(AnalysisError, handle_analysis_error)
     app.add_exception_handler(NotAuthenticated, handle_not_authenticated)
+    app.add_exception_handler(OutcomesIntegrityError, handle_not_authenticated)
     app.add_exception_handler(RateLimited, handle_rate_limited)
     app.add_exception_handler(RequestValidationError, handle_invalid_request)
     app.add_exception_handler(Exception, handle_unexpected)

@@ -55,6 +55,7 @@ public class PythonAgentClientTests
         BaseUrl = "http://127.0.0.1:8000",
         RequestTimeoutSeconds = 30,
         ApiKey = "a-test-key",
+        OutcomesHmacSecret = "a-test-hmac-secret",
     };
 
     private static PythonAgentClient ClientWith(HttpMessageHandler handler) =>
@@ -406,6 +407,7 @@ public class PythonAgentClientTests
             BaseUrl = "http://127.0.0.1:8000",
             RequestTimeoutSeconds = 30,
             ApiKey = "legacy-full-access",
+            OutcomesHmacSecret = "a-test-hmac-secret",
             SignalsApiKey = "signals-only-key",
             MarketApiKey = "market-only-key",
         };
@@ -428,6 +430,7 @@ public class PythonAgentClientTests
             BaseUrl = "http://127.0.0.1:8000",
             RequestTimeoutSeconds = 30,
             ApiKey = "legacy-full-access",
+            OutcomesHmacSecret = "a-test-hmac-secret",
             MarketApiKey = "market-only-key",
         };
         var client = new PythonAgentClient(
@@ -441,7 +444,7 @@ public class PythonAgentClientTests
     }
 
     [Fact]
-    public async Task A_screen_uses_the_screen_scope_key()
+public async Task A_screen_uses_the_screen_scope_key()
     {
         var recorder = new RecordingHandler(ValidScreen);
         var options = new AgentServiceOptions
@@ -449,6 +452,7 @@ public class PythonAgentClientTests
             BaseUrl = "http://127.0.0.1:8000",
             RequestTimeoutSeconds = 30,
             ApiKey = "legacy-full-access",
+            OutcomesHmacSecret = "a-test-hmac-secret",
             ScreenApiKey = "screen-only-key",
         };
         var client = new PythonAgentClient(
@@ -459,5 +463,34 @@ public class PythonAgentClientTests
 
         recorder.Seen!.Headers.GetValues(AgentClientExtensions.ApiKeyHeader)
             .ShouldBe(["screen-only-key"]);
+    }
+
+    [Fact]
+    public async Task Signs_outcomes_with_hmac_sha256()
+    {
+        var recorder = new RecordingHandler("{}");
+        var client = ClientWith(recorder);
+        var report = new OutcomeReportDto
+        {
+            Outcomes =
+            [
+                new MeasuredOutcomeDto
+                {
+                    CorrelationId = "c-1",
+                    HorizonUnit = "TradingDays",
+                    HorizonDays = 5,
+                    Status = "NotMeasurable",
+                    Reason = "no bars",
+                    BenchmarkSymbol = "^GSPC",
+                }
+            ]
+        };
+
+        await client.PostOutcomesAsync(report, "sweep-1", TestContext.Current.CancellationToken);
+
+        var signature = recorder.Seen!.Headers.GetValues(PythonAgentClient.OutcomesSignatureHeader).Single();
+        signature.ShouldStartWith("sha256=");
+        signature.Length.ShouldBe("sha256=".Length + 64);
+        recorder.Seen.Headers.GetValues(AgentClientExtensions.ApiKeyHeader).ShouldBe(["a-test-key"]);
     }
 }

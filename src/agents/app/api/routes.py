@@ -5,6 +5,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query
 
+from app.api.outcomes_integrity import require_outcomes_hmac
 from app.api.rate_limit import require_screen_rate_limit, require_signals_rate_limit
 from app.api.security import (
     require_market_read,
@@ -156,7 +157,13 @@ async def get_history(
     )
 
 
-@router.post("/v1/outcomes", dependencies=[Depends(require_outcomes_write)])
+@router.post(
+    "/v1/outcomes",
+    dependencies=[
+        Depends(require_outcomes_write),
+        Depends(require_outcomes_hmac),
+    ],
+)
 async def record_outcomes(
     report: OutcomeReport,
     resources: Annotated[Resources, Depends(get_resources)],

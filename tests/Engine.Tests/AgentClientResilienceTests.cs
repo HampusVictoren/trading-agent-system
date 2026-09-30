@@ -71,6 +71,7 @@ public class AgentClientResilienceTests
                 ["AgentService:BaseUrl"] = "http://127.0.0.1:8000",
                 ["AgentService:RequestTimeoutSeconds"] = "30",
                 ["AgentService:ApiKey"] = "a-test-key",
+                ["AgentService:OutcomesHmacSecret"] = "a-test-hmac-secret",
                 ["RiskPolicy:MaxPositionPercentage"] = "0.05",
                 ["Trading:Tickers:0"] = "AAPL",
                 ["Trading:CycleIntervalSeconds"] = "15",

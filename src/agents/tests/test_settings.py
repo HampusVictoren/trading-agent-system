@@ -14,6 +14,7 @@ from app.settings import LlmSettings, ModelSpec, Provider, Settings, get_setting
 ENVIRONMENT = {
     "TAS_DATABASE_URL": "postgresql://agent_svc:placeholder@127.0.0.1:5432/tradingdb",
     "TAS_AGENT_API_KEY": "placeholder-agent-key",
+    "TAS_OUTCOMES_HMAC_SECRET": "placeholder-outcomes-hmac",
     "TAS_EMBEDDINGS_BASE_URL": "http://127.0.0.1:11434/v1",
     "TAS_EMBEDDINGS_API_KEY": "placeholder-embeddings",
     "TAS_MARKET_DATA_TIMEOUT_S": "30",
@@ -33,6 +34,7 @@ ENVIRONMENT = {
 NAMED_IN_THE_ERROR = {
     "TAS_DATABASE_URL": "database_url",
     "TAS_AGENT_API_KEY": "agent_api_key",
+    "TAS_OUTCOMES_HMAC_SECRET": "outcomes_hmac_secret",
     "TAS_EMBEDDINGS_BASE_URL": "embeddings_base_url",
     "TAS_EMBEDDINGS_API_KEY": "embeddings_api_key",
     "TAS_MARKET_DATA_TIMEOUT_S": "market_data_timeout_s",

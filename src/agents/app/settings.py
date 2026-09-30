@@ -135,6 +135,12 @@ class Settings(BaseSettings):
     agent_api_key_outcomes: SecretStr | None = None
     agent_api_key_market: SecretStr | None = None
 
+    # Separate from the API key on purpose: a stolen key alone must not be enough to forge
+    # measurements into agent memory. The engine HMAC-SHA256-signs the raw POST body and
+    # sends the digest as X-Outcomes-Signature; the agent refuses unsigned or mismatched
+    # bodies. Generate with secrets.token_urlsafe(32).
+    outcomes_hmac_secret: SecretStr
+
     # Embeddings are a separate concern from the team's models: the model is pinned in
     # memory.py because changing it means changing the column width, so only the endpoint
     # and the key are configurable. Named for the job rather than for Ollama, so the name
