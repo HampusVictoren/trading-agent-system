@@ -165,6 +165,17 @@ class Settings(BaseSettings):
     # for local exploration only; create_app reads the same flag at process start.
     enable_docs: bool = False
 
+    # What uvicorn was asked to bind to, when known. The service cannot see the real
+    # listen address from inside FastAPI; this is an operator-declared hint used only for
+    # a startup warning. Prefer 127.0.0.1 for local paper trading. Leave as 127.0.0.1
+    # (default) when unsure; set TAS_BIND_HOST=0.0.0.0 deliberately for Docker/compose
+    # and accept the warning in non-development environments.
+    bind_host: str = "127.0.0.1"
+
+    # "development" skips the non-loopback bind warning so intentional docker setups are
+    # not noisy. Set TAS_ENVIRONMENT=production (or staging) to surface the warning.
+    environment: str = "development"
+
     # Rate limits for the costly endpoints. Defaults are budgets, not guesses about
     # traffic: a paper-trading cycle asking for one signal a minute sits well under them,
     # and a stolen key that tries to drain the LLM still hits a wall. Units are requests
