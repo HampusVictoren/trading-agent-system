@@ -1,4 +1,5 @@
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
@@ -168,15 +169,39 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             yield
 
 
-app = FastAPI(
-    title="Trading Agent Service",
-    version="1.0.0",
-    description="Python AI Agent Service for Financial Analysis",
-    lifespan=lifespan,
-)
-app.add_middleware(CorrelationIdMiddleware)
-register_error_handlers(app)
-app.include_router(router)
+def _env_flag(name: str) -> bool:
+    """True only for an explicit opt-in. Missing or anything else is False."""
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def create_app(*, enable_docs: bool | None = None) -> FastAPI:
+    """Builds the service. Docs stay off unless explicitly enabled for local exploration.
+
+    FastAPI registers /docs, /redoc and /openapi.json on the app itself, outside the
+    authenticated router. Leaving them on in any shared environment hands the full
+    contract to whoever can reach the port, so the default is off. Set TAS_ENABLE_DOCS
+    (or pass enable_docs=True) only on a developer's own loopback.
+    """
+    if enable_docs is None:
+        enable_docs = _env_flag("TAS_ENABLE_DOCS")
+
+    application = FastAPI(
+        title="Trading Agent Service",
+        version="1.0.0",
+        description="Python AI Agent Service for Financial Analysis",
+        lifespan=lifespan,
+        docs_url="/docs" if enable_docs else None,
+        redoc_url="/redoc" if enable_docs else None,
+        openapi_url="/openapi.json" if enable_docs else None,
+    )
+    application.add_middleware(CorrelationIdMiddleware)
+    register_error_handlers(application)
+    application.include_router(router)
+    return application
+
+
+# Built once for uvicorn `app.main:app`. Docs follow TAS_ENABLE_DOCS at process start.
+app = create_app()
 
 
 @app.get("/health")
