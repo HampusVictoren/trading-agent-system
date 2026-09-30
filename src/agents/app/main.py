@@ -108,6 +108,28 @@ def _build_pipeline(
     return SignalPipeline(teams, market, journal, memory)
 
 
+
+def _warn_if_bound_broadly(settings: Settings) -> None:
+    """Operator-declared bind hint: warn when non-loopback outside development.
+
+    Uvicorn owns the real listen socket; this cannot force 127.0.0.1 without breaking
+    intentional Docker publishes. The README states the policy; the warning catches a
+    mistaken TAS_BIND_HOST in staging/production.
+    """
+    host = settings.bind_host.strip().lower()
+    loopback = host in {"127.0.0.1", "localhost", "::1"}
+    if loopback or settings.environment.strip().lower() in {"development", "dev", "test"}:
+        return
+    logger.warning(
+        "TAS_BIND_HOST=%s with TAS_ENVIRONMENT=%s: the agent API should not be reachable "
+        "beyond loopback without a reverse proxy and network policy. Prefer 127.0.0.1 "
+        "for local paper trading; set environment=development only when the broad bind "
+        "is intentional (e.g. Docker on a private network).",
+        settings.bind_host,
+        settings.environment,
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Builds every shared resource once, on the loop that will use it, and closes it again.
@@ -117,6 +139,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """
     configure_logging()
     settings = get_settings()
+    _warn_if_bound_broadly(settings)
 
     # trust_env=False forces the client to ignore any system proxy and connect straight to
     # 127.0.0.1. openai 3.x types http_client as httpx2.AsyncClient, which is what this is.
