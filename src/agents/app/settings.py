@@ -145,6 +145,11 @@ class Settings(BaseSettings):
     screen_timeout_s: Annotated[float, Field(gt=0)]
     screen_ttl_s: Annotated[float, Field(ge=0)]
 
+    # OpenAPI/Swagger surfaces. Default False: they sit outside the authenticated router,
+    # so leaving them on is a free map of the attack surface. Opt in with TAS_ENABLE_DOCS
+    # for local exploration only; create_app reads the same flag at process start.
+    enable_docs: bool = False
+
     llm: LlmSettings
 
 
