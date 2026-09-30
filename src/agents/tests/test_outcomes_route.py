@@ -22,7 +22,6 @@ from app.main import app
 from app.settings import get_settings
 from tests.api_support import API_KEY, OUTCOMES_HMAC_SECRET, api_settings
 
-
 CONTRACTS = Path(__file__).resolve().parents[3] / "contracts"
 EXAMPLES = CONTRACTS / "examples"
 REPORT_EXAMPLES = ["outcomes-measured.json", "outcomes-not-measurable.json"]

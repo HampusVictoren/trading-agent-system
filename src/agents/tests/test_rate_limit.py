@@ -85,9 +85,7 @@ def test_signals_return_429_after_the_global_budget():
     )
 
     assert client.post("/v1/signals", json=A_REQUEST).status_code == 200
-    other = client.post(
-        "/v1/signals", json=A_REQUEST, headers={API_KEY_HEADER: API_KEY}
-    )
+    other = client.post("/v1/signals", json=A_REQUEST, headers={API_KEY_HEADER: API_KEY})
     # Second call with same key still counts against global.
     assert other.status_code == 200
     limited = client.post("/v1/signals", json=A_REQUEST)

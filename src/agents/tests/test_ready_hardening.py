@@ -1,4 +1,4 @@
-""" /ready stays open but does not advertise dependency detail by default."""
+"""/ready stays open but does not advertise dependency detail by default."""
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock

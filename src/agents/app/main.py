@@ -108,7 +108,6 @@ def _build_pipeline(
     return SignalPipeline(teams, market, journal, memory)
 
 
-
 def _warn_if_bound_broadly(settings: Settings) -> None:
     """Operator-declared bind hint: warn when non-loopback outside development.
 
