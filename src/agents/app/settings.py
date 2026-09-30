@@ -122,9 +122,18 @@ class Settings(BaseSettings):
     # a repr, a log line or an exception message that happens to include the settings.
     database_url: SecretStr
 
-    # What a caller has to present to start an analysis. Without it the machine runs an
-    # unauthenticated endpoint that spends LLM time for anyone who can reach the port.
+    # Legacy full-access key. Still required so existing deployments keep working; it
+    # grants every scope. Prefer the scoped keys below once both sides have rotated.
+    # Deprecated for new deployments - see SECURITY.md and .env.example.
     agent_api_key: SecretStr
+
+    # Optional single-scope keys. When set, each grants only that scope. A request
+    # presenting one of these cannot reach an endpoint outside its scope even though
+    # the legacy key still can. Generate each with secrets.token_urlsafe(32).
+    agent_api_key_signals: SecretStr | None = None
+    agent_api_key_screen: SecretStr | None = None
+    agent_api_key_outcomes: SecretStr | None = None
+    agent_api_key_market: SecretStr | None = None
 
     # Embeddings are a separate concern from the team's models: the model is pinned in
     # memory.py because changing it means changing the column width, so only the endpoint

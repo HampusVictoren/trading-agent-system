@@ -4,6 +4,9 @@ using Engine.Application.Contracts;
 using Engine.Application.Interfaces;
 using Engine.Domain.ValueObjects;
 using Engine.Infrastructure.Clients.Agents;
+using Engine.Hosting;
+using Engine.Hosting.Options;
+using Microsoft.Extensions.Options;
 using Polly.Timeout;
 using Shouldly;
 
@@ -47,8 +50,17 @@ public class PythonAgentClientTests
             => Task.FromResult(_respond());
     }
 
+    private static AgentServiceOptions TestOptions { get; } = new()
+    {
+        BaseUrl = "http://127.0.0.1:8000",
+        RequestTimeoutSeconds = 30,
+        ApiKey = "a-test-key",
+    };
+
     private static PythonAgentClient ClientWith(HttpMessageHandler handler) =>
-        new(new HttpClient(handler) { BaseAddress = new Uri("http://127.0.0.1:8000") });
+        new(
+            new HttpClient(handler) { BaseAddress = new Uri("http://127.0.0.1:8000") },
+            Options.Create(TestOptions));
 
     [Fact]
     public async Task Translates_an_answer_that_is_missing_a_contract_field()
@@ -143,7 +155,8 @@ public class PythonAgentClientTests
         // followed across both services. Set from the request, so the two cannot disagree.
         var recorder = new RecordingHandler();
         var client = new PythonAgentClient(
-            new HttpClient(recorder) { BaseAddress = new Uri("http://127.0.0.1:8000") });
+            new HttpClient(recorder) { BaseAddress = new Uri("http://127.0.0.1:8000") },
+            Options.Create(TestOptions));
 
         await client.GetSignalAsync(ARequest, TestContext.Current.CancellationToken);
 
@@ -160,7 +173,8 @@ public class PythonAgentClientTests
         // is interpolated into the path, which is what closed half of finding B.
         var recorder = new RecordingHandler();
         var client = new PythonAgentClient(
-            new HttpClient(recorder) { BaseAddress = new Uri("http://127.0.0.1:8000") });
+            new HttpClient(recorder) { BaseAddress = new Uri("http://127.0.0.1:8000") },
+            Options.Create(TestOptions));
 
         await client.GetSignalAsync(ARequest, TestContext.Current.CancellationToken);
 
@@ -355,8 +369,8 @@ public class PythonAgentClientTests
 
         recorder.Seen!.RequestUri!.AbsolutePath.ShouldBe("/v1/screen");
         recorder.Seen.Headers.GetValues(PythonAgentClient.CorrelationIdHeader).ShouldBe(["cycle-9"]);
-        recorder.Body.ShouldContain("\"symbol\":\"TINY\"");
-        recorder.Body.ShouldContain("\"min_dollar_volume\":5000000");
+        recorder.Body.ShouldContain(""symbol":"TINY"");
+        recorder.Body.ShouldContain(""min_dollar_volume":5000000");
     }
 
     [Fact]
@@ -381,5 +395,69 @@ public class PythonAgentClientTests
 
         await Should.ThrowAsync<AgentResponseInvalidException>(
             () => client.GetScreenAsync(AScreenRequest, TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task A_scoped_signals_key_is_preferred_over_the_legacy_key()
+    {
+        var recorder = new RecordingHandler();
+        var options = new AgentServiceOptions
+        {
+            BaseUrl = "http://127.0.0.1:8000",
+            RequestTimeoutSeconds = 30,
+            ApiKey = "legacy-full-access",
+            SignalsApiKey = "signals-only-key",
+            MarketApiKey = "market-only-key",
+        };
+        var client = new PythonAgentClient(
+            new HttpClient(recorder) { BaseAddress = new Uri("http://127.0.0.1:8000") },
+            Options.Create(options));
+
+        await client.GetSignalAsync(ARequest, TestContext.Current.CancellationToken);
+
+        recorder.Seen!.Headers.GetValues(AgentClientExtensions.ApiKeyHeader)
+            .ShouldBe(["signals-only-key"]);
+    }
+
+    [Fact]
+    public async Task A_quote_uses_the_market_scope_key()
+    {
+        var recorder = new RecordingHandler(ValidQuote);
+        var options = new AgentServiceOptions
+        {
+            BaseUrl = "http://127.0.0.1:8000",
+            RequestTimeoutSeconds = 30,
+            ApiKey = "legacy-full-access",
+            MarketApiKey = "market-only-key",
+        };
+        var client = new PythonAgentClient(
+            new HttpClient(recorder) { BaseAddress = new Uri("http://127.0.0.1:8000") },
+            Options.Create(options));
+
+        await client.GetQuoteAsync("MSFT", "cycle-1", TestContext.Current.CancellationToken);
+
+        recorder.Seen!.Headers.GetValues(AgentClientExtensions.ApiKeyHeader)
+            .ShouldBe(["market-only-key"]);
+    }
+
+    [Fact]
+    public async Task A_screen_uses_the_screen_scope_key()
+    {
+        var recorder = new RecordingHandler(ValidScreen);
+        var options = new AgentServiceOptions
+        {
+            BaseUrl = "http://127.0.0.1:8000",
+            RequestTimeoutSeconds = 30,
+            ApiKey = "legacy-full-access",
+            ScreenApiKey = "screen-only-key",
+        };
+        var client = new PythonAgentClient(
+            new HttpClient(recorder) { BaseAddress = new Uri("http://127.0.0.1:8000") },
+            Options.Create(options));
+
+        await client.GetScreenAsync(AScreenRequest, TestContext.Current.CancellationToken);
+
+        recorder.Seen!.Headers.GetValues(AgentClientExtensions.ApiKeyHeader)
+            .ShouldBe(["screen-only-key"]);
     }
 }
