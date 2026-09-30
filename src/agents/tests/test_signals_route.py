@@ -10,7 +10,6 @@ from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
-from pydantic import SecretStr
 
 from app.api.security import HEADER as API_KEY_HEADER
 from app.application.errors import (
@@ -23,8 +22,8 @@ from app.dependencies import get_resources
 from app.domain.signals import EquityInstrument, RunInfo, Stance, TradeSignal, TradeView
 from app.main import app
 from app.settings import get_settings
+from tests.api_support import API_KEY, api_settings
 
-API_KEY = "a-test-key-of-some-length"
 
 A_SIGNAL = TradeSignal.from_view(
     TradeView(
@@ -63,9 +62,7 @@ def client():
                 raise error
             return result
 
-        app.dependency_overrides[get_settings] = lambda: SimpleNamespace(
-            agent_api_key=SecretStr(API_KEY)
-        )
+        app.dependency_overrides[get_settings] = lambda: api_settings()
         app.dependency_overrides[get_resources] = lambda: SimpleNamespace(
             pipeline=SimpleNamespace(run=run),
             models=None,
