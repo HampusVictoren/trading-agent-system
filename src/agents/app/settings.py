@@ -150,6 +150,15 @@ class Settings(BaseSettings):
     # for local exploration only; create_app reads the same flag at process start.
     enable_docs: bool = False
 
+    # Rate limits for the costly endpoints. Defaults are budgets, not guesses about
+    # traffic: a paper-trading cycle asking for one signal a minute sits well under them,
+    # and a stolen key that tries to drain the LLM still hits a wall. Units are requests
+    # per rolling minute; see app/api/rate_limit.py.
+    rate_limit_signals_per_minute: Annotated[int, Field(ge=1)] = 10
+    rate_limit_signals_global_per_minute: Annotated[int, Field(ge=1)] = 30
+    rate_limit_screen_per_minute: Annotated[int, Field(ge=1)] = 30
+    rate_limit_screen_global_per_minute: Annotated[int, Field(ge=1)] = 60
+
     llm: LlmSettings
 
 

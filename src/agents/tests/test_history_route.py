@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
-from pydantic import SecretStr, ValidationError
+from pydantic import ValidationError
 
 from app.api.security import HEADER as API_KEY_HEADER
 from app.application.errors import InstrumentNotFound, MarketDataUnavailable
@@ -22,8 +22,8 @@ from app.domain.quotes import InstrumentHistory
 from app.domain.signals import MAX_SYMBOL_LENGTH, EquityInstrument
 from app.main import app
 from app.settings import get_settings
+from tests.api_support import API_KEY, api_settings
 
-API_KEY = "a-test-key-of-some-length"
 
 CONTRACTS = Path(__file__).resolve().parents[3] / "contracts"
 
@@ -56,9 +56,7 @@ def history():
     market = AsyncMock()
     market.snapshot.return_value = A_SNAPSHOT
 
-    app.dependency_overrides[get_settings] = lambda: SimpleNamespace(
-        agent_api_key=SecretStr(API_KEY)
-    )
+    app.dependency_overrides[get_settings] = lambda: api_settings()
     app.dependency_overrides[get_resources] = lambda: SimpleNamespace(market=market)
 
     yield TestClient(app, raise_server_exceptions=False), market

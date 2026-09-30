@@ -5,6 +5,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query
 
+from app.api.rate_limit import require_screen_rate_limit, require_signals_rate_limit
 from app.api.security import require_api_key
 from app.dependencies import Resources, get_resources
 from app.domain.outcomes import OutcomeReport
@@ -23,7 +24,11 @@ from app.domain.signals import (
 router = APIRouter(dependencies=[Depends(require_api_key)])
 
 
-@router.post("/v1/signals", response_model=TradeSignal)
+@router.post(
+    "/v1/signals",
+    response_model=TradeSignal,
+    dependencies=[Depends(require_signals_rate_limit)],
+)
 async def create_signal(
     request: SignalRequest,
     resources: Annotated[Resources, Depends(get_resources)],
@@ -42,7 +47,11 @@ async def create_signal(
     return await resources.pipeline.run(request)
 
 
-@router.post("/v1/screen", response_model=ScreenResult)
+@router.post(
+    "/v1/screen",
+    response_model=ScreenResult,
+    dependencies=[Depends(require_screen_rate_limit)],
+)
 async def screen(
     request: ScreenRequest,
     resources: Annotated[Resources, Depends(get_resources)],

@@ -11,6 +11,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from app.api.rate_limit import RateLimited
 from app.api.security import NotAuthenticated
 from app.application.errors import (
     AgentChainFailed,
@@ -58,6 +59,11 @@ async def handle_analysis_error(request: Request, exc: Exception) -> JSONRespons
     return JSONResponse(status_code=status_code, content=_body(exc.error_code))
 
 
+
+async def handle_rate_limited(request: Request, exc: Exception) -> JSONResponse:
+    logger.warning("Rejected a rate-limited request to %s", request.url.path)
+    return JSONResponse(status_code=429, content=_body("rate_limited"))
+
 async def handle_not_authenticated(request: Request, exc: Exception) -> JSONResponse:
     # Deliberately says nothing about whether the key was missing, wrong or expired.
     logger.warning("Rejected an unauthenticated request to %s", request.url.path)
@@ -78,5 +84,6 @@ async def handle_unexpected(request: Request, exc: Exception) -> JSONResponse:
 def register_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(AnalysisError, handle_analysis_error)
     app.add_exception_handler(NotAuthenticated, handle_not_authenticated)
+    app.add_exception_handler(RateLimited, handle_rate_limited)
     app.add_exception_handler(RequestValidationError, handle_invalid_request)
     app.add_exception_handler(Exception, handle_unexpected)
