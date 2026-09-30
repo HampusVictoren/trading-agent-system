@@ -176,6 +176,11 @@ class Settings(BaseSettings):
     # not noisy. Set TAS_ENVIRONMENT=production (or staging) to surface the warning.
     environment: str = "development"
 
+    # When False (default), /ready returns only {"status": "ready"|"not ready"}.
+    # Dependency names (database/llm) stay in server logs. Set TAS_READY_DETAIL=true
+    # for local debugging when a load balancer is not scraping the probe.
+    ready_detail: bool = False
+
     # Rate limits for the costly endpoints. Defaults are budgets, not guesses about
     # traffic: a paper-trading cycle asking for one signal a minute sits well under them,
     # and a stolen key that tries to drain the LLM still hits a wall. Units are requests

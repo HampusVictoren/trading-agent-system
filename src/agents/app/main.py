@@ -220,23 +220,27 @@ def create_app(*, enable_docs: bool | None = None) -> FastAPI:
     application.add_middleware(CorrelationIdMiddleware)
     register_error_handlers(application)
     application.include_router(router)
+    application.add_api_route("/health", health_check, methods=["GET"])
+    application.add_api_route("/ready", readiness_check, methods=["GET"])
     return application
 
 
-# Built once for uvicorn `app.main:app`. Docs follow TAS_ENABLE_DOCS at process start.
-app = create_app()
-
-
-@app.get("/health")
 def health_check() -> dict[str, str]:
     """Liveness: the process is up. It deliberately checks nothing else, so that a
     restarter does not kill a service whose dependencies are merely slow."""
     return {"status": "alive", "service": "agents"}
 
 
-@app.get("/ready")
-async def readiness_check(resources: Annotated[Resources, Depends(get_resources)]) -> JSONResponse:
-    """Readiness: the service can actually do its job. 503 until both dependencies answer."""
+async def readiness_check(
+    resources: Annotated[Resources, Depends(get_resources)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> JSONResponse:
+    """Readiness: the service can actually do its job. 503 until both dependencies answer.
+
+    By default the public body is only the status string. Dependency detail (database/llm)
+    is useful for operators but helps reconnaissance; it stays in logs and is returned in
+    the body only when TAS_READY_DETAIL=true. /health remains a bare liveness probe.
+    """
     checks: dict[str, str] = {}
 
     try:
@@ -262,7 +266,14 @@ async def readiness_check(resources: Annotated[Resources, Depends(get_resources)
     # "unchecked" does not block readiness: it means this service has no way to ask, not
     # that the answer was bad.
     ready = all(state in ("ok", "unchecked") for state in checks.values())
+    content: dict[str, object] = {"status": "ready" if ready else "not ready"}
+    if settings.ready_detail:
+        content["checks"] = checks
     return JSONResponse(
         status_code=200 if ready else 503,
-        content={"status": "ready" if ready else "not ready", "checks": checks},
+        content=content,
     )
+
+
+# Built once for uvicorn `app.main:app`. Docs follow TAS_ENABLE_DOCS at process start.
+app = create_app()
