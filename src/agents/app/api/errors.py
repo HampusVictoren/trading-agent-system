@@ -60,10 +60,10 @@ async def handle_analysis_error(request: Request, exc: Exception) -> JSONRespons
     return JSONResponse(status_code=status_code, content=_body(exc.error_code))
 
 
-
 async def handle_rate_limited(request: Request, exc: Exception) -> JSONResponse:
     logger.warning("Rejected a rate-limited request to %s", request.url.path)
     return JSONResponse(status_code=429, content=_body("rate_limited"))
+
 
 async def handle_not_authenticated(request: Request, exc: Exception) -> JSONResponse:
     # Deliberately says nothing about whether the key was missing, wrong or expired.

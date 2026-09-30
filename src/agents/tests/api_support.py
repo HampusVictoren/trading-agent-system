@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from pydantic import SecretStr
 
 API_KEY = "a-test-key-of-some-length"
-OUTCOMES_HMAC_SECRET = "a-test-outcomes-hmac-secret"
+OUTCOMES_HMAC_SECRET = "a-test-outcomes-hmac-secret"  # noqa: S105
 
 
 def api_settings(**overrides: object) -> SimpleNamespace:

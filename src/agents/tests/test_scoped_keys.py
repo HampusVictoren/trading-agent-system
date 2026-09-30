@@ -73,16 +73,12 @@ def _client():
 
 
 def test_a_signals_key_may_start_an_analysis():
-    response = _client().post(
-        "/v1/signals", json=A_REQUEST, headers={API_KEY_HEADER: SIGNALS_KEY}
-    )
+    response = _client().post("/v1/signals", json=A_REQUEST, headers={API_KEY_HEADER: SIGNALS_KEY})
     assert response.status_code == 200
 
 
 def test_a_market_key_cannot_start_an_analysis():
-    response = _client().post(
-        "/v1/signals", json=A_REQUEST, headers={API_KEY_HEADER: MARKET_KEY}
-    )
+    response = _client().post("/v1/signals", json=A_REQUEST, headers={API_KEY_HEADER: MARKET_KEY})
     assert response.status_code == 401
     assert response.json()["error_code"] == "unauthorized"
 
@@ -100,14 +96,10 @@ def test_a_signals_key_cannot_post_outcomes():
             }
         ]
     }
-    response = _client().post(
-        "/v1/outcomes", json=body, headers={API_KEY_HEADER: SIGNALS_KEY}
-    )
+    response = _client().post("/v1/outcomes", json=body, headers={API_KEY_HEADER: SIGNALS_KEY})
     assert response.status_code == 401
 
 
 def test_the_legacy_key_still_opens_every_door():
-    response = _client().post(
-        "/v1/signals", json=A_REQUEST, headers={API_KEY_HEADER: API_KEY}
-    )
+    response = _client().post("/v1/signals", json=A_REQUEST, headers={API_KEY_HEADER: API_KEY})
     assert response.status_code == 200

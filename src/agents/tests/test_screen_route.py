@@ -21,7 +21,6 @@ from app.main import app
 from app.settings import get_settings
 from tests.api_support import API_KEY, api_settings
 
-
 A_REQUEST = {
     "universe": [
         {"type": "equity", "symbol": "AAPL"},

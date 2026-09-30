@@ -24,7 +24,6 @@ from app.main import app
 from app.settings import get_settings
 from tests.api_support import API_KEY, api_settings
 
-
 CONTRACTS = Path(__file__).resolve().parents[3] / "contracts"
 
 # 21 September 2026 is a Monday; the 24th is missing as a holiday and the 26th and 27th are

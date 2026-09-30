@@ -24,7 +24,6 @@ from app.main import app
 from app.settings import get_settings
 from tests.api_support import API_KEY, api_settings
 
-
 CONTRACT = Path(__file__).resolve().parents[3] / "contracts" / "quote.schema.json"
 EXAMPLE = Path(__file__).resolve().parents[3] / "contracts" / "examples" / "quote.json"
 

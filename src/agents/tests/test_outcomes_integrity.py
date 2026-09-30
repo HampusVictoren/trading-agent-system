@@ -1,6 +1,5 @@
 """POST /v1/outcomes refuses unsigned or forged measurements."""
 
-import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
