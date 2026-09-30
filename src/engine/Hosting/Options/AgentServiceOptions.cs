@@ -45,6 +45,14 @@ public sealed class AgentServiceOptions
     /// <summary>Optional key that carries only <c>market:read</c>.</summary>
     public string? MarketApiKey { get; init; }
 
+    /// <summary>
+    /// Shared secret used to HMAC-SHA256 the body of <c>POST /v1/outcomes</c>. Separate
+    /// from the API key so a stolen key alone cannot forge measurements into agent memory.
+    /// Required; set via user secrets like ApiKey.
+    /// </summary>
+    [Required]
+    public string OutcomesHmacSecret { get; init; } = string.Empty;
+
     /// <summary>The key to send for a given scope: scoped override, else the legacy key.</summary>
     public string ApiKeyFor(string scope) => scope switch
     {

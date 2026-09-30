@@ -14,6 +14,7 @@ public class EngineOptionsTests
         ["AgentService:BaseUrl"] = "http://127.0.0.1:8000",
         ["AgentService:RequestTimeoutSeconds"] = "30",
         ["AgentService:ApiKey"] = "a-test-key",
+        ["AgentService:OutcomesHmacSecret"] = "a-test-hmac-secret",
         ["RiskPolicy:MaxPositionPercentage"] = "0.05",
         ["RiskPolicy:CashBufferPct"] = "0.10",
         ["RiskPolicy:MaxQuoteAgeSeconds"] = "300",
@@ -162,6 +163,7 @@ public class EngineOptionsTests
         // buys a cycle of 401s. It is a secret, so it comes from user secrets or the
         // environment rather than appsettings.json - which is exactly why it can be absent.
         Should.Throw<OptionsValidationException>(() => Resolve<AgentServiceOptions>(("AgentService:ApiKey", null)));
+        Should.Throw<OptionsValidationException>(() => Resolve<AgentServiceOptions>(("AgentService:OutcomesHmacSecret", null)));
     }
 
     [Theory]

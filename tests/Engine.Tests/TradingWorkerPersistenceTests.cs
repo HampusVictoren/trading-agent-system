@@ -82,6 +82,8 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
                 ["AgentService:BaseUrl"] = "http://127.0.0.1:8000",
                 ["AgentService:RequestTimeoutSeconds"] = "30",
                 ["AgentService:ApiKey"] = "a-test-key",
+        ["AgentService:OutcomesHmacSecret"] = "a-test-hmac-secret",
+                ["AgentService:OutcomesHmacSecret"] = "a-test-hmac-secret",
                 ["RiskPolicy:MaxPositionPercentage"] = "0.05",
                 ["RiskPolicy:CashBufferPct"] = "0.10",
                 ["RiskPolicy:MinHoldingPeriodDays"] = "3",
