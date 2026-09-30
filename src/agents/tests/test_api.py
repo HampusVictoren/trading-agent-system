@@ -161,8 +161,9 @@ class TestTheProbesStayOpen:
     def test_readiness_needs_no_key(self, client):
         # A load balancer has to be able to ask whether the service is up. Both
         # dependencies are stubbed as broken here, so a 503 proves the probe ran rather
-        # than being rejected.
+        # than being rejected. Detail is off by default (F-12).
         response = client().get("/ready", headers={API_KEY_HEADER: ""})
 
         assert response.status_code == 503
-        assert response.json()["checks"] == {"database": "unavailable", "llm": "unavailable"}
+        assert response.json() == {"status": "not ready"}
+        assert "checks" not in response.json()
