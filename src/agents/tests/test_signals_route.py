@@ -11,7 +11,9 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi.testclient import TestClient
 
+from app.api.routes import router
 from app.api.security import HEADER as API_KEY_HEADER
+from app.api.security import require_api_key
 from app.application.errors import (
     InstrumentNotSupported,
     LlmTimeout,
@@ -181,7 +183,9 @@ class TestTheEndpointIsClosed:
 
     def test_it_is_on_the_router_that_carries_the_dependency(self, client):
         # The key check sits on the router, so a route added later is closed by default.
-        # This asserts the new route actually landed on that router.
+        # Scopes on individual routes narrow which key may pass; they do not replace this.
+        assert any(dep.dependency is require_api_key for dep in router.dependencies)
+
         built = client()
         built.headers.pop(API_KEY_HEADER)
 

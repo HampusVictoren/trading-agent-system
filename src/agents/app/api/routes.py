@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, Path, Query
 from app.api.outcomes_integrity import require_outcomes_hmac
 from app.api.rate_limit import require_screen_rate_limit, require_signals_rate_limit
 from app.api.security import (
+    require_api_key,
     require_market_read,
     require_outcomes_write,
     require_screen_write,
@@ -25,10 +26,10 @@ from app.domain.signals import (
     TradeSignal,
 )
 
-# Auth sits on each route with the scope that route needs, so a market-only key cannot
-# spend LLM time and an outcomes key cannot trigger screening. /health and /ready are
-# defined outside this router and stay open.
-router = APIRouter()
+# require_api_key sits on the router so a route added later is closed by default.
+# Per-route scopes still narrow which key may call which door, so a market-only key
+# cannot spend LLM time. /health and /ready are defined outside this router and stay open.
+router = APIRouter(dependencies=[Depends(require_api_key)])
 
 
 @router.post(
