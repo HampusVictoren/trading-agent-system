@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import hmac
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Annotated
 
 from fastapi import Depends, Header
@@ -98,7 +98,7 @@ def scopes_for_key(settings: Settings, supplied: str | None) -> frozenset[str] |
     return matched
 
 
-def require_scope(scope: str) -> Callable[..., None]:
+def require_scope(scope: str) -> Callable[..., Awaitable[None]]:
     """Dependency factory: the presented key must carry `scope`."""
 
     async def dependency(
