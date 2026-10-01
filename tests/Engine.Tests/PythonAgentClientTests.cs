@@ -444,7 +444,7 @@ public class PythonAgentClientTests
     }
 
     [Fact]
-public async Task A_screen_uses_the_screen_scope_key()
+    public async Task A_screen_uses_the_screen_scope_key()
     {
         var recorder = new RecordingHandler(ValidScreen);
         var options = new AgentServiceOptions
