@@ -71,6 +71,7 @@ public class AgentClientResilienceTests
                 ["AgentService:BaseUrl"] = "http://127.0.0.1:8000",
                 ["AgentService:RequestTimeoutSeconds"] = "30",
                 ["AgentService:ApiKey"] = "a-test-key",
+                ["AgentService:OutcomesHmacSecret"] = "a-test-hmac-secret",
                 ["RiskPolicy:MaxPositionPercentage"] = "0.05",
                 ["Trading:Tickers:0"] = "AAPL",
                 ["Trading:CycleIntervalSeconds"] = "15",
@@ -116,7 +117,7 @@ public class AgentClientResilienceTests
     [Fact]
     public async Task Every_call_carries_the_api_key()
     {
-        // Set on the client rather than per request, so no code path can forget it.
+        // Set per request from AgentServiceOptions, so each endpoint can carry its scope.
         var handler = new CountingHandler(HttpStatusCode.OK);
         var (client, provider) = Build(handler);
         using var _ = provider;

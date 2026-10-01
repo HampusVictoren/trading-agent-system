@@ -10,7 +10,6 @@ from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
-from pydantic import SecretStr
 
 from app.api.security import HEADER as API_KEY_HEADER
 from app.application.errors import LlmFailed, LlmTimeout
@@ -19,12 +18,12 @@ from app.domain.signals import EquityInstrument, RunInfo, Stance, TradeSignal, T
 from app.main import app
 from app.observability.correlation import HEADER
 from app.settings import get_settings
+from tests.api_support import API_KEY, api_settings
 
 # Stands for anything an exception message might carry that a caller has no business
 # seeing: hostnames, roles, ports, query fragments.
 INTERNAL_DETAIL = "connect failed for agent_svc at 127.0.0.1:5432"
 
-API_KEY = "a-test-key-of-some-length"
 
 A_SIGNAL = TradeSignal.from_view(
     TradeView(
@@ -61,9 +60,7 @@ def client():
                 raise error
             return A_SIGNAL
 
-        app.dependency_overrides[get_settings] = lambda: SimpleNamespace(
-            agent_api_key=SecretStr(API_KEY)
-        )
+        app.dependency_overrides[get_settings] = lambda: api_settings()
         app.dependency_overrides[get_resources] = lambda: SimpleNamespace(
             pipeline=SimpleNamespace(run=run),
             models=None,
@@ -164,8 +161,9 @@ class TestTheProbesStayOpen:
     def test_readiness_needs_no_key(self, client):
         # A load balancer has to be able to ask whether the service is up. Both
         # dependencies are stubbed as broken here, so a 503 proves the probe ran rather
-        # than being rejected.
+        # than being rejected. Detail is off by default (F-12).
         response = client().get("/ready", headers={API_KEY_HEADER: ""})
 
         assert response.status_code == 503
-        assert response.json()["checks"] == {"database": "unavailable", "llm": "unavailable"}
+        assert response.json() == {"status": "not ready"}
+        assert "checks" not in response.json()

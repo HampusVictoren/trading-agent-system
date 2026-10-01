@@ -10,9 +10,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
-from pydantic import SecretStr
 
+from app.api.routes import router
 from app.api.security import HEADER as API_KEY_HEADER
+from app.api.security import require_api_key
 from app.application.errors import (
     InstrumentNotSupported,
     LlmTimeout,
@@ -23,8 +24,7 @@ from app.dependencies import get_resources
 from app.domain.signals import EquityInstrument, RunInfo, Stance, TradeSignal, TradeView
 from app.main import app
 from app.settings import get_settings
-
-API_KEY = "a-test-key-of-some-length"
+from tests.api_support import API_KEY, api_settings
 
 A_SIGNAL = TradeSignal.from_view(
     TradeView(
@@ -63,9 +63,7 @@ def client():
                 raise error
             return result
 
-        app.dependency_overrides[get_settings] = lambda: SimpleNamespace(
-            agent_api_key=SecretStr(API_KEY)
-        )
+        app.dependency_overrides[get_settings] = lambda: api_settings()
         app.dependency_overrides[get_resources] = lambda: SimpleNamespace(
             pipeline=SimpleNamespace(run=run),
             models=None,
@@ -185,7 +183,9 @@ class TestTheEndpointIsClosed:
 
     def test_it_is_on_the_router_that_carries_the_dependency(self, client):
         # The key check sits on the router, so a route added later is closed by default.
-        # This asserts the new route actually landed on that router.
+        # Scopes on individual routes narrow which key may pass; they do not replace this.
+        assert any(dep.dependency is require_api_key for dep in router.dependencies)
+
         built = client()
         built.headers.pop(API_KEY_HEADER)
 

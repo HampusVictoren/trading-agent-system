@@ -12,15 +12,15 @@ from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
-from pydantic import SecretStr, ValidationError
+from pydantic import ValidationError
 
+from app.api.outcomes_integrity import SIGNATURE_HEADER, sign_outcomes_body
 from app.api.security import HEADER as API_KEY_HEADER
 from app.dependencies import get_resources
 from app.domain.outcomes import MAX_OUTCOMES_PER_REQUEST, HorizonUnit, OutcomeReport, OutcomeStatus
 from app.main import app
 from app.settings import get_settings
-
-API_KEY = "a-test-key-of-some-length"
+from tests.api_support import API_KEY, OUTCOMES_HMAC_SECRET, api_settings
 
 CONTRACTS = Path(__file__).resolve().parents[3] / "contracts"
 EXAMPLES = CONTRACTS / "examples"
@@ -40,9 +40,7 @@ def outcomes():
     """
     store = AsyncMock()
 
-    app.dependency_overrides[get_settings] = lambda: SimpleNamespace(
-        agent_api_key=SecretStr(API_KEY)
-    )
+    app.dependency_overrides[get_settings] = lambda: api_settings()
     app.dependency_overrides[get_resources] = lambda: SimpleNamespace(outcomes=store)
 
     yield TestClient(app, raise_server_exceptions=False), store
@@ -50,9 +48,30 @@ def outcomes():
     app.dependency_overrides.clear()
 
 
-def post(client: TestClient, body: dict, key: str | None = API_KEY):
-    headers = {} if key is None else {API_KEY_HEADER: key}
-    return client.post("/v1/outcomes", json=body, headers=headers)
+def post(
+    client: TestClient,
+    body: dict,
+    key: str | None = API_KEY,
+    *,
+    sign: bool = True,
+    signature: str | None = None,
+):
+    import json as _json
+
+    raw = _json.dumps(body).encode()
+    headers: dict[str, str] = {}
+    if key is not None:
+        headers[API_KEY_HEADER] = key
+    if signature is not None:
+        headers[SIGNATURE_HEADER] = signature
+    elif sign:
+        headers[SIGNATURE_HEADER] = sign_outcomes_body(OUTCOMES_HMAC_SECRET, raw)
+    # Send the exact bytes we signed so the verifier sees the same body.
+    return client.post(
+        "/v1/outcomes",
+        content=raw,
+        headers={**headers, "Content-Type": "application/json"},
+    )
 
 
 @pytest.mark.parametrize("name", REPORT_EXAMPLES)
