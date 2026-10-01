@@ -122,7 +122,14 @@ public sealed class SelectShortlistUseCase
                 return null;
             }
 
-            return ScreenMapper.ToDomain(dto);
+            var asked = request.Universe
+                .OfType<EquityInstrumentDto>()
+                .Select(equity => Ticker.TryCreate(equity.Symbol, out var ticker) ? ticker : null)
+                .Where(ticker => ticker is not null)
+                .Cast<Ticker>()
+                .ToHashSet();
+
+            return ScreenMapper.ToDomain(dto, asked, request.Limit);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

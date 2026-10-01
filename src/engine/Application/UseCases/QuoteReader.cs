@@ -102,7 +102,7 @@ public sealed class QuoteReader
         try
         {
             var dto = await _agentClient.GetQuoteAsync(ticker.Value, correlationId, cancellationToken);
-            return dto is null ? null : QuoteMapper.ToDomain(dto);
+            return dto is null ? null : QuoteMapper.ToDomain(dto, ticker);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

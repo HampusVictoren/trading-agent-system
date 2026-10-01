@@ -1,6 +1,8 @@
 using System.Text.Json;
 using Engine.Application.Contracts;
 using Engine.Application.Interfaces;
+using Engine.Domain.Screening;
+using Engine.Domain.ValueObjects;
 using Shouldly;
 
 namespace Engine.Tests.Application.Contracts;
@@ -25,6 +27,27 @@ public class ScreenContractTests
     private static ScreenResultDto? Parse(string json) =>
         JsonSerializer.Deserialize<ScreenResultDto>(json, ContractSerialization.Options);
 
+    private static readonly IReadOnlySet<Ticker> ExampleUniverse = Universe(
+        "NVDA", "AAPL", "MSFT", "TINY");
+
+    private static IReadOnlySet<Ticker> Universe(params string[] symbols)
+    {
+        var set = new HashSet<Ticker>();
+        foreach (var symbol in symbols)
+        {
+            if (!Ticker.TryCreate(symbol, out var ticker))
+                throw new InvalidOperationException($"test setup: '{symbol}' is not a ticker");
+            set.Add(ticker);
+        }
+        return set;
+    }
+
+    private static Screen Map(
+        ScreenResultDto dto,
+        IReadOnlySet<Ticker>? universe = null,
+        int limit = 100) =>
+        ScreenMapper.ToDomain(dto, universe ?? ExampleUniverse, limit);
+
     private static string AScreen(string candidates = "", string rejected = "") =>
         $$"""
           {"candidates":[{{candidates}}],"rejected":[{{rejected}}],
@@ -46,7 +69,7 @@ public class ScreenContractTests
     [Fact]
     public void The_checked_in_result_example_reads_into_the_engines_types()
     {
-        var screen = ScreenMapper.ToDomain(Parse(Example("screen-result.json"))!);
+        var screen = Map(Parse(Example("screen-result.json"))!);
 
         screen.Candidates.Select(candidate => candidate.Ticker.Value).ShouldBe(["NVDA", "AAPL"]);
         screen.Candidates[0].Score.ShouldBe(1.421m);
@@ -112,7 +135,7 @@ public class ScreenContractTests
         // Not a failure, and not an error to raise: a universe where nothing cleared the
         // liquidity floor today is a fact about today. The cycle then analyses the holdings
         // and buys nothing, which is the correct outcome rather than a missing one.
-        var screen = ScreenMapper.ToDomain(Parse(AScreen())!);
+        var screen = Map(Parse(AScreen())!);
 
         screen.Candidates.ShouldBeEmpty();
         screen.Rejected.ShouldBeEmpty();
@@ -125,7 +148,7 @@ public class ScreenContractTests
     public void A_symbol_that_is_not_a_ticker_is_refused(string symbol)
     {
         Should.Throw<AgentResponseInvalidException>(
-            () => ScreenMapper.ToDomain(Parse(AScreen(candidates: ACandidate(symbol: symbol)))!));
+            () => Map(Parse(AScreen(candidates: ACandidate(symbol: symbol)))!));
     }
 
     [Fact]
@@ -135,7 +158,7 @@ public class ScreenContractTests
         // traded from it. But it is stored, and a symbol in it is joined against the
         // candidates and the ledger when the universe's health is read back.
         Should.Throw<AgentResponseInvalidException>(
-            () => ScreenMapper.ToDomain(Parse(AScreen(rejected: ARejection(symbol: "not a symbol")))!));
+            () => Map(Parse(AScreen(rejected: ARejection(symbol: "not a symbol")))!));
     }
 
     [Theory]
@@ -148,7 +171,7 @@ public class ScreenContractTests
         // that could not be computed, and one the agent service leaves out rather than puts
         // first.
         var exception = Should.Throw<AgentResponseInvalidException>(
-            () => ScreenMapper.ToDomain(Parse(AScreen(candidates: ACandidate(volatility: volatility)))!));
+            () => Map(Parse(AScreen(candidates: ACandidate(volatility: volatility)))!));
 
         exception.Message.ShouldContain("is not positive");
     }
@@ -157,7 +180,7 @@ public class ScreenContractTests
     public void A_turnover_below_zero_is_refused()
     {
         var exception = Should.Throw<AgentResponseInvalidException>(
-            () => ScreenMapper.ToDomain(Parse(AScreen(candidates: ACandidate(turnover: "-1")))!));
+            () => Map(Parse(AScreen(candidates: ACandidate(turnover: "-1")))!));
 
         exception.Message.ShouldContain("is negative");
     }
@@ -168,7 +191,7 @@ public class ScreenContractTests
         // The schema's minLength. A rejection that says nothing is exactly the silent
         // shrinking the list was added to prevent.
         var exception = Should.Throw<AgentResponseInvalidException>(
-            () => ScreenMapper.ToDomain(Parse(AScreen(rejected: ARejection(reason: "   ")))!));
+            () => Map(Parse(AScreen(rejected: ARejection(reason: "   ")))!));
 
         exception.Message.ShouldContain("without a reason");
     }
@@ -179,7 +202,7 @@ public class ScreenContractTests
         var tooLong = new string('x', ScreenMapper.MaxReasonLength + 1);
 
         var exception = Should.Throw<AgentResponseInvalidException>(
-            () => ScreenMapper.ToDomain(Parse(AScreen(rejected: ARejection(reason: tooLong)))!));
+            () => Map(Parse(AScreen(rejected: ARejection(reason: tooLong)))!));
 
         exception.Message.ShouldContain($"longer than {ScreenMapper.MaxReasonLength}");
     }
@@ -194,7 +217,7 @@ public class ScreenContractTests
             candidates: $"{ACandidate(symbol: "AAPL", score: "0.57")},{ACandidate(symbol: "NVDA", score: "1.42")}");
 
         var exception = Should.Throw<AgentResponseInvalidException>(
-            () => ScreenMapper.ToDomain(Parse(outOfOrder)!));
+            () => Map(Parse(outOfOrder)!));
 
         exception.Message.ShouldContain("NVDA scores higher than AAPL");
     }
@@ -204,7 +227,7 @@ public class ScreenContractTests
     {
         // Non-increasing, not strictly decreasing. Two shares can rank the same, and which of
         // them comes first is then the agent service's tie-break to make.
-        var screen = ScreenMapper.ToDomain(Parse(AScreen(
+        var screen = Map(Parse(AScreen(
             candidates: $"{ACandidate(symbol: "AAPL", score: "1.0")},{ACandidate(symbol: "NVDA", score: "1.0")}"))!);
 
         screen.Candidates.Count.ShouldBe(2);
@@ -215,7 +238,7 @@ public class ScreenContractTests
     {
         var twice = AScreen(candidates: $"{ACandidate(symbol: "NVDA")},{ACandidate(symbol: "NVDA")}");
 
-        var exception = Should.Throw<AgentResponseInvalidException>(() => ScreenMapper.ToDomain(Parse(twice)!));
+        var exception = Should.Throw<AgentResponseInvalidException>(() => Map(Parse(twice)!));
 
         exception.Message.ShouldContain("appears more than once");
     }
@@ -228,8 +251,41 @@ public class ScreenContractTests
         // breath.
         var both = AScreen(candidates: ACandidate(symbol: "NVDA"), rejected: ARejection(symbol: "NVDA"));
 
-        var exception = Should.Throw<AgentResponseInvalidException>(() => ScreenMapper.ToDomain(Parse(both)!));
+        var exception = Should.Throw<AgentResponseInvalidException>(() => Map(Parse(both)!));
 
         exception.Message.ShouldContain("appears more than once");
+    }
+
+    [Fact]
+    public void An_instrument_outside_the_requested_universe_is_refused()
+    {
+        // The screen chooses what may be analysed and bought. An answer that invents a name
+        // the engine never asked about must not widen the trading universe by stealth - the
+        // same mirror HistoryMapper applies to a history for the wrong symbol.
+        var onlyAsked = Universe("NVDA", "TINY");
+        var withStranger = AScreen(
+            candidates: ACandidate(symbol: "NVDA"),
+            rejected: ARejection(symbol: "MSFT"));
+
+        var exception = Should.Throw<AgentResponseInvalidException>(
+            () => Map(Parse(withStranger)!, onlyAsked));
+
+        exception.Message.ShouldContain("MSFT");
+        exception.Message.ShouldContain("not in the requested universe");
+    }
+
+    [Fact]
+    public void A_shortlist_longer_than_the_requested_limit_is_refused()
+    {
+        // ShortlistSize caps how many new names enter analysis. Honouring a longer answer
+        // would spend LLM budget the operator did not allocate, even with AnalysisDueCheck.
+        var twoCandidates = AScreen(
+            candidates: $"{ACandidate(symbol: "NVDA", score: "1.42")},{ACandidate(symbol: "AAPL", score: "0.57")}");
+
+        var exception = Should.Throw<AgentResponseInvalidException>(
+            () => Map(Parse(twoCandidates)!, limit: 1));
+
+        exception.Message.ShouldContain("2 candidates");
+        exception.Message.ShouldContain("limit is 1");
     }
 }

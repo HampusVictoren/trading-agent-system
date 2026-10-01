@@ -23,11 +23,22 @@ using Engine.Domain.ValueObjects;
 /// this list becomes the stored rank that this stage's comparison groups by - so an answer
 /// that is not sorted would quietly write wrong ranks rather than fail.
 /// </para>
+/// <para>
+/// The universe and the limit are checked the same way <see cref="HistoryMapper"/> checks the
+/// symbol it asked for: the engine already knows which instruments it sent and how many it
+/// wanted back, so an answer that invents a name or overshoots the shortlist size is refused
+/// rather than acted on. Trusting the agent service's honesty is not a substitute for that
+/// mirror.
+/// </para>
 /// </remarks>
 public static class ScreenMapper
 {
-    public static Screen ToDomain(ScreenResultDto dto)
+    public static Screen ToDomain(
+        ScreenResultDto dto, IReadOnlySet<Ticker> universe, int limit)
     {
+        if (limit < 0)
+            throw Invalid($"the shortlist limit {limit} is negative");
+
         var candidates = dto.Candidates.Select(ToCandidate).ToArray();
         var rejected = dto.Rejected.Select(ToRejection).ToArray();
 
@@ -51,6 +62,15 @@ public static class ScreenMapper
         {
             if (!seen.Add(ticker))
                 throw Invalid($"{ticker.Value} appears more than once");
+
+            if (!universe.Contains(ticker))
+                throw Invalid($"{ticker.Value} is not in the requested universe");
+        }
+
+        if (candidates.Length > limit)
+        {
+            throw Invalid(
+                $"the shortlist has {candidates.Length} candidates but the limit is {limit}");
         }
 
         return new Screen(candidates, rejected, dto.AsOf);
