@@ -109,11 +109,13 @@ def _build_pipeline(
 
 
 def _warn_if_bound_broadly(settings: Settings) -> None:
-    """Operator-declared bind hint: warn when non-loopback outside development.
+    """Warns when a non-loopback bind is declared outside development.
 
-    Uvicorn owns the real listen socket; this cannot force 127.0.0.1 without breaking
-    intentional Docker publishes. The README states the policy; the warning catches a
-    mistaken TAS_BIND_HOST in staging/production.
+    This cannot force 127.0.0.1 without breaking intentional Docker publishes, so it warns.
+    Through `python -m app` the setting is the socket; start uvicorn by hand and it is only
+    a claim about one, because FastAPI cannot see what the command line asked for. The
+    warning is the same in both cases, and it is what catches a mistaken TAS_BIND_HOST in
+    staging or production.
     """
     host = settings.bind_host.strip().lower()
     loopback = host in {"127.0.0.1", "localhost", "::1"}

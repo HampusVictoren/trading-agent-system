@@ -165,16 +165,24 @@ class Settings(BaseSettings):
     # for local exploration only; create_app reads the same flag at process start.
     enable_docs: bool = False
 
-    # What uvicorn was asked to bind to, when known. The service cannot see the real
-    # listen address from inside FastAPI; this is an operator-declared hint used only for
-    # a startup warning. Prefer 127.0.0.1 for local paper trading. Leave as 127.0.0.1
-    # (default) when unsure; set TAS_BIND_HOST=0.0.0.0 deliberately for Docker/compose
-    # and accept the warning in non-development environments.
+    # What the service binds. Through `python -m app` - which is what the container runs -
+    # this is the real listen address, because that entrypoint passes it to uvicorn. Start
+    # uvicorn by hand and it goes back to being an operator-declared hint, since the
+    # service cannot see from inside FastAPI what the command line asked for. Either way it
+    # is what the startup warning reads. Prefer 127.0.0.1 for local paper trading; set
+    # TAS_BIND_HOST=0.0.0.0 deliberately for Docker/compose and accept the warning in
+    # non-development environments.
     bind_host: str = "127.0.0.1"
 
     # "development" skips the non-loopback bind warning so intentional docker setups are
     # not noisy. Set TAS_ENVIRONMENT=production (or staging) to surface the warning.
     environment: str = "development"
+
+    # The port `python -m app` binds. Defaulted for the same reason bind_host is: it is a
+    # claim about a socket rather than a secret or a model choice. 8000 is what the engine's
+    # AgentService:BaseUrl expects, and inside a container it stays 8000 because compose
+    # maps it - so this setting is for running a second instance beside the first.
+    port: Annotated[int, Field(ge=1, le=65535)] = 8000
 
     # When False (default), /ready returns only {"status": "ready"|"not ready"}.
     # Dependency names (database/llm) stay in server logs. Set TAS_READY_DETAIL=true
