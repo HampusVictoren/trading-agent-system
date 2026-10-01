@@ -1,0 +1,27 @@
+# What the build context must not carry. The context is src/agents, so everything here is
+# relative to it.
+
+# A COPY that picked this up would bake the agent_svc password and both shared secrets
+# into a layer, where `docker history` reads them back out of any copy of the image.
+# Secrets reach a container through the environment, never through a build.
+.env
+.env.*
+!.env.example
+
+# This machine's own virtualenv: a few hundred megabytes of wheels built for this kernel,
+# and the image builds its own. Copying it in would also shadow the installed package.
+.venv
+
+# Stale bytecode. This checkout still has .pyc files for app/infrastructure/ag2/team.py,
+# a module deleted in stage 3 - and a .pyc without its .py is importable, so a build that
+# carried them could run code that no longer exists in the repository.
+__pycache__
+*.py[cod]
+
+# Not the service. The tests have their own job in CI, and `dist` is the wheel the CI
+# regression guard builds - neither belongs in an image that talks to a broker.
+tests
+dist
+.pytest_cache
+.mypy_cache
+.ruff_cache
