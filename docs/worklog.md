@@ -17,11 +17,10 @@ because an instrument is now analysed once a trading day. See *The live run* und
 same question every fifteen seconds; it now asks eleven instruments it chose itself, once a day
 each. The population a baseline needs exists as of today.
 
-**Stage 5 is code-complete as of today.** All five pull requests: #42, #43, #44/#45, #48, #51 and
-#52 are merged, and the fifth - `trading.shortlist_edge`, the view that asks whether the agents beat
-the screen that picked their candidates - is on `stage-5-shortlist-edge`. **The stage is not
-verified**, though: two of the roadmap's five conditions need the market to move against a position.
-Read *Next steps*.
+**Stage 5 is complete and merged**, all five pull requests: #42, #43, #44/#45, #48, #51 and #54,
+with the security hardening as #52 and the live run as #53. **The stage is not verified**, though:
+two of the roadmap's five conditions need the market to move against a position, and the first
+`shortlist_edge` row needs a horizon to pass. Read *Next steps*.
 **Stage 4's code is complete and merged** - all eight pull requests. The machinery runs end to end: decisions are stored, the portfolio survives a
 restart, a sweep scores every signal whose horizon has passed, the engine posts what it
 measured to the agent service, and memory reads the journal back. 21 signals are scored and
@@ -116,40 +115,38 @@ Two things that are easy to misread as broken:
 
 ## Next steps
 
-### Resume here — one thing (2026-10-01, late)
+### Resume here — stage 6, after one small pull request (2026-10-01, late)
 
-Stage 5's fifth and last pull request is on `stage-5-shortlist-edge`: `trading.shortlist_edge`,
-the view that answers whether the agents beat the screen that picked their candidates. 489 .NET and
-476 Python green. Everything else in the stage is merged - #51 (the cycle), #52 (the security
-hardening) and #53 (the live run).
+Stage 5 is merged. `master` is at #54. The branch open now is `docs/claude-md-level`, which does two
+things and no code: it brings `CLAUDE.md` level with eleven merges, and it settles the two risk
+questions the live run raised.
 
-1. **Review and merge it**, then there is nothing to run: the view is read from psql, like
-   `hit_rate`. It **will be empty until a horizon has passed on a day that was screened** - the
-   first screened day is 2026-10-01 and the shortest fixed horizon is one trading day - so the
-   honest first read is tomorrow:
+1. **Merge `docs/claude-md-level`.** `CLAUDE.md` had not changed since 2026-09-26 while eleven
+   merges landed, and its stated job is to describe the repo as it is today. It still described a
+   cycle driven by `Trading:Tickers`, named two secrets where there are now six, and omitted the
+   two tables, the two views, the 429, the scoped keys and the HMAC header. **Following it gave an
+   engine that would not start**, which is how this session discovered it.
 
-   ```sql
-   SELECT * FROM trading.shortlist_edge ORDER BY screened_on;
-   ```
+2. **Then the per-cycle deployment cap**, which is a real pull request rather than a setting: the
+   design and the number are decided in *Open decisions*, and the reason it needs its own review is
+   that the engine has no cycle-level accumulator by design, so the cap has to ask the ledger.
 
-   What to look for in the first row that appears: `agents_edge_gross`. Positive means the agents
-   picked better than the ranking that handed them the ten candidates; negative means the LLM is
-   cost rather than value, and a better ranking is worth more than a better team. One day's row is
-   an anecdote - the number means something after a few weeks of them.
+3. **Then stage 6 - containerisation and deploy.** Read that stage in the roadmap first. Two things
+   from this stage change it: `openapi_url` defaults to `None` since #52, so the NSwag drift check
+   needs `TAS_ENABLE_DOCS` - which **does not work in `.env`**, only as a shell variable, and that
+   defect is in *Open decisions* too.
 
-**The stage is then code-complete but not verified**, and the gap is honest rather than
-administrative: two of the roadmap's five verification conditions for stage 5 need the market to
-move against a position and cannot be run on demand. See the table under *The live run*. The
-cheapest of the two is the time-limit exit, because the four positions opened on 2026-10-01 carry a
-fifteen-day thesis and one of them will reach it without anything unusual happening.
+**Nothing to run, and the waiting is not idleness.** The first `shortlist_edge` row needs the
+one-trading-day horizon to pass on 2026-10-01's eleven decisions, so it appears after the next
+sweep. When it does, read `agents_edge_gross`: positive means the agents picked better than the
+ranking that handed them the ten candidates. One row is an anecdote; the number means something
+after a few weeks of them.
 
-**Then stage 6 - containerisation and deploy**, which the roadmap describes and nothing here has
-started. Read that stage before beginning; note that #52 turned OpenAPI off by default, so its
-NSwag drift check needs the docs flag.
-
-**Two things to settle before stage 6, both from the live run and both one number:** nothing caps
-how much a single cycle deploys (four buys put out ten percent of the account in four minutes), and
-`Trading:MinDollarVolume` filters nothing at this account size. Both are in *Open decisions*.
+**Six branches are stale** and the rule is master plus one. All are merged or superseded:
+`docs/pr4-live-run`, `stage-5-cycle`, `stage-5-selling` and `stage-5-shortlist-edge` locally, and
+`security/hardening-f01-f14` remotely. `plan/jev-placement` is somebody else's and unreviewed.
+Deleting them is refused by this session's tooling as a destructive git action, so it is two
+commands by hand.
 
 ---
 
@@ -608,14 +605,16 @@ open until then.
 - **`orders.placed_at` is a shadow property** filled by the database's `now()`. It is audit metadata today; stage 5 counts a holding period from the last purchase, and that is when it becomes domain data and has to come from the engine's injected clock instead.
 - **Quotes share the analysis client's resilience policy**, which does not retry a failing response. That rule was written for a call costing 12-15 s of LLM time and is stricter than an idempotent GET needs; the cost of leaving it is one cycle without a price for one holding, and the cost of a second typed client is a second place for the key and the timeouts to drift. Revisit if missing quotes ever show up in the decision rows.
 - **A quote for a symbol that is not a symbol answers 404, not 422.** FastAPI rejects it at routing, before validation, so it never reaches the error vocabulary. Honest but inconsistent with every other refusal in the contract; worth a `Path` converter or a catch-all route if the difference ever matters to a caller.
-- **Nothing caps how much a single cycle deploys.** The first screened cycle opened four positions in four minutes and put out ten percent of the account. Each position is capped at 5 % of NAV and the cash buffer holds 10 % back, so no rule was breached - but ten BUYs at the full conviction tier would be half the account in one cycle, and there is no per-cycle budget to stop it. It is what the rules say today; the question is whether that is what they should say before real money. A per-cycle deployment cap, or a maximum number of new positions, would both be one number in `RiskPolicy`.
+- **Nothing caps how much a single cycle deploys** - decided 2026-10-01: **add a cap, as its own pull request, at 20 % of net asset value.** The first screened cycle opened four positions in four minutes and put out ten percent of the account. No rule was breached: each position is capped at `MaxPositionPercentage` of NAV and the cash buffer holds `CashBufferPct` back, which bounds a cycle at ten positions of 5 % - half the account. **The risk is correlation in time, not size per name.** Ten decisions from one model on one trading day share whatever that day's bias is, and a momentum screen in a rising market hands it ten names that move together, so "diversified across ten positions" is weaker than it looks: the correlation is the screen's own factor. 20 % allows four full-tier or eight half-tier positions a cycle, which is what the first real cycle did with headroom to spare. **The cost is honest and worth stating:** a cap slows the portfolio's formation and therefore the baseline this stage exists to build. It is configuration, so it is cheap to change once there are measurements to change it against.
+
+  **Why it is its own pull request rather than a line.** The engine has no cycle-level accumulator and that is deliberate - each analysis gets its own scope and transaction, and the architecture removed the worker's shared mutable state on purpose. So a per-cycle cap has to ask the ledger: `orders.placed_at` makes "how much was bought today" a query, which fits this codebase the way counting bars fits the trading calendar. That means a new method on a port, a setting on `RiskPolicy`, a check in `RiskEngine` and the usual tests - and a money-moving risk limit should not be reviewed inside a documentation sweep, which is the mixing that splitting SEK out of selling avoided.
 - **The cycle log's date is formatted with the current culture.** `Screened 31 instrument(s) for 10/01/2026` is the first of October and reads as the tenth of January to a Swedish reader. `{Day:yyyy-MM-dd}` in `SelectShortlistUseCase`, one string, no behaviour.
 - **`TAS_ENABLE_DOCS` does nothing where it is documented.** `create_app` reads `os.environ` directly; `settings.enable_docs` is declared in `settings.py` and read nowhere, which a grep over `app/` confirms. So the flag works as a shell variable and not in `src/agents/.env`, which is where `.env.example` tells you to put it. It fails closed, so it is not an exposure - but it is a dead setting, a documented switch that lies, and a breach of this repo's own rule that nothing reads configuration except through `get_settings()`. One line in `create_app`.
 - **Scoped API keys cannot be adopted.** `agent_api_key` is `[Required]` in `settings.py` and `ApiKey` is `[Required]` in `AgentServiceOptions`, and the legacy key grants every scope - so a full-access credential always exists and always works, and the scoped keys only *add* credentials rather than restricting any. Making the scopes real means the legacy key becoming optional, with startup refusing a configuration that has neither it nor a full set. Until then F-02's stated benefit is unreachable.
 - **The security branches leave `CLAUDE.md` and `contracts/` untouched**, which this project treats as a defect rather than a tidying job. Missing: a 429 `rate_limited` row in the failure table; `AgentService:OutcomesHmacSecret` in the user-secrets block, which is `[Required]`, so following CLAUDE.md today produces an engine that will not start; the new shape of `/ready`'s body; six new `TAS_` keys in the configuration section; and a note that stage 6's NSwag job needs the docs flag now that `openapi_url` defaults to `None`.
 - **A sixth `IAgentClient` method could forget its API key.** The header is set per call site rather than once on the client, with one test per existing scope and nothing that enumerates them - so the property that used to make forgetting impossible is now a convention. A private `SendAsync` wrapper taking the scope as a required argument would restore it.
 - **The screen's ranking cannot be validated against the names it passed over** - decided 2026-10-01 to defer, with the design named. `rank(candidates, limit)` truncates, so the 21 instruments that ranked 11th to 31st exist in no row of `trading.shortlists`, and nobody can ask whether rank 15 would have done better than rank 3. `trading.shortlist_edge` therefore scores the agents against the shortlist and **not** the ranking against itself. The fix is a pull request rather than a line: the contract carries every ranked instrument with a flag for the ones selected, `shortlists` gains that flag as a column, and the engine analyses only the flagged ones. Putting the rank in a rejection's free-text reason instead would cost twenty rows a day and answer nothing, because a measurement cannot parse prose - the half-measure is worse than either end. Worth doing once the first `shortlist_edge` rows exist and the question has an audience.
-- **`Trading:MinDollarVolume` is a filter that never fires.** 10 000 000 SEK, against a universe where every name clears it by two orders of magnitude. Deliberate - at this account size an order is a few thousand kronor, so the floor is a staleness guard rather than a liquidity constraint - but a filter with no evidence behind it is worth checking against a real screen's output before it is trusted.
+- **`Trading:MinDollarVolume` filters nothing, and that is settled as correct** - decided 2026-10-01: **keep 10 000 000 SEK, unchanged.** The live screen put all 31 OMXS30 names through it and rejected none, which is the evidence this item was waiting for. **A guard that does not fire on healthy data is a guard working.** Its job is to catch a symbol whose listing has gone inactive or whose data has gone stale, not to filter live large caps; raising it until it bites would be optimising a number against the wrong objective, and removing it would let a delisted name with a stale thirty-day volume rank. The condition to revisit it is the account size rather than the market: at 100 000 kr a 5 % position is about 5 000 kr against a 10 MSEK floor - 0.05 % of a day's turnover - so liquidity starts to matter somewhere above a ten-million-krona account, and the floor should move with it rather than on its own.
 - **Nothing translates a duplicate `correlation_id`.** `UnitOfWork` turns EF's concurrency exception into `ConcurrentChangeException`, but a unique-index violation still surfaces as `DbUpdateException` and lands in the worker's general handler with a stack trace. That is arguably right - the ids are fresh Guids, so a duplicate is a bug - but it has never been seen, so it has never been read.
 
 ---
@@ -1883,6 +1882,8 @@ Things that cost time or were not obvious. Most are also recorded where they app
 - **There is a stale `ConnectionStrings:Database` user secret with `Host=localhost`.** Nothing reads it - the engine reads `Database:ConnectionString` and the design-time factory reads the environment variable - but it sent this session looking for a configuration bug that did not exist, because listing the secrets showed two connection strings and one of them used the host CLAUDE.md warns against. Worth deleting.
 - **A claim about what a cycle does *not* do needs a log, not a test.** Every test in the suite proves something happens; the fourth pull request's whole point was that two cycles out of three stop happening, and the only honest evidence was three cycles of real output plus the agent service's own request counts as an independent second witness. Shortening the interval to a minute made it observable without touching the rule under test, because the rule is about the day and the price.
 - **A measured number beat a reasoned one twice in a day.** The rate-limit headroom was argued from `ShortlistSize` and the real constraint turned out to be per-analysis latency; the liquidity floor was argued as a safeguard and turned out to filter nothing. Both arguments were sound and both were about the wrong variable.
+
+- **Cross-check documentation against the code mechanically, not by reading harder.** After the review caught stale claims a grep could not, levelling `CLAUDE.md` used a script instead: extract every `TAS_` variable the document names and diff it against `.env.example`, and extract every options property from `TradingOptions`, `AgentServiceOptions` and `RiskPolicyOptions` and check each appears in the text. It found four things no amount of careful reading had: the document named `DATABASE_URL` without the `TAS_` prefix its own rule demands, two settings the screen introduced (`TAS_SCREEN_TIMEOUT_S`, `TAS_SCREEN_TTL_S`) had never been documented at all, `MaxPositionPercentage` and `CashBufferPct` were described in prose but never named, and four scoped keys were written as a shorthand nobody could grep for. **A document about configuration can be diffed against the configuration.**
 
 - **A grep is not a review of a section that describes the present.** Twice now this file has gone stale in a part I did not touch, and twice I swept for it by grepping phrases I expected to be wrong - which finds what you already suspect and, by construction, nothing else. An external review read *Current state* top to bottom and found in minutes that it still named a configuration setting deleted two pull requests earlier. **Sections that describe today get read; sections that describe history get grepped.**
 
