@@ -41,6 +41,23 @@ namespace engine.Infrastructure.Persistence.Migrations
     /// one decision its join rather than producing a wrong number.
     /// </para>
     /// <para>
+    /// <b><c>bought</c> means a buy, not an execution.</b> An executed SELL is the agents choosing
+    /// to leave, and its <c>excess_return</c> is still the instrument's forward return - so a
+    /// well-timed sale of a share that then fell would arrive as a <i>negative</i> contribution to
+    /// how the bought instruments did, in a column it was never part of. It reaches this view at
+    /// all because a held instrument the screen also ranked has a shortlist row, which happens as
+    /// soon as something with momentum is held. The sale stays in the shortlist average, where it
+    /// belongs: the control is how the names the screen put forward did, whatever was decided.
+    /// </para>
+    /// <para>
+    /// <b>A shortlisted instrument that was never analysed is not in the average.</b> The join to
+    /// <c>decisions</c> is inner, so a candidate the cycle never reached - a process that stopped
+    /// partway, or a screen whose candidates outlived their cycle - leaves the control group
+    /// silently, which biases it towards the instruments that <i>were</i> analysed. It cannot
+    /// happen while a cycle completes, because every shortlisted instrument is analysed once a
+    /// day, which is why this is a property to know rather than a guard to write.
+    /// </para>
+    /// <para>
     /// A held instrument that the screen also ranked appears here, because the shortlist row
     /// exists even though the decision was taken as a <c>Holding</c>. That is deliberate: how
     /// the screen rated what the portfolio already owned is worth being able to ask.
@@ -67,25 +84,32 @@ namespace engine.Infrastructure.Persistence.Migrations
                        o.horizon_unit,
                        o.horizon_days,
 
-                       -- The screen's own result: every shortlisted instrument that has been measured,
-                       -- whatever the agents then said about it. This is the control.
-                       count(*)                                                        AS shortlisted,
-                       round(avg(o.excess_return), 6)                                  AS shortlist_excess_gross,
+                       -- The control: every shortlisted instrument that has been measured, whatever the
+                       -- agents then said about it. A HOLD, a refused sale and a rejected order all belong
+                       -- here - the question is how the names the screen put forward did.
+                       count(*)                                            AS shortlisted,
+                       round(avg(o.excess_return), 6)                       AS shortlist_excess_gross,
 
-                       -- The agents' result: the subset the engine actually bought.
-                       count(*) FILTER (WHERE d.outcome = 'Executed')                  AS bought,
-                       round(avg(o.excess_return) FILTER (WHERE d.outcome = 'Executed'), 6)
-                                                                                       AS bought_excess_gross,
+                       -- The agents' own result: the subset they argued to buy and the engine bought. A
+                       -- stance of Buy, not merely an execution - see the remarks on why a sale is not one.
+                       count(*) FILTER (WHERE d.outcome = 'Executed'
+                                          AND d.stance = 'Buy')            AS bought,
+                       round(avg(o.excess_return) FILTER (WHERE d.outcome = 'Executed'
+                                                            AND d.stance = 'Buy'), 6)
+                                                                            AS bought_excess_gross,
 
-                       -- The question the project turns on. Positive means the agents picked better than
-                       -- the ranking that handed them the candidates; negative means the LLM is cost.
-                       round(avg(o.excess_return) FILTER (WHERE d.outcome = 'Executed')
-                             - avg(o.excess_return), 6)                                AS agents_edge_gross,
+                       -- The question the project turns on. Positive means the agents picked better than the
+                       -- ranking that handed them the candidates; negative means the LLM is cost, not value.
+                       round(avg(o.excess_return) FILTER (WHERE d.outcome = 'Executed'
+                                                            AND d.stance = 'Buy')
+                             - avg(o.excess_return), 6)                     AS agents_edge_gross,
 
-                       -- What the account actually earned on the buys, after commission and spread. Beside
+                       -- What the account actually earned on those buys, after commission and spread. Beside
                        -- the gross figure rather than instead of it: the shortlist average is a paper
-                       -- portfolio that paid no costs, so taking costs off one side only would flatter it.
-                       round(avg(o.net_edge) FILTER (WHERE d.outcome = 'Executed'), 6)  AS bought_edge_net
+                       -- portfolio that paid no costs, so taking them off one side only would flatter it.
+                       round(avg(o.net_edge) FILTER (WHERE d.outcome = 'Executed'
+                                                       AND d.stance = 'Buy'), 6)
+                                                                            AS bought_edge_net
                 FROM trading.shortlists s
                 JOIN trading.decisions d
                        ON d.symbol = s.symbol

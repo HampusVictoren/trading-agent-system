@@ -270,6 +270,63 @@ public class ShortlistEdgeTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task An_executed_sale_is_not_counted_as_a_buy()
+    {
+        // `bought` means a buy, not an execution. A sale's excess return is still the
+        // instrument's forward return, so a well-timed exit from a share that then fell would
+        // arrive as a negative contribution to how the *bought* instruments did - in a column it
+        // was never part of. It can reach this view because a held instrument the screen also
+        // ranked has a shortlist row, which happens as soon as something with momentum is held.
+        var account = await AnAccountAsync();
+
+        await AShortlistedInstrumentAsync(account, "AAA.ST", 1, Stance.Buy, DecisionOutcome.Executed, 0.08m, 0.0797m);
+        await AShortlistedInstrumentAsync(
+            account, "BBB.ST", 2, Stance.Sell, DecisionOutcome.Executed, -0.20m, -0.2003m,
+            selection: SelectionSource.Holding);
+
+        var row = (await ReadTheViewAsync()).ShouldHaveSingleItem();
+
+        // The sale is in the control - it is a name the screen put forward - and nowhere else.
+        row.Shortlisted.ShouldBe(2);
+        row.ShortlistExcessGross.ShouldBe(-0.06m);
+        row.Bought.ShouldBe(1);
+        row.BoughtExcessGross.ShouldBe(0.08m);
+        row.BoughtEdgeNet.ShouldBe(0.0797m);
+
+        // Had the sale counted as a buy, this would read -0.06 - (-0.06) = 0.00, which is the
+        // shape of a number that means nothing while looking like agreement.
+        row.AgentsEdgeGross.ShouldBe(0.14m);
+    }
+
+    [Theory]
+    [InlineData(nameof(DecisionOutcome.NotSized))]
+    [InlineData(nameof(DecisionOutcome.RejectedByRisk))]
+    public async Task An_order_that_never_happened_is_in_the_control_and_not_in_the_buys(string outcome)
+    {
+        // The two outcomes between a HOLD and a purchase: the agents argued for a trade and it
+        // did not happen - because nothing was held to sell, or because the risk gate refused it.
+        // Both are names the screen put forward, so both belong in the control; neither is a buy.
+        // `NotSized` is not hypothetical: SAAB-B.ST was shortlisted on 2026-10-01, answered SELL,
+        // and was refused because the portfolio held none of it.
+        var account = await AnAccountAsync();
+
+        await AShortlistedInstrumentAsync(account, "AAA.ST", 1, Stance.Buy, DecisionOutcome.Executed, 0.10m, 0.0997m);
+        await AShortlistedInstrumentAsync(
+            account, "BBB.ST", 2, Stance.Sell, Enum.Parse<DecisionOutcome>(outcome), 0.02m, 0.0197m);
+
+        var row = (await ReadTheViewAsync()).ShouldHaveSingleItem();
+
+        row.Shortlisted.ShouldBe(2);
+        row.ShortlistExcessGross.ShouldBe(0.06m);
+        row.Bought.ShouldBe(1);
+        row.BoughtExcessGross.ShouldBe(0.10m);
+
+        // And its net figure is ignored even though the row happens to carry one: nothing was
+        // bought, so there is no cost to account for.
+        row.BoughtEdgeNet.ShouldBe(0.0997m);
+    }
+
+    [Fact]
     public async Task A_decision_from_another_day_does_not_join_this_shortlist()
     {
         // The join is on the trading day as well as the symbol, because the same instrument is
