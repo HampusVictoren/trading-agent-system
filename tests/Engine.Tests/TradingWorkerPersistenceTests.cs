@@ -94,6 +94,7 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
                 ["RiskPolicy:CashBufferPct"] = "0.10",
                 ["RiskPolicy:MinHoldingPeriodDays"] = "3",
                 ["RiskPolicy:StopLossPercentage"] = "0.10",
+                ["RiskPolicy:MaxDailyDeploymentPercentage"] = "0.20",
                 ["RiskPolicy:MaxQuoteAgeSeconds"] = "300",
                 ["Trading:Universe:0"] = Symbol,
                 ["Trading:ShortlistSize"] = "10",

@@ -68,6 +68,19 @@ public sealed class RiskPolicyOptions
     [Range(typeof(decimal), "0.01", "0.5", ParseLimitsInInvariantCulture = true, ConvertValueInInvariantCulture = true)]
     public decimal StopLossPercentage { get; init; }
 
+    /// <summary>
+    /// The most of the portfolio's value the engine may spend on purchases in one trading day.
+    /// </summary>
+    /// <remarks>
+    /// The range below is only a share of a portfolio: "at least <see cref="MaxPositionPercentage"/>"
+    /// is a rule about two settings at once, which a data annotation cannot express, so
+    /// <see cref="RiskPolicyOptionsValidator"/> carries it and <c>ValidateOnStart</c> is what makes
+    /// it a startup failure. <see cref="RiskPolicy"/> refuses the same combination a third time,
+    /// because the domain does not trust that configuration was validated.
+    /// </remarks>
+    [Range(typeof(decimal), "0.01", "1.0", ParseLimitsInInvariantCulture = true, ConvertValueInInvariantCulture = true)]
+    public decimal MaxDailyDeploymentPercentage { get; init; }
+
     /// <summary>The same limits in the domain's own terms, which guards them a second time.</summary>
     public RiskPolicy ToRiskPolicy() =>
         new(
@@ -75,5 +88,6 @@ public sealed class RiskPolicyOptions
             CashBufferPct!.Value,
             TimeSpan.FromSeconds(MaxQuoteAgeSeconds),
             TimeSpan.FromDays(MinHoldingPeriodDays!.Value),
-            StopLossPercentage);
+            StopLossPercentage,
+            MaxDailyDeploymentPercentage);
 }

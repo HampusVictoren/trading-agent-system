@@ -1,6 +1,8 @@
 namespace Engine.Tests;
 
 using Engine.Domain.Aggregates.Portfolio;
+using Engine.Domain.Risk;
+using Engine.Domain.Signals;
 using Engine.Domain.ValueObjects;
 
 /// <summary>
@@ -39,4 +41,36 @@ internal static class PortfolioTestExtensions
     /// <summary>A holding with the two new values filled in, for tests that predate them.</summary>
     internal static Position APosition(Ticker ticker, decimal quantity, Money averagePrice) =>
         new(ticker, quantity, averagePrice, BoughtAt, ThesisHorizonDays);
+}
+
+/// <summary>
+/// The sizer and the gate as they read before a trading day had a budget of its own.
+/// </summary>
+/// <remarks>
+/// Extension methods, not optional parameters on the real signatures. An optional
+/// <c>deployedToday</c> would mean a production call site that forgot it silently said "nothing
+/// spent today", which is the shape of mistake that cost #52 its screen key: a property that made
+/// forgetting impossible was traded for a convention, and the first new call site broke it.
+/// Here the default is a statement about the *test* - this case is not about the daily limit -
+/// and the compiler still refuses to let the engine omit it.
+/// </remarks>
+public static class DailyBudgetTestExtensions
+{
+    public static OrderIntent Size(
+        this PositionSizer sizer,
+        TradeSignal signal,
+        Portfolio portfolio,
+        PriceSnapshot holdingPrices,
+        RiskPolicy policy) =>
+        sizer.Size(signal, portfolio, holdingPrices, policy, Money.Zero());
+
+    public static RiskDecision Evaluate(
+        this RiskEngine engine,
+        OrderIntent.Buy order,
+        TradeSignal signal,
+        Portfolio portfolio,
+        PriceSnapshot holdingPrices,
+        RiskPolicy policy,
+        DateTimeOffset now) =>
+        engine.Evaluate(order, signal, portfolio, holdingPrices, policy, now, Money.Zero());
 }

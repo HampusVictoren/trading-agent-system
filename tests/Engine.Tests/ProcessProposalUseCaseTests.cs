@@ -31,7 +31,8 @@ public class ProcessProposalUseCaseTests
     private static readonly RiskPolicy Policy =
         new(maxPositionPct: 0.05m, cashBufferPct: 0.10m, maxQuoteAge: TimeSpan.FromMinutes(5),
             minHoldingPeriod: TimeSpan.FromDays(3),
-        stopLossPct: 0.10m);
+        stopLossPct: 0.10m,
+        maxDailyDeploymentPct: 1m);
 
     private sealed class FixedClock(DateTimeOffset now) : TimeProvider
     {
@@ -104,11 +105,42 @@ public class ProcessProposalUseCaseTests
         AsOf = asOf ?? Now
     };
 
+    /// <param name="deployedToday">
+    /// What the account has already spent on purchases today, as the repository would answer it.
+    /// Zero unless a test is about the trading day's own budget.
+    /// </param>
+    /// <summary>
+    /// The three things nearly every test here needs. A fourth - the portfolio repository, which
+    /// answers what the trading day has already spent - is only interesting to the tests about that
+    /// budget, and those use <see cref="BuildWithLedger"/> instead rather than making every other
+    /// call site deconstruct a value it ignores.
+    /// </summary>
     private static (ProcessProposalUseCase Sut, IAgentClient Client, CapturedDecisions Decisions) Build(
-        TradeSignalDto? signal = null, Exception? throws = null, QuoteDto? quote = null)
+        TradeSignalDto? signal = null,
+        Exception? throws = null,
+        QuoteDto? quote = null,
+        RiskPolicy? policy = null,
+        decimal deployedToday = 0m)
     {
+        var (sut, client, decisions, _) = BuildWithLedger(signal, throws, quote, policy, deployedToday);
+        return (sut, client, decisions);
+    }
+
+    private static (ProcessProposalUseCase Sut, IAgentClient Client, CapturedDecisions Decisions,
+        IPortfolioRepository Portfolios) BuildWithLedger(
+        TradeSignalDto? signal = null,
+        Exception? throws = null,
+        QuoteDto? quote = null,
+        RiskPolicy? policy = null,
+        decimal deployedToday = 0m)
+    {
+        var inForce = policy ?? Policy;
         var client = Substitute.For<IAgentClient>();
         var decisions = new CapturedDecisions();
+
+        var portfolios = Substitute.For<IPortfolioRepository>();
+        portfolios.DeployedOnAsync(Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(new Money(deployedToday, Money.DefaultCurrency));
 
         // Null unless a test says otherwise, which is what "the engine could not get a price
         // for that holding" looks like from here.
@@ -134,14 +166,15 @@ public class ProcessProposalUseCaseTests
             TeamId = TeamId
         });
 
-        var quotes = new QuoteReader(client, Policy, NullLogger<QuoteReader>.Instance);
+        var quotes = new QuoteReader(client, inForce, NullLogger<QuoteReader>.Instance);
 
         return (
             new ProcessProposalUseCase(
-                client, quotes, decisions, new PositionSizer(), new RiskEngine(), Policy, options,
+                client, portfolios, quotes, decisions, new PositionSizer(), new RiskEngine(), inForce, options,
                 new FixedClock(Now)),
             client,
-            decisions);
+            decisions,
+            portfolios);
     }
 
     private static Task<TradeDecisionResult> Run(
@@ -210,6 +243,91 @@ public class ProcessProposalUseCaseTests
 
             executed.Price.Amount.ShouldBe(250m);
             executed.Quantity.ShouldBe(2m);
+        }
+    }
+
+    /// <summary>
+    /// The wiring between the ledger and the two halves that bound a purchase.
+    /// </summary>
+    /// <remarks>
+    /// The limit itself is tested against fixed figures in <c>DailyDeploymentLimitTests</c>. What
+    /// is only testable here is that the use case reads the day's spend at all, reads it **once**,
+    /// and gives the same number to the sizer and to the gate - a parameter threaded to one of the
+    /// two would leave the engine with a limit that shrinks orders but cannot refuse one, or the
+    /// reverse, and both read as working until a day is nearly spent.
+    /// </remarks>
+    public class TheTradingDaysBudget
+    {
+        /// <summary>The policy the engine actually ships, so these are the production numbers.</summary>
+        private static readonly RiskPolicy Capped = new(
+            maxPositionPct: 0.05m,
+            cashBufferPct: 0.10m,
+            maxQuoteAge: TimeSpan.FromMinutes(5),
+            minHoldingPeriod: TimeSpan.FromDays(3),
+            stopLossPct: 0.10m,
+            maxDailyDeploymentPct: 0.20m);
+
+        [Fact]
+        public async Task A_partly_spent_day_shrinks_the_order()
+        {
+            // 20 % of 10 000 is 2 000, and 1 900 is already spent, so 100 is left - one share at
+            // 100, where the position limit alone would have allowed five.
+            var portfolio = NewPortfolio();
+            var (sut, _, decisions, _) = BuildWithLedger(Signal(), policy: Capped, deployedToday: 1_900m);
+
+            var result = await Run(sut, portfolio);
+
+            result.ShouldBeOfType<TradeDecisionResult.Executed>().Quantity.ShouldBe(1m);
+            decisions.OfTheCycle.Outcome.ShouldBe(DecisionOutcome.Executed);
+        }
+
+        [Fact]
+        public async Task A_spent_day_buys_nothing_and_says_which_limit_stopped_it()
+        {
+            // NotSized rather than RejectedByRisk: the sizer's third term reached zero first, and
+            // the two outcomes are kept apart because one says something about the team and the
+            // other about the portfolio. A reader of the decision row should be able to tell that
+            // the day was the reason rather than the conviction.
+            var portfolio = NewPortfolio();
+            var (sut, _, decisions, _) = BuildWithLedger(Signal(), policy: Capped, deployedToday: 2_000m);
+
+            var result = await Run(sut, portfolio);
+
+            result.ShouldBeOfType<TradeDecisionResult.NotSized>();
+            decisions.OfTheCycle.Outcome.ShouldBe(DecisionOutcome.NotSized);
+            decisions.OfTheCycle.OutcomeReason.ShouldNotBeNull().ShouldContain("does not reach one share");
+        }
+
+        [Fact]
+        public async Task The_days_spend_is_read_once_and_for_the_day_the_request_names()
+        {
+            // Once, so the sizer and the gate cannot be handed different numbers; and for the
+            // request's own date rather than the clock read again, because the gate judges the
+            // quote against that same instant.
+            var portfolio = NewPortfolio();
+            var (sut, _, _, portfolios) = BuildWithLedger(Signal(), policy: Capped, deployedToday: 500m);
+
+            await Run(sut, portfolio);
+
+            await portfolios.Received(1).DeployedOnAsync(
+                DateOnly.FromDateTime(Now.UtcDateTime), Arg.Any<CancellationToken>());
+        }
+
+        [Fact]
+        public async Task A_sale_never_asks_the_ledger()
+        {
+            // Selling frees capital rather than committing it, so the question has no answer worth
+            // paying for - and the sell gate takes no deployment figure at all, which is what makes
+            // it impossible for a daily purchase budget to trap a position.
+            var portfolio = Holding(quantity: 10m, daysAgo: 10);
+            var (sut, _, _, portfolios) = BuildWithLedger(
+                Signal(stance: "SELL"), policy: Capped, deployedToday: 2_000m);
+
+            var result = await Run(sut, portfolio);
+
+            result.ShouldBeOfType<TradeDecisionResult.Executed>();
+            await portfolios.DidNotReceive().DeployedOnAsync(
+                Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
         }
     }
 

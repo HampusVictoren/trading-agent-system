@@ -115,26 +115,20 @@ Two things that are easy to misread as broken:
 
 ## Next steps
 
-### Resume here — stage 6, after one small pull request (2026-10-01, late)
+### Resume here — stage 6 (2026-10-01, late)
 
-Stage 5 is merged. `master` is at #54. The branch open now is `docs/claude-md-level`, which does two
-things and no code: it brings `CLAUDE.md` level with eleven merges, and it settles the two risk
-questions the live run raised.
+Stage 5 is merged and so are both of its follow-ups: `CLAUDE.md` is level (#55) and the trading
+day's deployment limit is on `stage-5-cycle-budget`. Nothing from stage 5 is outstanding.
 
-1. **Merge `docs/claude-md-level`.** `CLAUDE.md` had not changed since 2026-09-26 while eleven
-   merges landed, and its stated job is to describe the repo as it is today. It still described a
-   cycle driven by `Trading:Tickers`, named two secrets where there are now six, and omitted the
-   two tables, the two views, the 429, the scoped keys and the HMAC header. **Following it gave an
-   engine that would not start**, which is how this session discovered it.
+1. **Merge `stage-5-cycle-budget`.** `RiskPolicy:MaxDailyDeploymentPercentage` at 20 % of net asset
+   value, with the reasoning in the stage 5 follow-ups below. **The migration is not one** - it is
+   a setting, so nothing has to be applied; but `appsettings.json` gains a required key, so an
+   engine started from an older configuration will refuse until it is there.
 
-2. **Then the per-cycle deployment cap**, which is a real pull request rather than a setting: the
-   design and the number are decided in *Open decisions*, and the reason it needs its own review is
-   that the engine has no cycle-level accumulator by design, so the cap has to ask the ledger.
-
-3. **Then stage 6 - containerisation and deploy.** Read that stage in the roadmap first. Two things
-   from this stage change it: `openapi_url` defaults to `None` since #52, so the NSwag drift check
+2. **Then stage 6 - containerisation and deploy.** Read that stage in the roadmap first. Two things
+   from stage 5 change it: `openapi_url` defaults to `None` since #52, so the NSwag drift check
    needs `TAS_ENABLE_DOCS` - which **does not work in `.env`**, only as a shell variable, and that
-   defect is in *Open decisions* too.
+   defect is still open.
 
 **Nothing to run, and the waiting is not idleness.** The first `shortlist_edge` row needs the
 one-trading-day horizon to pass on 2026-10-01's eleven decisions, so it appears after the next
@@ -142,11 +136,10 @@ sweep. When it does, read `agents_edge_gross`: positive means the agents picked 
 ranking that handed them the ten candidates. One row is an anecdote; the number means something
 after a few weeks of them.
 
-**Six branches are stale** and the rule is master plus one. All are merged or superseded:
-`docs/pr4-live-run`, `stage-5-cycle`, `stage-5-selling` and `stage-5-shortlist-edge` locally, and
-`security/hardening-f01-f14` remotely. `plan/jev-placement` is somebody else's and unreviewed.
-Deleting them is refused by this session's tooling as a destructive git action, so it is two
-commands by hand.
+**Branches are stale again** and the rule is master plus one. Deleting them is refused by this
+session's tooling as a destructive git action, so it is two commands by hand - `git branch -a` will
+show which, and all of them are merged or superseded except `plan/jev-placement`, which is somebody
+else's and unreviewed.
 
 ---
 
@@ -605,15 +598,7 @@ open until then.
 - **`orders.placed_at` is a shadow property** filled by the database's `now()`. It is audit metadata today; stage 5 counts a holding period from the last purchase, and that is when it becomes domain data and has to come from the engine's injected clock instead.
 - **Quotes share the analysis client's resilience policy**, which does not retry a failing response. That rule was written for a call costing 12-15 s of LLM time and is stricter than an idempotent GET needs; the cost of leaving it is one cycle without a price for one holding, and the cost of a second typed client is a second place for the key and the timeouts to drift. Revisit if missing quotes ever show up in the decision rows.
 - **A quote for a symbol that is not a symbol answers 404, not 422.** FastAPI rejects it at routing, before validation, so it never reaches the error vocabulary. Honest but inconsistent with every other refusal in the contract; worth a `Path` converter or a catch-all route if the difference ever matters to a caller.
-- **Nothing caps how much a single cycle deploys** - decided 2026-10-01: **add a cap, as its own pull request, at 20 % of net asset value.** The first screened cycle opened four positions in four minutes and put out ten percent of the account. No rule was breached: each position is capped at `MaxPositionPercentage` of NAV and the cash buffer holds `CashBufferPct` back, which bounds a cycle at ten positions of 5 % - half the account. **The risk is correlation in time, not size per name.** Ten decisions from one model on one trading day share whatever that day's bias is, and a momentum screen in a rising market hands it ten names that move together, so "diversified across ten positions" is weaker than it looks: the correlation is the screen's own factor. 20 % allows four full-tier or eight half-tier positions a cycle, which is what the first real cycle did with headroom to spare. **The cost is honest and worth stating:** a cap slows the portfolio's formation and therefore the baseline this stage exists to build. It is configuration, so it is cheap to change once there are measurements to change it against.
-
-  **Why it is its own pull request rather than a line.** The engine has no cycle-level accumulator and that is deliberate - each analysis gets its own scope and transaction, and the architecture removed the worker's shared mutable state on purpose. So a per-cycle cap has to ask the ledger: `orders.placed_at` makes "how much was bought today" a query, which fits this codebase the way counting bars fits the trading calendar. That means a new method on a port, a setting on `RiskPolicy`, a check in `RiskEngine` and the usual tests - and a money-moving risk limit should not be reviewed inside a documentation sweep, which is the mixing that splitting SEK out of selling avoided.
-- **The cycle log's date is formatted with the current culture.** `Screened 31 instrument(s) for 10/01/2026` is the first of October and reads as the tenth of January to a Swedish reader. `{Day:yyyy-MM-dd}` in `SelectShortlistUseCase`, one string, no behaviour.
-- **`TAS_ENABLE_DOCS` does nothing where it is documented.** `create_app` reads `os.environ` directly; `settings.enable_docs` is declared in `settings.py` and read nowhere, which a grep over `app/` confirms. So the flag works as a shell variable and not in `src/agents/.env`, which is where `.env.example` tells you to put it. It fails closed, so it is not an exposure - but it is a dead setting, a documented switch that lies, and a breach of this repo's own rule that nothing reads configuration except through `get_settings()`. One line in `create_app`.
-- **Scoped API keys cannot be adopted.** `agent_api_key` is `[Required]` in `settings.py` and `ApiKey` is `[Required]` in `AgentServiceOptions`, and the legacy key grants every scope - so a full-access credential always exists and always works, and the scoped keys only *add* credentials rather than restricting any. Making the scopes real means the legacy key becoming optional, with startup refusing a configuration that has neither it nor a full set. Until then F-02's stated benefit is unreachable.
-- **The security branches leave `CLAUDE.md` and `contracts/` untouched**, which this project treats as a defect rather than a tidying job. Missing: a 429 `rate_limited` row in the failure table; `AgentService:OutcomesHmacSecret` in the user-secrets block, which is `[Required]`, so following CLAUDE.md today produces an engine that will not start; the new shape of `/ready`'s body; six new `TAS_` keys in the configuration section; and a note that stage 6's NSwag job needs the docs flag now that `openapi_url` defaults to `None`.
-- **A sixth `IAgentClient` method could forget its API key.** The header is set per call site rather than once on the client, with one test per existing scope and nothing that enumerates them - so the property that used to make forgetting impossible is now a convention. A private `SendAsync` wrapper taking the scope as a required argument would restore it.
-- **The screen's ranking cannot be validated against the names it passed over** - decided 2026-10-01 to defer, with the design named. `rank(candidates, limit)` truncates, so the 21 instruments that ranked 11th to 31st exist in no row of `trading.shortlists`, and nobody can ask whether rank 15 would have done better than rank 3. `trading.shortlist_edge` therefore scores the agents against the shortlist and **not** the ranking against itself. The fix is a pull request rather than a line: the contract carries every ranked instrument with a flag for the ones selected, `shortlists` gains that flag as a column, and the engine analyses only the flagged ones. Putting the rank in a rejection's free-text reason instead would cost twenty rows a day and answer nothing, because a measurement cannot parse prose - the half-measure is worse than either end. Worth doing once the first `shortlist_edge` rows exist and the question has an audience.
+- **How much one trading day may deploy is now capped** - built 2026-10-01 as `RiskPolicy:MaxDailyDeploymentPercentage`, 20 % of net asset value. **Counted per day, not per cycle, which is a change from how this item was first written.** The two are nearly the same thing since #51 - an instrument is analysed once a day, so a day has one buying cycle and the rest buy nothing - but the day is both the truer unit for the risk being controlled and the robust one: a cycle that failed halfway would otherwise be handed a fresh budget fifteen minutes later. What remains open is only the number, which wants measurements rather than argument.
 - **`Trading:MinDollarVolume` filters nothing, and that is settled as correct** - decided 2026-10-01: **keep 10 000 000 SEK, unchanged.** The live screen put all 31 OMXS30 names through it and rejected none, which is the evidence this item was waiting for. **A guard that does not fire on healthy data is a guard working.** Its job is to catch a symbol whose listing has gone inactive or whose data has gone stale, not to filter live large caps; raising it until it bites would be optimising a number against the wrong objective, and removing it would let a delisted name with a stale thirty-day volume rank. The condition to revisit it is the account size rather than the market: at 100 000 kr a 5 % position is about 5 000 kr against a 10 MSEK floor - 0.05 % of a day's turnover - so liquidity starts to matter somewhere above a ten-million-krona account, and the floor should move with it rather than on its own.
 - **Nothing translates a duplicate `correlation_id`.** `UnitOfWork` turns EF's concurrency exception into `ConcurrentChangeException`, but a unique-index violation still surfaces as `DbUpdateException` and lands in the worker's general handler with a stack trace. That is arguably right - the ids are fresh Guids, so a duplicate is a bug - but it has never been seen, so it has never been read.
 
@@ -1854,6 +1839,89 @@ which I checked because I expected the opposite.
     reversed exactly. The guard that actually works is `mkdir -p` before the copy and checking that
     the copy exists before touching the original - a backup step that can fail silently is not a
     backup step.
+
+
+## Stage 5 follow-ups (2026-10-01 ->)
+
+Work the stage produced rather than work the stage planned. Stage 5 itself is merged; these are the
+things running it made visible.
+
+- **`CLAUDE.md` brought level with eleven merges** (branch `docs/claude-md-level`, merged #55). It
+  had not changed since 2026-09-26 while #48, #51, #52, #53 and #54 landed, and its stated job is
+  to describe the repo as it is today. **Following it gave an engine that would not start** -
+  `AgentService:OutcomesHmacSecret` became required in #52 and the document still named two secrets
+  where there are six - which is how this session found out, by following it.
+
+  The levelling itself was **mechanical, because a grep had already failed once.** A script diffed
+  every `TAS_` variable the document names against `.env.example`, and every options property of
+  `TradingOptions`, `AgentServiceOptions` and `RiskPolicyOptions` against the text. It found four
+  things careful reading had not: the document named `DATABASE_URL` **without the `TAS_` prefix its
+  own rule demands**, `TAS_SCREEN_TIMEOUT_S` and `TAS_SCREEN_TTL_S` had never been documented at
+  all since PR 1, `MaxPositionPercentage` and `CashBufferPct` were described in prose but never
+  named, and the four scoped keys were written as a shorthand nobody could grep for.
+
+- **The trading day's deployment limit** (branch `stage-5-cycle-budget`, 2026-10-01). **507 .NET**
+  and 495 Python green. `RiskPolicy:MaxDailyDeploymentPercentage` at 20 % of net asset value - four
+  positions at the full conviction tier, or eight at the half tier.
+
+  - **It is not the position limit again.** `MaxPositionPercentage` bounds any one holding and
+    holds whatever this says. This bounds a *day*, because since #51 a day's buying is up to ten
+    decisions from one model on one screen, taken within a few minutes of each other: they share
+    whatever that day's bias is, and a momentum ranking in a rising market hands the agents ten
+    names that move together. **Ten positions is less diversification than it looks, because the
+    correlation is the screen's own factor.** The first real screened cycle deployed ten percent in
+    four minutes; ten BUYs at the full tier would have been half the account.
+  - **Per day rather than per cycle**, which is a change from how the decision was first written.
+    The engine has no cycle-level state and that is deliberate - each analysis is its own scope and
+    transaction, and the worker was left with no shared mutable state on purpose - so the budget
+    has to be asked of something that already knows. `orders.placed_at` makes it a query, which is
+    the same move as counting bars instead of keeping a holiday table: **the ledger is the
+    accumulator, so nothing has to remember.** A day is also the robust unit, because a cycle that
+    dies halfway would otherwise get a fresh budget on the next one.
+  - **The sizer shrinks and the gate refuses**, which is this engine's standing arrangement for
+    every limit: a third term in the same `min` the cash buffer already lives in, so an order
+    shrinks against the day exactly the way it shrinks against the buffer, and then the gate
+    re-derives the limit because the sizer's arithmetic is not evidence about the sizer's
+    arithmetic. The position limit is reported *before* the day when both are breached - "this
+    position is too big" tells an operator more than "the day is spent", and only one of the two
+    can be fixed by waiting.
+  - **A sale ignores it entirely.** Selling frees capital rather than committing it, and the sell
+    gate takes no deployment figure at all - so a daily *purchase* budget can never trap a
+    position, which is the same reasoning that keeps prices out of the sell gate.
+  - **A daily limit below the position limit is refused**, in the options range and again in the
+    domain. It would make the position limit unreachable, and the two numbers would be quietly
+    fighting each other.
+  - **No optional parameters on the real signatures.** `deployedToday` is required on
+    `PositionSizer.Size` and the buy overload of `RiskEngine.Evaluate`, and the tests get
+    four-argument overloads through an extension class instead. An optional parameter would mean a
+    production call site that forgot it silently said "nothing spent today" - which is the shape of
+    mistake that cost #52 its screen key, where a property that made forgetting impossible was
+    traded for a convention and the first new call site broke it.
+  - *Mutation-tested:* the sizer ignoring the day's budget turns three tests red; the gate trusting
+    the sizer instead of re-deriving turns exactly the gate test red; the ledger query counting
+    sales as purchases turns exactly the ledger test red.
+  - **The cost, stated:** this slows the portfolio's formation and therefore the baseline the
+    measurement needs. It is configuration for that reason, and the number is the part that wants
+    measurements rather than argument.
+
+  - **Reviewed externally 2026-10-01**, verdict *accept with nits*, no blockers, CI green. Five
+    findings, all real, and **the first one was wrong about more than its wording**:
+
+    | Finding | Answered |
+    |---|---|
+    | The `RiskPolicyOptions` remark said the `[Range]` starts at the position limit; it is 0.01-1.0, and the cross-condition lives in the domain | **Fixed, and the remark had been describing behaviour that did not exist.** It also claimed the domain's guard "fails at startup", which is false: `RiskPolicy` is a singleton built by a factory, so it is first resolved when a *cycle* asks for it - the refusal would have arrived as an "Unexpected failure" line from inside the worker's own catch, minutes after a deploy. That is precisely the failure this project builds configuration to avoid. So the fix is a `RiskPolicyOptionsValidator` carrying the cross-condition into `ValidateOnStart`, which is the pattern `TradingOptionsValidator` already set, and the domain keeps its own guard because it does not trust that configuration was validated |
+    | `DeployedOnAsync` has no `portfolio_id` filter | **Documented**, with the invariant named: it leans on the same one `FindAsync` enforces, that the engine trades one account and a second row is a fault rather than a silent pick. The remark now says that if that ever stops being true, this sum has to be scoped before anything else is - a shared daily budget across two accounts would let each spend the other's |
+    | No use-case test with a non-zero `deployedToday` | **Fixed**, and it was a dangling affordance: the parameter had been added to the test builder and never used. Four tests now cover what is only testable there - that the day's spend is read **once**, for the date the request names, given to both halves, and not read at all for a sale |
+    | `CLAUDE.md`'s formula still named two `min` terms | **Fixed** |
+    | Theoretical check-then-act between concurrent workers | **Answered rather than guarded.** Two buys decided at once would read the same spend, but both change the portfolio's cash, so the row version the aggregate already carries fails the second commit as a `ConcurrentChangeException` - the same mechanism that stops two writers spending the same krona. Written into the policy's remarks, because a reader should not have to re-derive it |
+
+    *Mutation-tested again:* a validator that passes everything turns exactly the startup test red;
+    asking the ledger for a sale as well turns exactly the sale test red.
+
+  - **The review's most useful nit was about a comment.** It said the remark and the attribute
+    disagreed, which was true - and following that disagreement showed the remark was describing a
+    guarantee the code did not give. **A comment that is wrong about the code beside it is worth
+    reading as a question about the code, not only about the comment.**
 
 
 ---

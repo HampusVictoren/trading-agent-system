@@ -30,7 +30,8 @@ public class AnalysisDueCheckTests
         cashBufferPct: 0.10m,
         maxQuoteAge: TimeSpan.FromMinutes(5),
         minHoldingPeriod: TimeSpan.FromDays(3),
-        stopLossPct: 0.10m);
+        stopLossPct: 0.10m,
+        maxDailyDeploymentPct: 1m);
 
     private static QuoteDto AQuote(decimal price, DateTimeOffset? asOf = null) => new()
     {

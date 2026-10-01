@@ -14,6 +14,7 @@ using Microsoft.Extensions.Options;
 public class ProcessProposalUseCase
 {
     private readonly IAgentClient _agentClient;
+    private readonly IPortfolioRepository _portfolios;
     private readonly QuoteReader _quotes;
     private readonly IDecisionLog _decisions;
     private readonly PositionSizer _sizer;
@@ -24,6 +25,7 @@ public class ProcessProposalUseCase
 
     public ProcessProposalUseCase(
         IAgentClient agentClient,
+        IPortfolioRepository portfolios,
         QuoteReader quotes,
         IDecisionLog decisions,
         PositionSizer sizer,
@@ -33,6 +35,7 @@ public class ProcessProposalUseCase
         TimeProvider clock)
     {
         _agentClient = agentClient;
+        _portfolios = portfolios;
         _quotes = quotes;
         _decisions = decisions;
         _sizer = sizer;
@@ -146,7 +149,15 @@ public class ProcessProposalUseCase
 
         var prices = await PricesForSizingAsync(portfolio, signal, requested, request, cancellationToken);
 
-        var intent = _sizer.Size(signal, portfolio, prices, _policy);
+        // Read once and handed to both halves, so the sizer and the gate cannot disagree about how
+        // much of the day is left. A sale needs none of it - selling frees capital rather than
+        // committing it - so the query is only made when there is a purchase to bound.
+        var deployedToday = signal.Stance == Stance.Buy
+            ? await _portfolios.DeployedOnAsync(
+                DateOnly.FromDateTime(request.AsOf.UtcDateTime), cancellationToken)
+            : Money.Zero();
+
+        var intent = _sizer.Size(signal, portfolio, prices, _policy, deployedToday);
 
         if (intent is OrderIntent.None nothing)
             return new Cycle(new TradeDecisionResult.NotSized(requested, nothing.Reason), signal);
@@ -157,7 +168,8 @@ public class ProcessProposalUseCase
         // held. That the two take different parameters is what says so.
         var decision = intent switch
         {
-            OrderIntent.Buy buy => _riskEngine.Evaluate(buy, signal, portfolio, prices, _policy, request.AsOf),
+            OrderIntent.Buy buy =>
+                _riskEngine.Evaluate(buy, signal, portfolio, prices, _policy, request.AsOf, deployedToday),
             OrderIntent.Sell sell => _riskEngine.Evaluate(sell, portfolio, _policy, request.AsOf),
 
             // Unreachable: None returned above, and the hierarchy is closed. Throwing rather

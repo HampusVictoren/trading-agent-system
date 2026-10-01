@@ -16,13 +16,18 @@ public class RiskEngine
     /// past both. It also checks what sizing cannot see - how old the quote is.
     /// </summary>
     /// <param name="now">Passed in rather than read from the clock, so the rule is testable.</param>
+    /// <param name="deployedToday">
+    /// What the account has already spent on purchases in this trading day. Re-derived here
+    /// rather than trusted from the sizer, which is the rule for every other limit in this gate.
+    /// </param>
     public RiskDecision Evaluate(
         OrderIntent.Buy order,
         TradeSignal signal,
         Portfolio portfolio,
         PriceSnapshot holdingPrices,
         RiskPolicy policy,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        Money deployedToday)
     {
         if (PriceTooOld(signal.QuoteAsOf, policy, now) is RiskDecision.Rejected stale)
             return stale;
@@ -54,6 +59,18 @@ public class RiskEngine
         {
             return new RiskDecision.Rejected(
                 $"the order costs {cost.Amount} and only {portfolio.CashBalance.Amount} is available");
+        }
+
+        // The day's own allowance, checked after the position limit so the more specific refusal
+        // is the one reported: "this position is too big" tells an operator more than "the day is
+        // spent", and only one of the two can be fixed by waiting.
+        var deployedAfter = deployedToday.Add(cost);
+        var dailyLimit = valued.NetAssetValue.Multiply(policy.MaxDailyDeploymentPct);
+
+        if (deployedAfter.Amount > dailyLimit.Amount)
+        {
+            return new RiskDecision.Rejected(
+                $"the day's purchases would reach {deployedAfter.Amount}, past the limit of {dailyLimit.Amount}");
         }
 
         return new RiskDecision.Approved();
