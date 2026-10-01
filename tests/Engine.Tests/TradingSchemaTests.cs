@@ -296,9 +296,10 @@ public class TradingSchemaTests : IAsyncLifetime
             (await TablesInTradingSchema(context)).ShouldBe(7);
             (await FunctionsInTradingSchema(context)).ShouldBe(1);
 
-            // The report view depends on two tables, so it has to be dropped before them and
-            // rebuilt after. A down migration that forgot it would fail on DROP TABLE.
-            (await ViewsInTradingSchema(context)).ShouldBe(1);
+            // Two report views now, and both depend on tables, so they have to be dropped
+            // before them and rebuilt after. A down migration that forgot one would fail on
+            // DROP TABLE.
+            (await ViewsInTradingSchema(context)).ShouldBe(2);
         }
         finally
         {

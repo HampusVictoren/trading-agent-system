@@ -17,9 +17,11 @@ because an instrument is now analysed once a trading day. See *The live run* und
 same question every fifteen seconds; it now asks eleven instruments it chose itself, once a day
 each. The population a baseline needs exists as of today.
 
-**One review is outstanding, not one piece of work:** the security hardening on
-`security/hardening-master-bdf5bf1`. It is reviewed and green; two secrets have to be created
-before it can start. Read *Next steps*.
+**Stage 5 is code-complete as of today.** All five pull requests: #42, #43, #44/#45, #48, #51 and
+#52 are merged, and the fifth - `trading.shortlist_edge`, the view that asks whether the agents beat
+the screen that picked their candidates - is on `stage-5-shortlist-edge`. **The stage is not
+verified**, though: two of the roadmap's five conditions need the market to move against a position.
+Read *Next steps*.
 **Stage 4's code is complete and merged** - all eight pull requests. The machinery runs end to end: decisions are stored, the portfolio survives a
 restart, a sweep scores every signal whose horizon has passed, the engine posts what it
 measured to the agent service, and memory reads the journal back. 21 signals are scored and
@@ -84,13 +86,15 @@ Two things that are easy to misread as broken:
 ## Current state
 
 - **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21, **stage 3 done** 2026-09-23. **Stage 4 started** 2026-09-23. PR 5 and PR 6 were each split in two, so the stage is eight pull requests, and **all eight are merged** as of 2026-09-25. **Stage 5 has started**, with the model and the horizon settled first; stages 6-8 exist only as plan.
-- **`master` is at PR #51** (`stage-5-cycle`, merged 2026-10-01). Stage 4's eight pull requests and stage 5's first four are all on `master`. Nothing reaches it without the three required checks passing, so what is there is green by construction.
+- **`master` is at PR #52** (the security hardening, merged 2026-10-01). Stage 4's eight pull requests and stage 5's first four are on it, plus the live-run record as #53. Nothing reaches it without the three required checks passing, so what is there is green by construction.
 - **Dependabot's bumps are in.** #46 (setup-uv) and #47 (six Python packages) merged to `master` on 2026-09-26 and were merged *into* `stage-5-selling` rather than rebased onto, because the branch was already pushed and a rebase would need a force-push. Two of the six matter behaviourally - **ag2 1.0.5 to 1.0.6** and **openai 3.16.1 to 3.19.1** - and the lock also *downgraded* SQLAlchemy from 2.1.1 to 2.0.54, which the Alembic fixture exercises on every database test. 476 Python tests green on all of it.
 - **Stage 5's merge history:** `stage-5-model-and-horizon` as #42, `stage-5-screening` as #43, `stage-5-sek` as #44, `stage-5-symbol-columns` as #45 - the last of those repairing #44, which merged four of its six commits and left `master` with the widened pattern and the old columns for a few minutes - `stage-5-selling` as #48 and `stage-5-cycle` as #51.
-- **Three branches are open besides this one**, which is more than the usual master-plus-one and worth knowing why. `security/hardening-master-bdf5bf1` is the security review's fixes, rebased onto #51 and reviewed (see *The security hardening review*). `security/hardening-f01-f14` is the **superseded** first attempt at the same work, based on the older master - it has nothing the new branch lacks and can go once its replacement merges. `plan/jev-placement` is a docs-only branch adding `docs/arkitektur-jev-roadmap.md`, 240 lines, **not reviewed here**.
+- **One branch is open:** `stage-5-shortlist-edge`, the stage's fifth and last pull request. Two others are stale and can go: `security/hardening-f01-f14` is the **superseded** first attempt at #52, based on the older master and with nothing the merged branch lacks, and `docs/pr4-live-run` and `stage-5-cycle` were merged as #53 and #51 without being deleted. `plan/jev-placement` is a docs-only branch adding `docs/arkitektur-jev-roadmap.md`, 240 lines, **not reviewed here**.
+- **The security hardening is merged as #52 and verified live** on 2026-10-01: `POST /v1/outcomes` accepted its HMAC signature end to end (`Delivery 8097ab0f: sent 1 outcomes`), 25 market-scope calls answered 200, `/openapi.json` and `/docs` both answer 404, `/ready` returns `{"status":"ready"}` with no dependency detail, and an unauthenticated signal is refused with 401. Nothing was rate-limited. **Both of its required secrets had to be created first** - neither existed after the merge, so neither service would start.
+- **Two of its paths are not verified live:** `POST /v1/signals` and `POST /v1/screen` with their scope keys, because the verification ran on the same trading day as the live run, so no analysis was due and the shortlist was read from the database. All five call sites go through the same `AddApiKey`/`ApiKeyFor` code and no scoped keys are configured, so all five resolve to the legacy key that the 25 successful calls used - but the first new trading day is what proves it, and that is where the blocker found in review would have shown.
 - **The portfolio holds five instruments as of 2026-10-01**, up from one: ERIC-B.ST (26 at 94.96, from 2026-09-26) plus HEXA-B.ST (25 at 99.02), SEB-A.ST (10 at 229.20), EVO.ST (3 at 791.80) and KINV-B.ST (40 at 61.70), all four bought by the engine's own first screened cycle. Cash is 87 920.14 kr. Every one of the four is a *measurable* decision with `selection = Shortlist`, which is what stage 5 existed to produce.
 - **`trading.shortlists` has its first row set**: ten candidates for 2026-10-01, no rejections. The 43 decisions that predate the column are backfilled as `FixedList`, so the two populations never pool - which is the whole reason the column exists.
-- **Stage 5 gained a fifth pull request**, split out of the fourth on 2026-09-27: the shortlist as a benchmark. Comparing buys against the shortlist average needs the members that were *not* bought measured too, which is a new population in `MeasurementWorker` and a column on `trading.hit_rate`. It touches no decision path and cannot be verified until a horizon has passed, so it reviews on its own.
+- **Stage 5 gained a fifth pull request**, split out of the fourth on 2026-09-27: the shortlist as a benchmark. It was split on the belief that it needed a new measured population, which turned out to be false - stage 4 already scores every signal, bought or not - so it is `trading.shortlist_edge`, a view, rather than a worker change. The split was still right: it touches no decision path and cannot be verified until a horizon has passed, so it reviews on its own.
 - **The account and the universe are Swedish, and there is no currency conversion anywhere.** `Money.DefaultCurrency` is SEK, the universe is 31 OMXS30 names, and outcomes are measured against XACT-OMXS30.ST. The opening balance is 100 000 kr, which is what makes the conviction tiers differ in share counts rather than both rounding to one. The 36 USD decisions and 21 SPY measurements from before the move are **kept**: `decisions.reference_currency` and `signal_outcomes.benchmark_symbol` make them self-describing, and finding G's reproduction reads them.
 - **The system finds candidates and acts on them now.** `POST /v1/screen` ranks a universe with no LLM call at all: risk-adjusted momentum from bars, filtered on liquidity, with everything it left out named and the reason attached. The stage's stated practical risk turned out to be a measurement rather than a worry - **50 instruments in 2.0 seconds**, the same as 8, because `yf.download` batches and the ranking asks for no fundamentals. As of #51 the engine drives the cycle from it, and as of 2026-10-01 it has done so against the real universe.
 - **`b1234878670a` never reached a row, and that is worth knowing rather than forgetting.** On 2026-09-25 `default`'s hash moved from `6c6da0e6edad` to `b1234878670a` without a word of the team changing: adding `sees_memory` to the payload wrote `sees_memory: false` onto every step. The payload was made sparse the same day, before the engine ran again, so the accidental hash was never stored - `SELECT team_id, team_version, count(*) FROM trading.decisions` returns only `6c6da0e6edad` and `79dfb7307b57`. Nothing has to be pooled and nothing has to be written down; the earlier warning in this file that the two hashes had to be reconciled by hand is obsolete, not wrong at the time. The lesson survives the hash: a version payload that lists every flag with its default ties the version to the shape of the payload rather than to the team.
@@ -99,56 +103,53 @@ Two things that are easy to misread as broken:
 - **Measurement has produced its first numbers.** A sweep on 2026-09-25 **measured 21** signals at one trading day, left 63 horizons not due, abandoned none, and delivered all 21 to the agent service. `trading.hit_rate` has four rows. They mean nothing yet, and it is worth saying so plainly: one trading day is noise, and all sixteen BUYs "hit" because both names happened to rise that day. The two HOLDs that missed did so with an excess of 3.5 %, which is the band doing its job rather than the model doing well.
 - **Both schemas now hold a copy of the same measurement**, joined by nothing: 21 rows in `trading.signal_outcomes`, 21 in `trading.outcome_deliveries`, 21 in `agent.signal_outcomes`. The correlation id is the only thing they share, and it crosses over HTTP.
 - **Python writes down what its agents were given.** `agent.analysis_runs` and `agent.step_outputs` hold the fact sheet an analysis started from and each step's answer - 8 runs and 24 step rows after one engine session, which is three steps per run exactly as the team specifies.
-- **Memory is wired in and correctly empty.** 8 runs are embedded; none of them has a measured outcome yet, so `recall` answers *"Inga tidigare analyser av AAPL har hunnit mätas färdigt."* - which is the designed behaviour rather than a fault. Worth knowing: **the first 21 measurements can never become memory**, because the analyses behind them predate the journal. Memory starts from the runs journalled since PR 6a, and the first becomes recallable when its one-trading-day horizon is measured.
+- **Memory is wired in and was correctly empty when PR 6b landed.** 8 runs were embedded then; none had a measured outcome, so `recall` answers *"Inga tidigare analyser av AAPL har hunnit mätas färdigt."* - which is the designed behaviour rather than a fault. Worth knowing: **the first 21 measurements can never become memory**, because the analyses behind them predate the journal. Memory starts from the runs journalled since PR 6a, and the first becomes recallable when its one-trading-day horizon is measured.
 - **There are two teams now.** `default` is the baseline and reads no memory; `default-memory` is the same team with its risk manager shown past measured analyses. For their versions, which moved with the model on 2026-09-25, see the bullet above rather than a copy here - two places holding the same hash is how this file came to assert one that existed nowhere. `Trading:TeamId` stays `default`; the memory team was run once by environment override to prove it works, which is where those 8 embedded runs came from.
 - **The model asked for horizons of a year, and no longer can.** The full distribution over all 36 stored signals was 6 days (3), 30 (1), 90 (6), 180 (**15**) and 365 (**11**) - 26 of 36 at half a year or more, although the system looks for short-term opportunities. Nobody had told it otherwise: the prompt said "be honest" without naming a range and the schema allowed 365. Capped at 30 on 2026-09-25, in pydantic, in the schema and in the engine's mapper, with the range named in the prompt. The first live signal afterwards asked for 15.
 - **The model is `qwen2.5:14b`**, at temperature 0 with seed 42, replacing `llama3.2` (3B). A cycle is about 20 s warm and 28 s cold, against 7-10 s before. `TAS_LLM__DEFAULT__TIMEOUT_S` is 60 and `AgentService:RequestTimeoutSeconds` is 120; the old 30 was below a single step on any 14B model.
 - **Two team_versions are in the data; two more are only in the code.** `default` ran 28 decisions as `6c6da0e6edad` and `default-memory` 8 as `79dfb7307b57`. The model change makes them `5926c629dcbe` and `b856e3edf611`, but the engine has not run since, so neither has a row yet. The stored rows keep their old values, which is the point of putting the version on the row - and the distinction between a version that exists and one that has been *used* is what this file got wrong about `b1234878670a` above.
-- **The engine trades two instruments.** `Trading:Tickers` is AAPL and MSFT, so a cycle is two analyses and the quote endpoint is used in a real run rather than only by tests.
-- **The `trading` schema is live and has real rows in it.** Runs on 2026-09-24 opened the account at 10 000 USD and bought one AAPL at 337.445 and one MSFT at 497.56, with a second engine process picking the same portfolio up rather than opening another. The local database has **all three** engine migrations and **all three** Alembic revisions applied, which `master` has carried since PR 6a (#39) merged on 2026-09-25 - so the two are level. Delete the rows with `TRUNCATE trading.signal_outcomes, trading.decisions, trading.orders, trading.positions, trading.portfolios RESTART IDENTITY CASCADE` if a clean baseline matters; the append-only triggers deliberately do not block that.
+- **The engine trades a screened shortlist, not a list.** `Trading:Tickers` was deleted in #51: a cycle is now the portfolio's holdings plus the ten best of 31 OMXS30 names, each analysed at most once a trading day. The quote endpoint is used for the exits every cycle and for the fact-sheet rule when a day is new.
+- **The `trading` schema is live and has real rows in it.** The account was opened at 10 000 USD on 2026-09-24, moved to SEK in #44, and holds 100 000 kr of opening balance with five Swedish positions as of 2026-10-01. The local database has **all twelve** engine migrations and all three Alembic revisions applied, so it is level with `master` plus the unmerged `ShortlistEdge` view. The USD rows from before the move are kept and self-describing - `decisions.reference_currency` and `signal_outcomes.benchmark_symbol` say which world each belongs to. Clear everything with `TRUNCATE trading.shortlists, trading.signal_outcomes, trading.decisions, trading.orders, trading.positions, trading.portfolios RESTART IDENTITY CASCADE` if a clean baseline ever matters; the append-only triggers deliberately do not block that.
 - **The engine now needs `Database:ConnectionString`** or it refuses to start. It is in the user secrets store on this machine, set 2026-09-23. `dotnet user-secrets list --project src/engine` prints it, so do not run that where anyone can see the screen.
 - **Migrations are applied by hand, and the engine refuses to start without them.** Decided 2026-09-24: `dotnet dotnet-ef database update` stays a deploy step, but startup names the pending migrations and the command instead of failing on a missing column mid-cycle.
 - **What is now impossible** rather than merely unlikely: the agents cannot name an amount (the contract has no `amount_usd`, and a test refuses one that reappears); an answer that is not the contract cannot deserialise into nulls; a position cannot be sized against cash instead of net asset value; an order cannot be placed on a quote that is stale or dated in the future; nothing can sell shares it does not hold, or sell a holding the agents bought less than three days ago on a new opinion; and a HOLD cannot extend the clock the exits read, because only a purchase moves it.
 
 ## Next steps
 
-### Resume here — two things, in this order (2026-10-01)
+### Resume here — one thing (2026-10-01, late)
 
-Stage 5's fourth pull request is merged and verified live. Nothing about it is outstanding.
+Stage 5's fifth and last pull request is on `stage-5-shortlist-edge`: `trading.shortlist_edge`,
+the view that answers whether the agents beat the screen that picked their candidates. 489 .NET and
+476 Python green. Everything else in the stage is merged - #51 (the cycle), #52 (the security
+hardening) and #53 (the live run).
 
-1. **Merge the security hardening** on `security/hardening-master-bdf5bf1`. It is reviewed and
-   green - 480 .NET, 495 Python, `dotnet format`, ruff and mypy clean, all re-run in a throwaway
-   worktree - and the blocker from the first review is fixed. **Two secrets have to exist before
-   either service will start**, so create them before merging rather than after:
+1. **Review and merge it**, then there is nothing to run: the view is read from psql, like
+   `hit_rate`. It **will be empty until a horizon has passed on a day that was screened** - the
+   first screened day is 2026-10-01 and the shortest fixed horizon is one trading day - so the
+   honest first read is tomorrow:
 
-   ```bash
-   python -c "import secrets; print(secrets.token_urlsafe(32))"
-   # -> TAS_OUTCOMES_HMAC_SECRET=<value> in src/agents/.env
-   dotnet user-secrets set "AgentService:OutcomesHmacSecret" "<the same value>" --project src/engine
+   ```sql
+   SELECT * FROM trading.shortlist_edge ORDER BY screened_on;
    ```
 
-   Then **run one short cycle again**. Not to re-prove PR 4, but because the hardening touches
-   every request the engine makes - five call sites gained a header, outcomes gained a signature,
-   and a rate limiter now sits in front of the two costly endpoints - and every test behind it is
-   against a `TestClient` rather than against the real engine talking to the real service. What to
-   watch for is a 401 on the screen, which is the shape the fixed blocker had.
+   What to look for in the first row that appears: `agents_edge_gross`. Positive means the agents
+   picked better than the ranking that handed them the ten candidates; negative means the LLM is
+   cost rather than value, and a better ranking is worth more than a better team. One day's row is
+   an anecdote - the number means something after a few weeks of them.
 
-   The rate limit is **not** a worry: the live run measured 3.1 signals a minute against a limit
-   of 10, and the bucket refills faster than that consumes it. See *The live run* for the caveat
-   about what that number is bound to.
+**The stage is then code-complete but not verified**, and the gap is honest rather than
+administrative: two of the roadmap's five verification conditions for stage 5 need the market to
+move against a position and cannot be run on demand. See the table under *The live run*. The
+cheapest of the two is the time-limit exit, because the four positions opened on 2026-10-01 carry a
+fifteen-day thesis and one of them will reach it without anything unusual happening.
 
-   What is **not** fixed, carried from the review and worth deciding rather than inheriting: the
-   `TAS_ENABLE_DOCS` switch does nothing in `.env` where `.env.example` tells you to put it;
-   `agent_api_key` stays `[Required]` on both sides so scoped keys cannot actually be adopted; and
-   `CLAUDE.md` and `contracts/` are untouched, so the 429 is undocumented and following CLAUDE.md's
-   user-secrets block today gives an engine that will not start. All three are in *Open decisions*.
+**Then stage 6 - containerisation and deploy**, which the roadmap describes and nothing here has
+started. Read that stage before beginning; note that #52 turned OpenAPI off by default, so its
+NSwag drift check needs the docs flag.
 
-2. **Then PR 5, the last of the stage:** measure the shortlist members that were never bought, and
-   add the comparison to `trading.hit_rate`. It is now worth more than it was yesterday, because
-   there are four real shortlist buys and six shortlist HOLDs to compare against - a population
-   rather than a plan. Its first decision is the `rejected` truncation in *Open decisions*: the
-   screen cuts to the shortlist size, so the ranks of the names it passed over are stored nowhere,
-   and the ranking cannot be checked against them until that changes.
+**Two things to settle before stage 6, both from the live run and both one number:** nothing caps
+how much a single cycle deploys (four buys put out ten percent of the account in four minutes), and
+`Trading:MinDollarVolume` filters nothing at this account size. Both are in *Open decisions*.
 
 ---
 
@@ -235,7 +236,7 @@ migration have no business sharing a review with selling logic. The roadmap call
 | 2 | **SEK end to end**: the symbol rule widens for Swedish tickers, the account currency becomes SEK, `available_risk_budget_usd` is renamed on the wire and in the database, and the engine points at Stockholm | A contract rename plus a migration. Inserted before selling because everything after it is written against whichever currency world exists, and because mixing it into the selling review would make it impossible to tell which change broke what |
 | 3 | Selling: the SELL branch in `PositionSizer`, `Portfolio.ExecuteSell` with realised profit and loss, and the deterministic exits - stop-loss, time limit, minimum holding period | Test-first with the same table technique as stage 2. The exits are the half that does not depend on the LLM answering, which is decision 1 applied to selling. **In progress**, four commits: the aggregate, sizing and the gate, the exits, then the wiring |
 | 4 ✅ | The engine drives the cycle: universe to shortlist, shortlist union holdings, one analysis per fact-sheet change, and the shortlist stored per trading day | This is where the regime column goes. **Merged as #51 and verified live** 2026-10-01 - see the stage 5 log |
-| 5 | The shortlist as a benchmark: measure the candidates that were never bought, and add the comparison to `trading.hit_rate` | Split out of PR 4 on 2026-09-27. It is where "do the agents beat the screening that picked their candidates?" becomes answerable, and it is a new measured population rather than a change to any decision path - so it reviews on its own and cannot be judged until a horizon has passed |
+| 5 | The shortlist as a benchmark: `trading.shortlist_edge`, the buys of a screened day against the shortlist itself | Split out of PR 4 on 2026-09-27, written 2026-10-01. It is where "do the agents beat the screening that picked their candidates?" becomes answerable. It turned out **not** to need a new measured population - stage 4 already scores every signal, bought or not - so it is a view rather than a worker change, and it cannot be judged until a horizon has passed |
 
 Stage 8's condition survives untouched, because stage 5
 does not touch the team.
@@ -613,7 +614,7 @@ open until then.
 - **Scoped API keys cannot be adopted.** `agent_api_key` is `[Required]` in `settings.py` and `ApiKey` is `[Required]` in `AgentServiceOptions`, and the legacy key grants every scope - so a full-access credential always exists and always works, and the scoped keys only *add* credentials rather than restricting any. Making the scopes real means the legacy key becoming optional, with startup refusing a configuration that has neither it nor a full set. Until then F-02's stated benefit is unreachable.
 - **The security branches leave `CLAUDE.md` and `contracts/` untouched**, which this project treats as a defect rather than a tidying job. Missing: a 429 `rate_limited` row in the failure table; `AgentService:OutcomesHmacSecret` in the user-secrets block, which is `[Required]`, so following CLAUDE.md today produces an engine that will not start; the new shape of `/ready`'s body; six new `TAS_` keys in the configuration section; and a note that stage 6's NSwag job needs the docs flag now that `openapi_url` defaults to `None`.
 - **A sixth `IAgentClient` method could forget its API key.** The header is set per call site rather than once on the client, with one test per existing scope and nothing that enumerates them - so the property that used to make forgetting impossible is now a convention. A private `SendAsync` wrapper taking the scope as a required argument would restore it.
-- **The screen's ranking cannot be validated against the names it passed over.** `rank(candidates, limit)` truncates, so an instrument that ranked 15th of 31 appears in neither `candidates` nor `rejected` and is therefore in no row of `trading.shortlists`. The agents can be compared against the shortlist; the *ranking* cannot be compared against what it left out. Fixing it means adding the un-shortlisted to `rejected` with their ranks, which grows a screen's rejections from a handful to about twenty rows a day. It is PR 5's first decision, because it is PR 5's question.
+- **The screen's ranking cannot be validated against the names it passed over** - decided 2026-10-01 to defer, with the design named. `rank(candidates, limit)` truncates, so the 21 instruments that ranked 11th to 31st exist in no row of `trading.shortlists`, and nobody can ask whether rank 15 would have done better than rank 3. `trading.shortlist_edge` therefore scores the agents against the shortlist and **not** the ranking against itself. The fix is a pull request rather than a line: the contract carries every ranked instrument with a flag for the ones selected, `shortlists` gains that flag as a column, and the engine analyses only the flagged ones. Putting the rank in a rejection's free-text reason instead would cost twenty rows a day and answer nothing, because a measurement cannot parse prose - the half-measure is worse than either end. Worth doing once the first `shortlist_edge` rows exist and the question has an audience.
 - **`Trading:MinDollarVolume` is a filter that never fires.** 10 000 000 SEK, against a universe where every name clears it by two orders of magnitude. Deliberate - at this account size an order is a few thousand kronor, so the floor is a staleness guard rather than a liquidity constraint - but a filter with no evidence behind it is worth checking against a real screen's output before it is trusted.
 - **Nothing translates a duplicate `correlation_id`.** `UnitOfWork` turns EF's concurrency exception into `ConcurrentChangeException`, but a unique-index violation still surfaces as `DbUpdateException` and lands in the worker's general handler with a stack trace. That is arguably right - the ids are fresh Guids, so a duplicate is a bug - but it has never been seen, so it has never been read.
 
@@ -1575,7 +1576,7 @@ steps* rather than here, because they are still being spent.
     |---|---|---|
     | What counts as the fact sheet having changed | **Neither today nor this price**: skip if the last analysis was today, or was at the price the quote shows now | Gives one analysis per instrument per trading day during market hours, and silence at night and at weekends - without a calendar. A closed market cannot move a price, so the engine waits for the open by itself |
     | Whether the screen runs every cycle | **Once per trading day**, read back from `trading.shortlists` otherwise | The contract already says two screens on the same day rank the same way, because the factors are daily bars. It makes yfinance's rate limit a non-issue and the cycle idempotent per day |
-    | The shortlist as a benchmark | **Split into its own pull request** | Comparing buys against the shortlist average needs the *unbought* members measured too, which is a new population in `MeasurementWorker`. PR 4 is what the engine does; PR 5 is how it is scored. Six to eight commits in one review otherwise |
+    | The shortlist as a benchmark | **Split into its own pull request** | Comparing buys against the shortlist average needs the *unbought* members measured too, which is a new population in `MeasurementWorker`. PR 4 is what the engine does; PR 5 is how it is scored. Six to eight commits in one review otherwise. **The reason was wrong** (2026-10-01): those measurements already existed, so PR 5 was two commits rather than most of a day. The decision stands, the premise did not |
 
     Two more I took without asking, both argued in the code: `trading.shortlists` stores the
     rejections as well (nullable rank and score, nullable reason), because a universe that quietly
@@ -1771,6 +1772,91 @@ kept with scopes narrowing on top, so a route added later still needs a key; and
 runs *after* authentication - twenty-five requests with random keys allocated **zero** buckets,
 which I checked because I expected the opposite.
 
+- **PR 5 of 5 - the shortlist as a benchmark** (branch `stage-5-shortlist-edge`, 2026-10-01). Two
+  commits. **489 .NET** and 476 Python green, `dotnet format` clean, no model drift.
+
+  `trading.shortlist_edge` answers the question the project turns on: per screened day, horizon and
+  team version, the average excess return of the whole shortlist beside the average of the subset
+  the engine actually bought, and the difference between them. Positive means the agents picked
+  better than the ranking that handed them the candidates; negative means the LLM is cost rather
+  than value, and the roadmap already says what follows from that - *"då är en bättre rankning värd
+  mer än ett bättre team"*.
+
+  - **It needed no new measurement, and that is the finding.** Both this log and the review of PR 4
+    said PR 5 would add a second population to `MeasurementWorker` - the shortlisted instruments
+    nobody bought. **They are already measured.** Stage 4's PR 5b scores *every* signal at the
+    fixed horizons, including HOLD and everything the risk gate refused, on the explicit grounds
+    that measuring only the trades that went through measures the wrong population. The database
+    says so: 20 `NoAction` and 41 `NotSized` measurements were already stored before this branch
+    existed. What was missing was never the data - it was a join from a measurement back to the
+    shortlist it came from, and that is a view. The planned pull request was most of a day's work;
+    the real one is two commits. **Checking the premise cost one SQL query and saved the rest.**
+
+  - **Three decisions, taken rather than asked** (the owner said to do what seemed best):
+
+    | Decision | Taken | Why |
+    |---|---|---|
+    | What to average | **`excess_return`, not `net_edge`** | `net_edge` is null for every HOLD - checked against all 67 stored measurements, 20 of 20 HOLDs null - because a HOLD has no edge to compute, only a band it stays inside. Averaging it across a shortlist would silently average the buys and sells alone, which is this view's own comparison inverted into a number that reads like data. `excess_return` is a fact about prices rather than about a stance |
+    | Gross or net | **Gross against gross, with net beside it** | The shortlist average is a paper portfolio that paid no commission and no spread, so subtracting costs from the bought side alone would flatter the screen by about three basis points a round trip. `bought_edge_net` is what the account really earned, reported next to the comparison rather than inside it - the same reasoning that put both in `hit_rate` |
+    | A new view or a column on `hit_rate` | **A new view** | Different grain. `hit_rate` groups by a decision's own attributes; this groups by a screened day and compares two subsets of it. Forcing them together would make both harder to read and neither more useful |
+
+  - **Deferred, with the design named rather than left vague:** whether to store the ranks of the
+    instruments the screen passed over. `rank(candidates, limit)` truncates, so the 21 names that
+    ranked 11th to 31st on 2026-10-01 exist in no row - which means the agents can be compared
+    against the shortlist, but **the ranking itself can never be validated**. Nobody can ask whether
+    rank 15 would have done better than rank 3. The fix is not a line in this view: the contract has
+    to carry every ranked instrument with a flag for the ones selected, `trading.shortlists` needs
+    that flag as a column, and the engine has to analyse only the flagged ones. That is a pull
+    request, and burying a contract widening inside a measurement change is the mistake that
+    splitting SEK out of selling avoided. **The half-measure is worse than either:** putting the
+    rank in a rejection's free-text reason would cost twenty rows a day and answer nothing, because
+    a measurement cannot parse prose.
+
+  - **Every test fabricates its rows**, which is not convenience. The view cannot be checked against
+    real data until a horizon has passed on a day that was screened, and the first screened day is
+    today - so a test with made-up measurements is the only thing standing between this view and a
+    number nobody has ever verified. It is also the only way to put a HOLD, a buy and an
+    unmeasurable row in one shortlist on purpose.
+
+  - *Mutation-tested:* averaging `net_edge` instead of `excess_return` turns **seven** tests red,
+    which is the central mistake and the one worth the most coverage; counting the rejected
+    instruments as shortlist members turns exactly the rejection test red; dropping the trading day
+    from the join turns exactly the cross-day test red.
+
+  - **Reviewed externally 2026-10-01**, verdict *accept with nits*, no code blockers, CI green.
+    Four findings, all real, and two of them changed the view:
+
+    | Finding | Answered |
+    |---|---|
+    | `bought` was `outcome = 'Executed'` with no stance, so an executed SELL on a shortlisted holding could inflate the edge | **Fixed.** A sale's `excess_return` is still the instrument's forward return, so a well-timed exit from a share that then fell would have arrived as a *negative* contribution to how the bought instruments did - in a column it was never part of. `AND d.stance = 'Buy'` on all four aggregates, plus a test whose numbers show the difference: the edge reads 0.14 with the filter and 0.00 without it, and 0.00 is the shape of a result that means nothing while looking like agreement |
+    | No test for `NotSized` or `RejectedByRisk`, although 41 `NotSized` measurements were the premise of the whole pull request | **Fixed.** A theory over both. Not hypothetical either: SAAB-B.ST was shortlisted on 2026-10-01, answered SELL and was refused because the portfolio held none of it |
+    | *Current state* still contradicted itself | **Fixed**, and it was worse than the review said - see below |
+    | The inner join drops a shortlisted instrument that was never analysed, biasing the control | **Documented.** It cannot happen while a cycle completes, because every shortlisted instrument is analysed once a day, so it is a property to know rather than a guard to write. The remarks had covered the midnight straddle and not this |
+
+    The empty pull request body is this session's: the text is generated into a pre-filled compare
+    URL and into `pr5-body.md`, so opening the plain compare page gives a blank one.
+
+  - **The stale-claim sweep missed a whole section, which is the second time this file has caught
+    me at the same thing.** The lesson written after PR #42's review says a resume document
+    describing a plan that no longer holds is one you stop trusting, and that writing a new
+    sentence beside a stale one leaves the file worse. The sweep I ran was a grep for phrases I
+    expected to be stale - which finds what you already suspect and nothing else. *Current state*
+    still said `Trading:Tickers` was AAPL and MSFT, a setting **deleted** in #51, and that the
+    database had "all three" engine migrations when it has twelve. **A section that describes the
+    present has to be read, not searched**, and the review found in minutes what the grep could not
+    find by construction.
+
+  - **The backup discipline failed a third time, and differently.** The mutation harness copies the
+    file to the scratchpad in the same command as the edit, which is the guard this log wrote after
+    PR 4. This time the `cp` itself failed - the scratchpad's `mutations/` directory did not exist
+    in a new session - and because it was chained with `&&` after a `cd` that succeeded, the mutation
+    ran anyway on a file that was **not yet committed**, so there was no copy anywhere. It was
+    recoverable only because the mutation was a single known string replacement that could be
+    reversed exactly. The guard that actually works is `mkdir -p` before the copy and checking that
+    the copy exists before touching the original - a backup step that can fail silently is not a
+    backup step.
+
+
 ---
 
 ## Lessons and gotchas
@@ -1797,6 +1883,14 @@ Things that cost time or were not obvious. Most are also recorded where they app
 - **There is a stale `ConnectionStrings:Database` user secret with `Host=localhost`.** Nothing reads it - the engine reads `Database:ConnectionString` and the design-time factory reads the environment variable - but it sent this session looking for a configuration bug that did not exist, because listing the secrets showed two connection strings and one of them used the host CLAUDE.md warns against. Worth deleting.
 - **A claim about what a cycle does *not* do needs a log, not a test.** Every test in the suite proves something happens; the fourth pull request's whole point was that two cycles out of three stop happening, and the only honest evidence was three cycles of real output plus the agent service's own request counts as an independent second witness. Shortening the interval to a minute made it observable without touching the rule under test, because the rule is about the day and the price.
 - **A measured number beat a reasoned one twice in a day.** The rate-limit headroom was argued from `ShortlistSize` and the real constraint turned out to be per-analysis latency; the liquidity floor was argued as a safeguard and turned out to filter nothing. Both arguments were sound and both were about the wrong variable.
+
+- **A grep is not a review of a section that describes the present.** Twice now this file has gone stale in a part I did not touch, and twice I swept for it by grepping phrases I expected to be wrong - which finds what you already suspect and, by construction, nothing else. An external review read *Current state* top to bottom and found in minutes that it still named a configuration setting deleted two pull requests earlier. **Sections that describe today get read; sections that describe history get grepped.**
+
+**Checking the premise**
+- **A whole pull request disappeared into one SQL query.** Two documents and a review all said the shortlist comparison needed a second measured population in `MeasurementWorker`. One `GROUP BY d.outcome` over `signal_outcomes` showed 20 HOLD and 41 NotSized measurements already stored, because stage 4 had deliberately measured every signal rather than every trade. The plan had been repeated often enough to stop being questioned. **Before building what a plan calls for, ask the database whether it is already there** - it is one query, and it is the cheapest piece of work available.
+- **`net_edge` is null for every HOLD, and a report that averages it lies quietly.** Three columns in `signal_outcomes` look interchangeable and are not: `instrument_return` and `excess_return` are facts about prices and populated on every measured row, while `net_edge` needs a stance to be computed against and is null for the answer the agents give most often. Averaging it across a mixed population silently averages the buys alone. `SELECT stance, count(col) ... GROUP BY stance` over every candidate column, before writing the view, is what caught it.
+- **`UseSnakeCaseNamingConvention` applies to a query type too.** `SqlQueryRaw<T>` looks for the snake_case column each property maps to, so aliasing the columns to the property names in the SQL is what *breaks* it - nine tests failed on `The required column 'agents_edge_gross' was not present`.
+- **A backup step that can fail silently is not a backup step.** The mutation harness copies the file to the scratchpad in the same command as the edit, which is the guard written after PR 4 - and it failed anyway, because `mkdir` had never run in a new session and the `cp` was chained after a `cd` that succeeded. The mutation then ran on a file that was not yet committed, so no copy existed anywhere, and only the fact that it was one known string replacement made it reversible. `mkdir -p` first, and check the copy exists before touching the original.
 
 **Rules that only bite outside a test's imagination**
 - **Mutation testing earns its keep when it fails to kill a mutation.** Twice in PR 4 a mutation left the suite green, and both times the tests were wrong rather than the mutation harmless: the missing cases were "analysed today *and* the price unchanged" and "a cycle that never reached an answer". Both are the *commonest* states the rule meets in production, and both were invisible because every existing test happened to vary two things at once.
