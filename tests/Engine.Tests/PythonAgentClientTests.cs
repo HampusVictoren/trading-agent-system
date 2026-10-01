@@ -370,8 +370,8 @@ public class PythonAgentClientTests
 
         recorder.Seen!.RequestUri!.AbsolutePath.ShouldBe("/v1/screen");
         recorder.Seen.Headers.GetValues(PythonAgentClient.CorrelationIdHeader).ShouldBe(["cycle-9"]);
-        recorder.Body.ShouldContain(""symbol":"TINY"");
-        recorder.Body.ShouldContain(""min_dollar_volume":5000000");
+        recorder.Body.ShouldContain("\"symbol\":\"TINY\"");
+        recorder.Body.ShouldContain("\"min_dollar_volume\":5000000");
     }
 
     [Fact]
