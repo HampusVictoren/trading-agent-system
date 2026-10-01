@@ -31,7 +31,8 @@ public class ProcessProposalUseCaseTests
     private static readonly RiskPolicy Policy =
         new(maxPositionPct: 0.05m, cashBufferPct: 0.10m, maxQuoteAge: TimeSpan.FromMinutes(5),
             minHoldingPeriod: TimeSpan.FromDays(3),
-        stopLossPct: 0.10m);
+        stopLossPct: 0.10m,
+        maxDailyDeploymentPct: 1m);
 
     private sealed class FixedClock(DateTimeOffset now) : TimeProvider
     {
@@ -104,11 +105,22 @@ public class ProcessProposalUseCaseTests
         AsOf = asOf ?? Now
     };
 
+    /// <param name="deployedToday">
+    /// What the account has already spent on purchases today, as the repository would answer it.
+    /// Zero unless a test is about the trading day's own budget.
+    /// </param>
     private static (ProcessProposalUseCase Sut, IAgentClient Client, CapturedDecisions Decisions) Build(
-        TradeSignalDto? signal = null, Exception? throws = null, QuoteDto? quote = null)
+        TradeSignalDto? signal = null,
+        Exception? throws = null,
+        QuoteDto? quote = null,
+        decimal deployedToday = 0m)
     {
         var client = Substitute.For<IAgentClient>();
         var decisions = new CapturedDecisions();
+
+        var portfolios = Substitute.For<IPortfolioRepository>();
+        portfolios.DeployedOnAsync(Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(new Money(deployedToday, Money.DefaultCurrency));
 
         // Null unless a test says otherwise, which is what "the engine could not get a price
         // for that holding" looks like from here.
@@ -138,7 +150,7 @@ public class ProcessProposalUseCaseTests
 
         return (
             new ProcessProposalUseCase(
-                client, quotes, decisions, new PositionSizer(), new RiskEngine(), Policy, options,
+                client, portfolios, quotes, decisions, new PositionSizer(), new RiskEngine(), Policy, options,
                 new FixedClock(Now)),
             client,
             decisions);

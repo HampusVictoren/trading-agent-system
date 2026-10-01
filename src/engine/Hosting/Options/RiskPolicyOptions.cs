@@ -68,6 +68,18 @@ public sealed class RiskPolicyOptions
     [Range(typeof(decimal), "0.01", "0.5", ParseLimitsInInvariantCulture = true, ConvertValueInInvariantCulture = true)]
     public decimal StopLossPercentage { get; init; }
 
+    /// <summary>
+    /// The most of the portfolio's value the engine may spend on purchases in one trading day.
+    /// </summary>
+    /// <remarks>
+    /// The range starts at the position limit rather than at zero, because a daily limit below it
+    /// would make the position limit unreachable - a single BUY could never be sized to its full
+    /// allowance, and the two numbers would be quietly fighting each other. The domain refuses the
+    /// same combination; this is the half that fails at startup instead of mid-cycle.
+    /// </remarks>
+    [Range(typeof(decimal), "0.01", "1.0", ParseLimitsInInvariantCulture = true, ConvertValueInInvariantCulture = true)]
+    public decimal MaxDailyDeploymentPercentage { get; init; }
+
     /// <summary>The same limits in the domain's own terms, which guards them a second time.</summary>
     public RiskPolicy ToRiskPolicy() =>
         new(
@@ -75,5 +87,6 @@ public sealed class RiskPolicyOptions
             CashBufferPct!.Value,
             TimeSpan.FromSeconds(MaxQuoteAgeSeconds),
             TimeSpan.FromDays(MinHoldingPeriodDays!.Value),
-            StopLossPercentage);
+            StopLossPercentage,
+            MaxDailyDeploymentPercentage);
 }

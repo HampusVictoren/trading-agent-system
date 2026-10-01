@@ -20,6 +20,7 @@ public class EngineOptionsTests
         ["RiskPolicy:MaxQuoteAgeSeconds"] = "300",
         ["RiskPolicy:MinHoldingPeriodDays"] = "3",
         ["RiskPolicy:StopLossPercentage"] = "0.10",
+        ["RiskPolicy:MaxDailyDeploymentPercentage"] = "0.20",
         ["Trading:Universe:0"] = "ERIC-B.ST",
         ["Trading:ShortlistSize"] = "10",
         ["Trading:MinDollarVolume"] = "10000000",
@@ -106,6 +107,37 @@ public class EngineOptionsTests
         policy.MaxQuoteAge.ShouldBe(TimeSpan.FromMinutes(5));
         policy.MinHoldingPeriod.ShouldBe(TimeSpan.FromDays(3));
         policy.StopLossPct.ShouldBe(0.10m);
+        policy.MaxDailyDeploymentPct.ShouldBe(0.20m);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("1.01")]
+    public void A_daily_deployment_limit_outside_a_share_is_rejected(string limit)
+    {
+        Should.Throw<OptionsValidationException>(
+            () => Resolve<RiskPolicyOptions>(("RiskPolicy:MaxDailyDeploymentPercentage", limit)));
+    }
+
+    [Fact]
+    public void A_missing_daily_deployment_limit_is_rejected()
+    {
+        // An absent value binds to zero, which is outside the range - so the setting cannot be
+        // forgotten into meaning "buy nothing, ever".
+        Should.Throw<OptionsValidationException>(
+            () => Resolve<RiskPolicyOptions>(("RiskPolicy:MaxDailyDeploymentPercentage", null)));
+    }
+
+    [Fact]
+    public void A_daily_limit_below_the_position_limit_is_refused_by_the_domain()
+    {
+        // Both halves guard it: data annotations cannot express "at least this other setting", so
+        // the range passes and the domain refuses the combination. A daily limit under the position
+        // limit would make the position limit unreachable, and the two numbers would be quietly
+        // fighting each other.
+        var options = Resolve<RiskPolicyOptions>(("RiskPolicy:MaxDailyDeploymentPercentage", "0.04"));
+
+        Should.Throw<ArgumentOutOfRangeException>(() => options.ToRiskPolicy());
     }
 
     [Theory]

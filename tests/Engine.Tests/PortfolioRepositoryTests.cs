@@ -335,6 +335,78 @@ public class PortfolioRepositoryTests : IAsyncLifetime
         last.On.ShouldBe(new DateOnly(2026, 9, 23));
     }
 
+    /// <summary>
+    /// A ledger line with a chosen <c>placed_at</c>, which the aggregate cannot give: the column
+    /// is a shadow property filled by the database's own <c>now()</c>, and the append-only trigger
+    /// refuses an <c>UPDATE</c> afterwards. Raw SQL is the only way to put an order on yesterday,
+    /// and this is a test about a query rather than about the aggregate.
+    /// </summary>
+    private async Task AnOrderAsync(
+        Guid portfolioId, string side, decimal quantity, decimal price, DateTimeOffset placedAt)
+    {
+        await using var context = _database.NewContext();
+
+        await context.Database.ExecuteSqlRawAsync(
+            """
+            INSERT INTO trading.orders
+                (id, portfolio_id, symbol, side, quantity, placed_at,
+                 price_amount, price_currency, triggered_by)
+            VALUES (gen_random_uuid(), {0}, 'MSFT', {1}, {2}, {3}, {4}, {5}, 'Signal')
+            """,
+            [portfolioId, side, quantity, placedAt, price, Money.DefaultCurrency],
+            TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task The_days_purchases_are_summed_from_the_ledger()
+    {
+        // The accumulator for the daily deployment limit. It is the ledger rather than anything
+        // the engine remembers, because the engine deliberately keeps no cycle-level state - and
+        // the ledger already knows.
+        var today = new DateTimeOffset(2026, 10, 1, 9, 5, 0, TimeSpan.Zero);
+
+        var portfolioId = await InAScope(async (portfolios, _, commit) =>
+        {
+            var portfolio = new Portfolio(new Money(100_000m, Money.DefaultCurrency));
+            portfolios.Add(portfolio);
+            await commit.SaveChangesAsync(TestContext.Current.CancellationToken);
+            return portfolio.Id;
+        });
+
+        // Quantity times price, so a count of orders would not do.
+        await AnOrderAsync(portfolioId, "Buy", quantity: 3m, price: 100m, today);
+        await AnOrderAsync(portfolioId, "Buy", quantity: 2m, price: 250m, today.AddHours(2));
+
+        // A sale on the same day: it frees capital rather than committing it.
+        await AnOrderAsync(portfolioId, "Sell", quantity: 10m, price: 400m, today.AddHours(3));
+
+        // And a purchase on another day, which is a different budget.
+        await AnOrderAsync(portfolioId, "Buy", quantity: 5m, price: 1_000m, today.AddDays(-1));
+
+        await using var context = _database.NewContext();
+        var repository = new PortfolioRepository(context);
+
+        var deployed = await repository.DeployedOnAsync(
+            new DateOnly(2026, 10, 1), TestContext.Current.CancellationToken);
+
+        // 300 + 500, and nothing else.
+        deployed.Amount.ShouldBe(800m);
+        deployed.Currency.ShouldBe(Money.DefaultCurrency);
+    }
+
+    [Fact]
+    public async Task A_day_with_no_purchases_deployed_nothing()
+    {
+        // Zero rather than null, so nothing upstream has an empty case to handle. Every later
+        // cycle of a trading day takes this path, because the first one did the buying.
+        await using var context = _database.NewContext();
+
+        var deployed = await new PortfolioRepository(context).DeployedOnAsync(
+            new DateOnly(2026, 10, 1), TestContext.Current.CancellationToken);
+
+        deployed.Amount.ShouldBe(0m);
+    }
+
     [Fact]
     public async Task A_quote_timestamp_from_another_offset_is_stored_as_the_same_instant()
     {

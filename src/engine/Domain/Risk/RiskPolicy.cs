@@ -60,12 +60,40 @@ public sealed record RiskPolicy
     /// </remarks>
     public decimal StopLossPct { get; }
 
+    /// <summary>
+    /// The most of the portfolio's value that may be spent on purchases in one trading day.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// It is not about any single position being too large - <see cref="MaxPositionPct"/> is that
+    /// rule, and it holds whatever this one says. This is about **correlation in time.** Since the
+    /// engine screens once a trading day and analyses each instrument once, a day's buying is ten
+    /// decisions from one model on one fact sheet apiece, taken within a few minutes of each other.
+    /// They share whatever that day's bias is, and a momentum ranking in a rising market hands the
+    /// agents ten names that move together - so "spread across ten positions" is weaker than it
+    /// looks, because the correlation is the screen's own factor.
+    /// </para>
+    /// <para>
+    /// Counted per trading <b>day</b> rather than per cycle, although the cycle is what first
+    /// raised it. The two are nearly the same thing now - an instrument is analysed once a day, so
+    /// a day has one buying cycle and the rest buy nothing - and the day is both the truer unit and
+    /// the robust one: a cycle that fails halfway would otherwise be handed a fresh budget fifteen
+    /// minutes later.
+    /// </para>
+    /// <para>
+    /// The cost is real and worth saying: this slows the portfolio's formation, and therefore the
+    /// baseline the measurement needs. It is configuration for that reason.
+    /// </para>
+    /// </remarks>
+    public decimal MaxDailyDeploymentPct { get; }
+
     public RiskPolicy(
         decimal maxPositionPct,
         decimal cashBufferPct,
         TimeSpan maxQuoteAge,
         TimeSpan minHoldingPeriod,
-        decimal stopLossPct)
+        decimal stopLossPct,
+        decimal maxDailyDeploymentPct)
     {
         if (maxPositionPct <= 0m || maxPositionPct > 1m)
         {
@@ -77,6 +105,17 @@ public sealed record RiskPolicy
         {
             throw new ArgumentOutOfRangeException(
                 nameof(cashBufferPct), cashBufferPct, "A cash buffer must be a share from 0 up to but not including 1.");
+        }
+
+        // The one bound worth stating: a daily limit below the position limit would make the
+        // position limit unreachable, so a single BUY could never be sized to its full allowance
+        // and the two numbers would be quietly fighting each other.
+        if (maxDailyDeploymentPct < maxPositionPct || maxDailyDeploymentPct > 1m)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(maxDailyDeploymentPct),
+                maxDailyDeploymentPct,
+                "A daily deployment limit must be at least the position limit and at most 1.");
         }
 
         if (maxQuoteAge <= TimeSpan.Zero)
@@ -108,5 +147,6 @@ public sealed record RiskPolicy
         MaxQuoteAge = maxQuoteAge;
         MinHoldingPeriod = minHoldingPeriod;
         StopLossPct = stopLossPct;
+        MaxDailyDeploymentPct = maxDailyDeploymentPct;
     }
 }

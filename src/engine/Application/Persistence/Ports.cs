@@ -21,6 +21,23 @@ public interface IPortfolioRepository
     Task<Portfolio?> FindAsync(CancellationToken cancellationToken = default);
 
     void Add(Portfolio portfolio);
+
+    /// <summary>
+    /// What this account spent on purchases on a given trading day, in the account's currency.
+    /// Zero when it bought nothing.
+    /// </summary>
+    /// <remarks>
+    /// On the repository rather than on the aggregate, because the aggregate deliberately does not
+    /// load its orders: answering this from the ledger in memory would mean fetching the whole
+    /// history to add up one day of it, and that cost grows for as long as the account lives. The
+    /// ledger is the accumulator instead, which is the same move as counting bars rather than
+    /// keeping a holiday table - the record already knows, so nothing has to remember.
+    ///
+    /// It is a day rather than a cycle because the engine has no cycle-level state by design: each
+    /// analysis is its own scope and transaction, and the worker was deliberately left with no
+    /// shared mutable state. A day is also the truer unit for what the limit is about.
+    /// </remarks>
+    Task<Money> DeployedOnAsync(DateOnly day, CancellationToken cancellationToken = default);
 }
 
 /// <summary>
