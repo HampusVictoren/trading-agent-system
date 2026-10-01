@@ -61,6 +61,13 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
         Run = new RunDto { TeamId = "default", TeamVersion = "abc123", Revisions = 0 }
     };
 
+    /// <summary>
+    /// What the quote endpoint answers. Two things read it, and they are deliberately different
+    /// numbers from the signal's: the fact-sheet rule compares this price against the last
+    /// analysis's reference price to decide whether to analyse at all, and the deterministic exits
+    /// value the holding with it. Neither sizes an order - that is the signal's own price, so a
+    /// test can move this one to make an analysis due without touching any arithmetic.
+    /// </summary>
     private static QuoteDto AQuote(decimal price, DateTimeOffset asOf) => new()
     {
         Instrument = new EquityInstrumentDto { Symbol = Symbol },
@@ -87,8 +94,10 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
                 ["RiskPolicy:MinHoldingPeriodDays"] = "3",
                 ["RiskPolicy:StopLossPercentage"] = "0.10",
                 ["RiskPolicy:MaxQuoteAgeSeconds"] = "300",
-                ["Trading:Tickers:0"] = Symbol,
-                ["Trading:CycleIntervalSeconds"] = "3600",
+                ["Trading:Universe:0"] = Symbol,
+                ["Trading:ShortlistSize"] = "10",
+                ["Trading:MinDollarVolume"] = "10000000",
+                ["Trading:CycleIntervalMinutes"] = "60",
                 ["Trading:TeamId"] = "default",
                 ["Trading:OpeningBalance"] = "10000",
                 ["Database:ConnectionString"] = _database.ConnectionString,
@@ -104,9 +113,11 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
         services.AddSingleton<TimeProvider>(new FixedClock(clock ?? Now));
         services.AddSingleton(agents);
         services.AddTradingDatabase();
-        services.AddTransient<HoldingQuoteReader>();
+        services.AddTransient<QuoteReader>();
         services.AddTransient<ProcessProposalUseCase>();
         services.AddTransient<ApplyExitsUseCase>();
+        services.AddTransient<SelectShortlistUseCase>();
+        services.AddTransient<AnalysisDueCheck>();
 
         return services.BuildServiceProvider();
     }
@@ -117,6 +128,7 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
         var worker = new TradingWorker(
             engine.GetRequiredService<IServiceScopeFactory>(),
             engine.GetRequiredService<IOptions<TradingOptions>>(),
+            engine.GetRequiredService<TimeProvider>(),
             engine.GetRequiredService<ILogger<TradingWorker>>());
 
         await worker.StartAsync(TestContext.Current.CancellationToken);
@@ -162,6 +174,52 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
         var client = Substitute.For<IAgentClient>();
         client.GetSignalAsync(Arg.Any<TradeSignalRequestDto>(), Arg.Any<CancellationToken>()).Returns(signal);
         client.GetQuoteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(quote);
+        return ThatShortlists(client, Symbol);
+    }
+
+    /// <summary>
+    /// Makes the client answer a screen. Every one of these tests needs it now: the cycle is
+    /// today's shortlist plus the holdings, so a client that ranks nothing against an empty
+    /// account gives a worker with nothing at all to do.
+    /// </summary>
+    private static IAgentClient ThatShortlists(IAgentClient client, params string[] symbols)
+    {
+        client.GetScreenAsync(Arg.Any<ScreenRequestDto>(), Arg.Any<CancellationToken>())
+            .Returns(new ScreenResultDto
+            {
+                Candidates = symbols.Select(symbol => new CandidateDto
+                {
+                    Instrument = new EquityInstrumentDto { Symbol = symbol },
+                    Score = 1.4m,
+                    Return3M = 0.28m,
+                    Volatility30D = 0.2m,
+                    MedianDollarVolume = 41_250_000m
+                }).ToArray(),
+                Rejected = [],
+                AsOf = Now
+            });
+
+        return client;
+    }
+
+    /// <summary>A screen that ranked nothing, but did look: the day counts as screened.</summary>
+    private static IAgentClient ThatRanksNothing(IAgentClient client, DateTimeOffset asOf)
+    {
+        client.GetScreenAsync(Arg.Any<ScreenRequestDto>(), Arg.Any<CancellationToken>())
+            .Returns(new ScreenResultDto
+            {
+                Candidates = [],
+                Rejected =
+                [
+                    new RejectionDto
+                    {
+                        Instrument = new EquityInstrumentDto { Symbol = Symbol },
+                        Reason = "typical daily turnover 41000 is below the floor"
+                    }
+                ],
+                AsOf = asOf
+            });
+
         return client;
     }
 
@@ -180,8 +238,15 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
         }
 
         // A brand new provider: new pool, new change tracker, nothing carried over in memory.
-        // This is the restart.
-        await using (var secondProcess = AnEngine(agents))
+        // This is the restart. It is also the next day, and at a price that has moved - because the
+        // same instrument on the same day is no longer analysed twice at all. The prices the
+        // arithmetic above depends on are the signal's and are unchanged; the quote only decides
+        // whether there is anything to analyse.
+        var tomorrow = Now.AddDays(1);
+        var moved = AnAgentServiceThatAnswers(
+            ABuy(conviction: 0.6, quoteAsOf: tomorrow), AQuote(price: 101m, asOf: tomorrow));
+
+        await using (var secondProcess = AnEngine(moved, clock: tomorrow))
         {
             await RunOneCycleAsync(secondProcess, expectedDecisionsAfterwards: 2);
         }
@@ -227,8 +292,11 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
             await RunOneCycleAsync(first, expectedDecisionsAfterwards: 1);
         }
 
+        // 101 rather than 100: the time limit fires either way (the stop-loss floor is 90), but at
+        // 100 the price would be exactly where the first analysis left it, and nothing would be
+        // analysed at all.
         var agents = AnAgentServiceThatAnswers(
-            ABuy(conviction: 0.6, quoteAsOf: later), AQuote(price: 100m, asOf: later));
+            ABuy(conviction: 0.6, quoteAsOf: later), AQuote(price: 101m, asOf: later));
 
         await using (var second = AnEngine(agents, clock: later))
         {
@@ -259,13 +327,61 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
             .Include(held => held.Positions)
             .SingleAsync(TestContext.Current.CancellationToken);
 
-        // 10 000 less 200, plus 200 raised, less 200 again.
-        portfolio.CashBalance.Amount.ShouldBe(9_800m);
+        // 10 000 less 200, plus the 202 the sale raised at 101, less 200 again. The sale is priced
+        // from the quote and the purchase from the signal, which is why those two differ.
+        portfolio.CashBalance.Amount.ShouldBe(9_802m);
 
         // A new position on a new thesis, so the clock the exits read starts again.
         var position = portfolio.Positions.ShouldHaveSingleItem();
         position.Quantity.ShouldBe(2m);
         position.LastPurchasedAt.ShouldBe(later);
+    }
+
+    [Fact]
+    public async Task A_holding_is_analysed_although_the_screen_ranked_nothing()
+    {
+        // The rule the whole selection exists for, end to end. Day one the screen shortlists the
+        // instrument and it is bought; day two the screen rejects it outright, so nothing is
+        // ranked at all - and it is analysed anyway, because it is held.
+        var tomorrow = Now.AddDays(1);
+
+        await using (var first = AnEngine(AnAgentServiceThatAnswers(ABuy(conviction: 0.6))))
+        {
+            await RunOneCycleAsync(first, expectedDecisionsAfterwards: 1);
+        }
+
+        // No quote, so the deterministic exits cannot price the holding and cannot be what
+        // produced the second decision.
+        var agents = ThatRanksNothing(
+            AnAgentServiceThatAnswers(ABuy(conviction: 0.6, quoteAsOf: tomorrow)), tomorrow);
+
+        await using (var second = AnEngine(agents, clock: tomorrow))
+        {
+            await RunOneCycleAsync(second, expectedDecisionsAfterwards: 2);
+        }
+
+        await using var context = _database.NewContext();
+
+        var decisions = await context.Decisions.OrderBy(row => row.Id)
+            .ToListAsync(TestContext.Current.CancellationToken);
+
+        decisions.Count.ShouldBe(2);
+        decisions[1].Symbol.Value.ShouldBe(Symbol);
+
+        // And it was analysed as something held: the request carried the two shares.
+        decisions[1].ExistingQuantity.ShouldBe(2m);
+
+        // One screen stored per trading day, and day two's says the instrument was rejected.
+        var screens = await context.Shortlists.OrderBy(row => row.Id)
+            .ToListAsync(TestContext.Current.CancellationToken);
+
+        screens.Select(entry => entry.ScreenedOn).Distinct().Count().ShouldBe(2);
+
+        // One screen request per day, not per cycle: each process asked exactly once.
+        await agents.Received(1).GetScreenAsync(Arg.Any<ScreenRequestDto>(), Arg.Any<CancellationToken>());
+        screens.Single(entry => entry.Rank == 1).Symbol.Value.ShouldBe(Symbol);
+        screens.Single(entry => entry.Rank is null).RejectedBecause
+            .ShouldBe("typical daily turnover 41000 is below the floor");
     }
 
     [Fact]
@@ -292,14 +408,17 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
         // The account is opened on the first cycle that finds nothing stored. A second
         // process must find it rather than open another, which is the failure that would make
         // every later measurement meaningless while looking perfectly healthy.
-        var agents = AnAgentServiceThatAnswers(ABuy(conviction: 0.6));
-
-        await using (var firstProcess = AnEngine(agents))
+        await using (var firstProcess = AnEngine(AnAgentServiceThatAnswers(ABuy(conviction: 0.6))))
         {
             await RunOneCycleAsync(firstProcess, expectedDecisionsAfterwards: 1);
         }
 
-        await using (var secondProcess = AnEngine(agents))
+        // The next day, at a moved price, so the second cycle has anything to analyse at all.
+        var tomorrow = Now.AddDays(1);
+        var moved = AnAgentServiceThatAnswers(
+            ABuy(conviction: 0.6, quoteAsOf: tomorrow), AQuote(price: 101m, asOf: tomorrow));
+
+        await using (var secondProcess = AnEngine(moved, clock: tomorrow))
         {
             await RunOneCycleAsync(secondProcess, expectedDecisionsAfterwards: 2);
         }
@@ -314,7 +433,7 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
         // No order, no position, no cash moved - and a decision saying the service was down.
         // Measuring only the cycles that produced an answer would make the agent service look
         // more reliable the worse it got.
-        var agents = Substitute.For<IAgentClient>();
+        var agents = ThatShortlists(Substitute.For<IAgentClient>(), Symbol);
         agents.GetSignalAsync(Arg.Any<TradeSignalRequestDto>(), Arg.Any<CancellationToken>())
             .Returns<Task<TradeSignalDto?>>(_ => throw new AgentServiceUnavailableException("the service answered 503"));
 

@@ -34,10 +34,10 @@ public class TradeSignalContractTests
     {
         // A copy that silently stops being copied would make every test below vacuous.
         //
-        // 11 rather than 9 since stage 5's screen contract landed. The engine does not read
-        // screen-request.json or screen-result.json yet - it starts driving the cycle in the
-        // stage's third pull request - but the count guards the copy step, not this file's
-        // own coverage, and a contract the build stopped copying is one nothing would notice.
+        // 11 rather than 9 since stage 5's screen contract landed, and both of those two are
+        // read now - ScreenContractTests covers them. The count stays here because it guards
+        // the copy step rather than this file's own coverage: a contract the build quietly
+        // stopped copying is one nothing else would notice.
         Directory.EnumerateFiles(Path.Combine(ContractsDirectory, "examples"), "*.json")
             .Count().ShouldBe(11);
     }

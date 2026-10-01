@@ -32,6 +32,43 @@ public interface IPortfolioRepository
 public interface IDecisionLog
 {
     void Record(DecisionRecord decision);
+
+    /// <summary>
+    /// When this instrument was last analysed and at what price, or null if it never has been.
+    /// </summary>
+    /// <remarks>
+    /// Only rows that reached an answer count. A decision with no reference price is a cycle where
+    /// the agent service could not be reached, and treating that as an analysis would turn a
+    /// two-minute outage into a lost trading day.
+    /// </remarks>
+    Task<LastAnalysis?> LastAnalysisOfAsync(Ticker symbol, CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// Where a trading day's screen goes, and how the engine finds out it already has one.
+/// </summary>
+/// <remarks>
+/// Reading and writing sit on one port for the same reason <see cref="IOutcomeLog"/>'s do: they
+/// are two halves of one question. The engine asks "do I have today's shortlist?" and either
+/// reads it back or goes and gets it, and nothing else ever reads this table.
+/// </remarks>
+public interface IShortlistLog
+{
+    /// <summary>
+    /// Everything stored for that trading day - candidates and rejections alike, candidates in
+    /// rank order. An empty list means no screen has been stored for the day, which is the only
+    /// question the caller asks of it.
+    /// </summary>
+    /// <remarks>
+    /// The rejections are included deliberately, although the caller only trades the
+    /// candidates. A day where the whole universe was rejected is a day that has been screened,
+    /// and returning only candidates would make it look unscreened and screen it again every
+    /// cycle - which is the one case where re-screening is guaranteed to be useless.
+    /// </remarks>
+    Task<IReadOnlyList<ShortlistEntry>> ForAsync(DateOnly on, CancellationToken cancellationToken = default);
+
+    /// <summary>Queues the row. It reaches the database on the next commit.</summary>
+    void Record(ShortlistEntry entry);
 }
 
 /// <summary>

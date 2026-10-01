@@ -19,16 +19,6 @@ public sealed class DecisionRecordConfiguration : IEntityTypeConfiguration<Decis
     private const int MaxRiskLength = 300;
     private const int MaxTeamVersionLength = 64;
 
-    /// <summary>
-    /// Npgsql refuses to write a DateTimeOffset whose offset is not zero, because timestamptz
-    /// stores an instant and nothing else. quote_as_of comes from another service, which is
-    /// free to express that instant in whatever offset it likes, so it is normalised here
-    /// rather than rejected at three in the morning. Reading back gives UTC, which is the
-    /// same instant.
-    /// </summary>
-    private static readonly ValueConverter<DateTimeOffset, DateTimeOffset> AsAnInstant =
-        new(value => value.ToUniversalTime(), stored => stored);
-
     public void Configure(EntityTypeBuilder<DecisionRecord> builder)
     {
         builder.ToTable("decisions");
@@ -61,8 +51,8 @@ public sealed class DecisionRecordConfiguration : IEntityTypeConfiguration<Decis
             .HasPrecision(MoneyPrecision.Digits, MoneyPrecision.Decimals);
         builder.Property(decision => decision.ReferenceCurrency).HasMaxLength(3).IsFixedLength();
 
-        builder.Property(decision => decision.RequestedAt).HasConversion(AsAnInstant);
-        builder.Property(decision => decision.QuoteAsOf).HasConversion(AsAnInstant);
+        builder.Property(decision => decision.RequestedAt).HasConversion(StoredInstant.Converter);
+        builder.Property(decision => decision.QuoteAsOf).HasConversion(StoredInstant.Converter);
 
         builder.Property(decision => decision.Thesis).HasMaxLength(MaxThesisLength);
 
@@ -74,6 +64,7 @@ public sealed class DecisionRecordConfiguration : IEntityTypeConfiguration<Decis
         // Both enums are stored as text, for the same reason the order side is: a decision
         // history is read from psql at least as often as from C#.
         builder.Property(decision => decision.Stance).HasConversion<string>().HasMaxLength(8);
+        builder.Property(decision => decision.Selection).HasConversion<string>().HasMaxLength(16);
         builder.Property(decision => decision.Outcome).HasConversion<string>().HasMaxLength(24);
 
         builder.Property(decision => decision.RecordedAt)
@@ -96,4 +87,21 @@ public sealed class DecisionRecordConfiguration : IEntityTypeConfiguration<Decis
         builder.HasIndex(decision => new { decision.TeamVersion, decision.Outcome });
         builder.HasIndex(decision => new { decision.Symbol, decision.RequestedAt });
     }
+}
+
+/// <summary>
+/// Npgsql refuses to write a DateTimeOffset whose offset is not zero, because timestamptz
+/// stores an instant and nothing else. Timestamps that come from another service are free to
+/// express that instant in whatever offset they like, so they are normalised on the way in
+/// rather than rejected at three in the morning. Reading back gives UTC, which is the same
+/// instant.
+/// </summary>
+/// <remarks>
+/// Shared rather than private once the screen's as_of needed the same treatment. Two copies of
+/// this rule would be two places for it to stop being applied.
+/// </remarks>
+internal static class StoredInstant
+{
+    public static readonly ValueConverter<DateTimeOffset, DateTimeOffset> Converter =
+        new(value => value.ToUniversalTime(), stored => stored);
 }

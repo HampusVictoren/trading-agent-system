@@ -1,6 +1,7 @@
 namespace Engine.Application.Persistence;
 
 using Engine.Application.UseCases;
+using Engine.Domain.Screening;
 using Engine.Domain.Signals;
 using Engine.Domain.ValueObjects;
 
@@ -41,6 +42,19 @@ public sealed class DecisionRecord
     public required Ticker Symbol { get; init; }
 
     public required string TeamId { get; init; }
+
+    /// <summary>
+    /// Why this instrument was analysed at all: the screen ranked it, or the portfolio holds it.
+    /// </summary>
+    /// <remarks>
+    /// Two populations that must not be averaged together. A holding is analysed whatever the
+    /// ranking says about it, and a candidate is there precisely because the ranking put it near
+    /// the top - so a hit rate over both is measuring the screen's selection and the portfolio's
+    /// inertia as one number. It cannot be derived afterwards either: whether an instrument was on
+    /// a shortlist months ago is a fact about that shortlist, and a position that has since been
+    /// sold leaves nothing to infer from.
+    /// </remarks>
+    public required SelectionSource Selection { get; init; }
 
     /// <summary>The <c>as_of</c> the engine sent, from its injected clock.</summary>
     public required DateTimeOffset RequestedAt { get; init; }

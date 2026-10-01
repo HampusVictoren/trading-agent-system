@@ -19,8 +19,10 @@ public class EngineOptionsTests
         ["RiskPolicy:MaxQuoteAgeSeconds"] = "300",
         ["RiskPolicy:MinHoldingPeriodDays"] = "3",
         ["RiskPolicy:StopLossPercentage"] = "0.10",
-        ["Trading:Tickers:0"] = "AAPL",
-        ["Trading:CycleIntervalSeconds"] = "15",
+        ["Trading:Universe:0"] = "ERIC-B.ST",
+        ["Trading:ShortlistSize"] = "10",
+        ["Trading:MinDollarVolume"] = "10000000",
+        ["Trading:CycleIntervalMinutes"] = "15",
         ["Trading:TeamId"] = "default",
         ["Trading:OpeningBalance"] = "10000",
         ["Database:ConnectionString"] = "Host=127.0.0.1;Database=tradingdb;Username=engine_svc",
@@ -63,8 +65,9 @@ public class EngineOptionsTests
         Resolve<AgentServiceOptions>().BaseUrl.ShouldBe("http://127.0.0.1:8000");
         Resolve<AgentServiceOptions>().RequestTimeoutSeconds.ShouldBe(30);
         Resolve<RiskPolicyOptions>().MaxPositionPercentage.ShouldBe(0.05m);
-        Resolve<TradingOptions>().Tickers.ShouldBe(["AAPL"]);
-        Resolve<TradingOptions>().CycleInterval.ShouldBe(TimeSpan.FromSeconds(15));
+        Resolve<TradingOptions>().Universe.ShouldBe(["ERIC-B.ST"]);
+        Resolve<TradingOptions>().ShortlistSize.ShouldBe(10);
+        Resolve<TradingOptions>().CycleInterval.ShouldBe(TimeSpan.FromMinutes(15));
         Resolve<TradingOptions>().TeamId.ShouldBe("default");
         Resolve<TradingOptions>().OpeningBalance.ShouldBe(10_000m);
     }
@@ -296,24 +299,70 @@ public class EngineOptionsTests
     }
 
     [Fact]
-    public void A_missing_ticker_list_is_rejected()
+    public void A_cycle_interval_of_zero_is_rejected()
     {
-        Should.Throw<OptionsValidationException>(() => Resolve<TradingOptions>(("Trading:Tickers:0", null)));
+        Should.Throw<OptionsValidationException>(() => Resolve<TradingOptions>(("Trading:CycleIntervalMinutes", "0")));
+    }
+
+    [Fact]
+    public void A_missing_universe_is_rejected()
+    {
+        // An empty universe is not a cautious setting, it is a system that screens nothing and
+        // therefore never finds a candidate. It fails at startup rather than running silently.
+        Should.Throw<OptionsValidationException>(() => Resolve<TradingOptions>(("Trading:Universe:0", null)));
     }
 
     [Theory]
     [InlineData("")]
-    [InlineData("   ")]
-    public void A_ticker_the_domain_would_refuse_is_rejected(string ticker)
+    [InlineData("not a symbol")]
+    public void A_universe_entry_the_domain_would_refuse_is_rejected(string symbol)
     {
-        var exception = Should.Throw<OptionsValidationException>(() => Resolve<TradingOptions>(("Trading:Tickers:0", ticker)));
+        var exception = Should.Throw<OptionsValidationException>(
+            () => Resolve<TradingOptions>(("Trading:Universe:0", symbol)));
 
-        exception.Message.ShouldContain("Trading:Tickers");
+        exception.Message.ShouldContain("Trading:Universe");
     }
 
     [Fact]
-    public void A_cycle_interval_of_zero_is_rejected()
+    public void A_universe_that_names_the_same_instrument_twice_is_rejected()
     {
-        Should.Throw<OptionsValidationException>(() => Resolve<TradingOptions>(("Trading:CycleIntervalSeconds", "0")));
+        // Caught here because the alternative is every cycle failing at the contract seam: the
+        // screen would answer with one instrument ranked twice, which the mapper refuses.
+        var exception = Should.Throw<OptionsValidationException>(() => Resolve<TradingOptions>(
+            ("Trading:Universe:0", "ERIC-B.ST"), ("Trading:Universe:1", "eric-b.st")));
+
+        exception.Message.ShouldContain("ERIC-B.ST");
+        exception.Message.ShouldContain("more than once");
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("51")]
+    public void A_shortlist_size_outside_the_contracts_range_is_rejected(string size)
+    {
+        // Zero would analyse nothing but the holdings; 51 is one past the cap the contract puts
+        // on the answer, so the agent service would refuse the request every cycle.
+        Should.Throw<OptionsValidationException>(() => Resolve<TradingOptions>(("Trading:ShortlistSize", size)));
+    }
+
+    [Fact]
+    public void A_missing_liquidity_floor_is_rejected()
+    {
+        // The one setting in this section where zero is a legitimate value - it means no floor -
+        // so it is nullable and [Required] rather than relying on a missing key binding to a
+        // number outside the allowed range.
+        Should.Throw<OptionsValidationException>(() => Resolve<TradingOptions>(("Trading:MinDollarVolume", null)));
+    }
+
+    [Fact]
+    public void A_liquidity_floor_of_zero_is_allowed()
+    {
+        Resolve<TradingOptions>(("Trading:MinDollarVolume", "0")).MinDollarVolume.ShouldBe(0m);
+    }
+
+    [Fact]
+    public void A_negative_liquidity_floor_is_rejected()
+    {
+        Should.Throw<OptionsValidationException>(() => Resolve<TradingOptions>(("Trading:MinDollarVolume", "-1")));
     }
 }

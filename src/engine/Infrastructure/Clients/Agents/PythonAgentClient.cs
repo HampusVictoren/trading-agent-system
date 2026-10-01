@@ -18,6 +18,8 @@ public class PythonAgentClient : IAgentClient
 
     private const string OutcomesPath = "v1/outcomes";
 
+    private const string ScreenPath = "v1/screen";
+
     private readonly HttpClient _httpClient;
 
     public PythonAgentClient(HttpClient httpClient)
@@ -201,6 +203,53 @@ public class PythonAgentClient : IAgentClient
         {
             throw new AgentServiceUnavailableException(
                 $"The agent service did not answer for {report.Outcomes.Count} outcomes.", ex);
+        }
+    }
+
+    /// <summary>
+    /// Asks for a ranking of the universe. The universe travels in the body, like the
+    /// instrument on a signal request, so nothing is interpolated into a path however long the
+    /// list grows.
+    /// </summary>
+    public async Task<ScreenResultDto?> GetScreenAsync(
+        ScreenRequestDto request, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            using var message = new HttpRequestMessage(HttpMethod.Post, ScreenPath)
+            {
+                Content = JsonContent.Create(request, options: ContractSerialization.Options)
+            };
+
+            // From the body, so the header and the body cannot disagree about which cycle this
+            // screen belongs to - the same rule as the signal request.
+            message.Headers.Add(CorrelationIdHeader, request.CorrelationId);
+
+            var response = await _httpClient.SendAsync(message, cancellationToken);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new AgentServiceUnavailableException(
+                    $"The agent service answered {(int)response.StatusCode} for a screen of "
+                    + $"{request.Universe.Count} instrument(s).");
+            }
+
+            return await response.Content.ReadFromJsonAsync<ScreenResultDto>(
+                ContractSerialization.Options, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw; // We are shutting down, which is not a failure of the agent service.
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TimeoutRejectedException or OperationCanceledException)
+        {
+            throw new AgentServiceUnavailableException(
+                $"The agent service did not answer for a screen of {request.Universe.Count} instrument(s).", ex);
+        }
+        catch (Exception ex) when (ex is JsonException or NotSupportedException)
+        {
+            throw new AgentResponseInvalidException(
+                "The agent service answered a screen with something other than the agreed JSON.", ex);
         }
     }
 
