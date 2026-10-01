@@ -17,6 +17,7 @@ public static class EngineOptionsExtensions
             .ValidateDataAnnotations()
             .ValidateOnStart();
 
+        services.AddSingleton<IValidateOptions<RiskPolicyOptions>, RiskPolicyOptionsValidator>();
         services.AddOptions<RiskPolicyOptions>()
             .Bind(configuration.GetSection(RiskPolicyOptions.SectionName))
             .ValidateDataAnnotations()

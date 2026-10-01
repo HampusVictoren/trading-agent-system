@@ -1,3 +1,4 @@
+using Engine.Domain.Risk;
 using Engine.Hosting;
 using Engine.Hosting.Options;
 using Microsoft.Extensions.Configuration;
@@ -129,15 +130,42 @@ public class EngineOptionsTests
     }
 
     [Fact]
-    public void A_daily_limit_below_the_position_limit_is_refused_by_the_domain()
+    public void A_daily_limit_below_the_position_limit_is_refused_at_startup()
     {
-        // Both halves guard it: data annotations cannot express "at least this other setting", so
-        // the range passes and the domain refuses the combination. A daily limit under the position
-        // limit would make the position limit unreachable, and the two numbers would be quietly
-        // fighting each other.
-        var options = Resolve<RiskPolicyOptions>(("RiskPolicy:MaxDailyDeploymentPercentage", "0.04"));
+        // "At least this other setting" is a rule about two settings at once, which a data
+        // annotation cannot express - so a validator carries it and ValidateOnStart makes it a
+        // startup failure. Relying on the domain's own guard would not have been enough: RiskPolicy
+        // is a singleton built by a factory, so it is first resolved when a cycle asks for it, and
+        // the refusal would have arrived as an "Unexpected failure" line from inside the worker
+        // minutes after a deploy.
+        var exception = Should.Throw<OptionsValidationException>(
+            () => Resolve<RiskPolicyOptions>(("RiskPolicy:MaxDailyDeploymentPercentage", "0.04")));
 
-        Should.Throw<ArgumentOutOfRangeException>(() => options.ToRiskPolicy());
+        exception.Message.ShouldContain("makes the position limit unreachable");
+    }
+
+    [Fact]
+    public void A_daily_limit_equal_to_the_position_limit_is_allowed()
+    {
+        // The boundary: one full position a day is a strange setting but a coherent one, and the
+        // rule is only that the two must not contradict each other.
+        Resolve<RiskPolicyOptions>(
+            ("RiskPolicy:MaxDailyDeploymentPercentage", "0.05")).MaxDailyDeploymentPercentage
+            .ShouldBe(0.05m);
+    }
+
+    [Fact]
+    public void The_domain_refuses_the_same_combination_a_second_time()
+    {
+        // Constructed directly, going round the options layer entirely. The domain does not trust
+        // that configuration was validated, which is the standing rule for every limit here.
+        Should.Throw<ArgumentOutOfRangeException>(() => new RiskPolicy(
+            maxPositionPct: 0.05m,
+            cashBufferPct: 0.10m,
+            maxQuoteAge: TimeSpan.FromMinutes(5),
+            minHoldingPeriod: TimeSpan.FromDays(3),
+            stopLossPct: 0.10m,
+            maxDailyDeploymentPct: 0.04m));
     }
 
     [Theory]

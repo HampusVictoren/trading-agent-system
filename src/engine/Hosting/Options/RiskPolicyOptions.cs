@@ -72,10 +72,11 @@ public sealed class RiskPolicyOptions
     /// The most of the portfolio's value the engine may spend on purchases in one trading day.
     /// </summary>
     /// <remarks>
-    /// The range starts at the position limit rather than at zero, because a daily limit below it
-    /// would make the position limit unreachable - a single BUY could never be sized to its full
-    /// allowance, and the two numbers would be quietly fighting each other. The domain refuses the
-    /// same combination; this is the half that fails at startup instead of mid-cycle.
+    /// The range below is only a share of a portfolio: "at least <see cref="MaxPositionPercentage"/>"
+    /// is a rule about two settings at once, which a data annotation cannot express, so
+    /// <see cref="RiskPolicyOptionsValidator"/> carries it and <c>ValidateOnStart</c> is what makes
+    /// it a startup failure. <see cref="RiskPolicy"/> refuses the same combination a third time,
+    /// because the domain does not trust that configuration was validated.
     /// </remarks>
     [Range(typeof(decimal), "0.01", "1.0", ParseLimitsInInvariantCulture = true, ConvertValueInInvariantCulture = true)]
     public decimal MaxDailyDeploymentPercentage { get; init; }

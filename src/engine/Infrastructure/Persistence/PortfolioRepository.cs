@@ -43,6 +43,12 @@ public sealed class PortfolioRepository : IPortfolioRepository
     ///
     /// A day with no purchases has no rows, and <c>SumAsync</c> over nothing is zero rather than
     /// null for a <c>decimal</c>, so there is no empty case to special-case.
+    ///
+    /// <b>It does not filter on a portfolio</b>, and leans on the same invariant
+    /// <see cref="FindAsync"/> enforces: the engine trades one account, and a second row there is
+    /// reported as a fault rather than silently picked. If that ever stops being true this sum has
+    /// to be scoped before anything else is, because a shared daily budget across two accounts
+    /// would let each of them spend the other's.
     /// </remarks>
     public async Task<Money> DeployedOnAsync(DateOnly day, CancellationToken cancellationToken = default)
     {

@@ -1904,6 +1904,25 @@ things running it made visible.
     measurement needs. It is configuration for that reason, and the number is the part that wants
     measurements rather than argument.
 
+  - **Reviewed externally 2026-10-01**, verdict *accept with nits*, no blockers, CI green. Five
+    findings, all real, and **the first one was wrong about more than its wording**:
+
+    | Finding | Answered |
+    |---|---|
+    | The `RiskPolicyOptions` remark said the `[Range]` starts at the position limit; it is 0.01-1.0, and the cross-condition lives in the domain | **Fixed, and the remark had been describing behaviour that did not exist.** It also claimed the domain's guard "fails at startup", which is false: `RiskPolicy` is a singleton built by a factory, so it is first resolved when a *cycle* asks for it - the refusal would have arrived as an "Unexpected failure" line from inside the worker's own catch, minutes after a deploy. That is precisely the failure this project builds configuration to avoid. So the fix is a `RiskPolicyOptionsValidator` carrying the cross-condition into `ValidateOnStart`, which is the pattern `TradingOptionsValidator` already set, and the domain keeps its own guard because it does not trust that configuration was validated |
+    | `DeployedOnAsync` has no `portfolio_id` filter | **Documented**, with the invariant named: it leans on the same one `FindAsync` enforces, that the engine trades one account and a second row is a fault rather than a silent pick. The remark now says that if that ever stops being true, this sum has to be scoped before anything else is - a shared daily budget across two accounts would let each spend the other's |
+    | No use-case test with a non-zero `deployedToday` | **Fixed**, and it was a dangling affordance: the parameter had been added to the test builder and never used. Four tests now cover what is only testable there - that the day's spend is read **once**, for the date the request names, given to both halves, and not read at all for a sale |
+    | `CLAUDE.md`'s formula still named two `min` terms | **Fixed** |
+    | Theoretical check-then-act between concurrent workers | **Answered rather than guarded.** Two buys decided at once would read the same spend, but both change the portfolio's cash, so the row version the aggregate already carries fails the second commit as a `ConcurrentChangeException` - the same mechanism that stops two writers spending the same krona. Written into the policy's remarks, because a reader should not have to re-derive it |
+
+    *Mutation-tested again:* a validator that passes everything turns exactly the startup test red;
+    asking the ledger for a sale as well turns exactly the sale test red.
+
+  - **The review's most useful nit was about a comment.** It said the remark and the attribute
+    disagreed, which was true - and following that disagreement showed the remark was describing a
+    guarantee the code did not give. **A comment that is wrong about the code beside it is worth
+    reading as a question about the code, not only about the comment.**
+
 
 ---
 

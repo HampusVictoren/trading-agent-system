@@ -84,6 +84,13 @@ public sealed record RiskPolicy
     /// The cost is real and worth saying: this slows the portfolio's formation, and therefore the
     /// baseline the measurement needs. It is configuration for that reason.
     /// </para>
+    /// <para>
+    /// Two buys decided at once would each read the same spend and could together exceed the limit.
+    /// Nothing guards that here, and nothing needs to: both of them change the portfolio's cash, so
+    /// the row version the aggregate already carries makes the second commit fail as a
+    /// <c>ConcurrentChangeException</c> - the same mechanism that stops two writers spending the
+    /// same krona. The check-then-act window is real and the commit is what closes it.
+    /// </para>
     /// </remarks>
     public decimal MaxDailyDeploymentPct { get; }
 
