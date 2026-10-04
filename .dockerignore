@@ -1,0 +1,48 @@
+# The engine's build context is the repository root, because it inherits
+# Directory.Build.props and reaches dotnet-ef through dotnet-tools.json, and both live
+# here. That makes this file load-bearing rather than tidy: the root .env holds the
+# superuser, engine_svc and agent_svc passwords, and a layer that captured it would hand
+# all three to anyone with `docker history` and a copy of the image.
+#
+# The agent service builds from src/agents with a .dockerignore of its own, so nothing
+# here governs that build.
+.env
+.env.*
+!.env.example
+
+# The same rule one layer along, and the reason it is written out rather than assumed:
+# .gitignore and .dockerignore are two lists of "this must not leave the machine", and
+# nothing keeps them in step. The first build of this image published a local
+# appsettings.Development.json that .gitignore has refused to track since September. It
+# held only log levels, so nothing leaked - but appsettings.Local.json is beside it in
+# .gitignore, and that is where a connection string goes when user secrets are a nuisance.
+# CI asks git itself whether any published file is one the repository refuses to track, so
+# the next such file does not need anyone to remember this.
+**/appsettings.Development.json
+**/appsettings.Local.json
+
+# Large and useless to a build. The engine knows nothing about its own history.
+.git
+.github
+
+# Build output from the host, which would otherwise be copied over the container's own -
+# compiled against a different runtime, by a different SDK, and newer than the source if
+# the copy happened to win.
+**/bin
+**/obj
+
+# Not the engine. The test project is restored and built by CI, not by an image that
+# places orders, and the agent service's virtualenv is a few hundred megabytes of wheels
+# built for this kernel.
+tests
+src/agents/.venv
+src/agents/dist
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+# Documentation and plans. The roadmap is 56 kB and the worklog over 200; neither changes
+# what the engine does, and both would invalidate the build cache on every edit.
+docs
