@@ -150,6 +150,38 @@ with the answer: readiness is 503 until the database and the LLM backend both re
 the engine on it would turn a blinking Ollama into a system that refuses to start - over an
 outage the engine already handles by taking no decision that cycle.
 
+**The engine builds into two images too**, from `src/engine/Dockerfile` with the **repository
+root** as the build context - it inherits `Directory.Build.props` and reaches `dotnet-ef`
+through `dotnet-tools.json`, and both live there. That also means the context contains the
+root `.env` with three passwords in it, which is what the root `.dockerignore` is for.
+
+```bash
+docker build -f src/engine/Dockerfile --target service -t tas-engine .
+docker build -f src/engine/Dockerfile --target migrate -t tas-engine-migrate .
+
+# The trading schema. --connection is not optional in practice: without it the bundle falls
+# back to the design-time factory's deliberate Host=design.invalid and fails to resolve a
+# hostname, rather than migrating something nobody meant to.
+docker run --rm --network <net> tas-engine-migrate --connection "Host=db;Port=5432;Database=tradingdb;Username=engine_svc;Password=<pw>"
+docker run --rm --network <net> tas-engine-migrate --connection "<cs>" 0   # revert everything
+docker run --rm tas-engine-migrate --version
+```
+
+- **`runtime`, not `aspnet`.** The engine is a Worker and never opens a socket, so an aspnet
+  image would carry a web server nothing starts.
+- **The migration bundle is one executable** holding every migration, built in the same stage
+  as the service from the same restore - so the two cannot disagree about which migrations
+  exist. It is **idempotent** (a second run says "No migrations were applied") and **reverses**:
+  `0` reverts everything, a migration name goes to that point. Verified against a database
+  with rows in it; the append-only triggers do not stand in the way, because dropping a table
+  is DDL and not the `DELETE` they refuse.
+- **There is no HEALTHCHECK**, on purpose. Nothing is gated on this container, and a useful
+  check would have to ask "did a cycle finish in the last fifteen minutes" rather than "is the
+  process alive" - which needs the engine to publish that somewhere. Stage 7.
+- **The `trading` schema has eleven migrations** and `agent` has five. CI reads the first number
+  off the migration files rather than holding it, because this file and the worklog have both
+  had it wrong.
+
 **Configuration:** `src/agents/app/settings.py` defines every setting as a typed, **required** field and reads `src/agents/.env` itself, so it applies to uvicorn, scripts and `python -c`. Variables already set in the shell take precedence. Nothing has a default: an incomplete environment stops the service at startup rather than falling back to OpenAI's cloud API or the wrong database role. Read them with `get_settings()`, never `os.getenv`. See `.env.example` for the keys:
 - `TAS_DATABASE_URL` (`SecretStr` - it carries the `agent_svc` password)
 - `TAS_EMBEDDINGS_BASE_URL` and `TAS_EMBEDDINGS_API_KEY` (`SecretStr`). The embedding *model* is pinned in `memory.py`, because nomic-embed-text's 768 dimensions are the column width.
