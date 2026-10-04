@@ -86,6 +86,79 @@ jobs:
           uv build --wheel -o dist
           uv run python -c 'import glob,sys,zipfile; n=sum(1 for x in zipfile.ZipFile(glob.glob("dist/*.whl")[0]).namelist() if x.startswith("app/") and x.endswith(".py")); print(f"{n} python files under app/ in the wheel"); sys.exit(0 if n >= 10 else 1)'
 
+  agents-image:
+    name: Agents (image)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Written before the build, not committed, and the reason is that it has to be there
+      # for the last step to prove anything: the repository has no .env, so a build from a
+      # clean checkout cannot demonstrate that one would be left out. The Dockerfile names
+      # the files it copies rather than copying the directory, so this is a guard against a
+      # later `COPY . .` rather than against today's code.
+      #
+      # Only when there is not one already. On a runner there never is; on a developer's
+      # machine running these steps by hand there always is, and it holds their real
+      # secrets. A step that overwrote it would be a worse bug than the one it guards.
+      - name: Put a .env in the build context
+        run: |
+          test -f src/agents/.env || echo "TAS_MARKER=not-a-real-value" > src/agents/.env
+
+      # Both targets, so the migration step cannot rot while the service keeps building.
+      - name: Build the service image
+        run: docker build --target service -t tas-agents:ci src/agents
+
+      - name: Build the migrate image
+        run: docker build --target migrate -t tas-agents-migrate:ci src/agents
+
+      - name: The service does not run as root
+        run: |
+          uid=$(docker run --rm tas-agents:ci python -c "import os; print(os.getuid())")
+          test "$uid" = "10001" || { echo "running as uid $uid"; exit 1; }
+
+      # The regression this guards happened once: `app` was missing from the built wheel and
+      # the service ran anyway, because the working directory it was started in happened to
+      # contain the source. -w / removes that hiding place, and building the application
+      # proves the package is whole rather than merely importable.
+      - name: The application builds with no working directory
+        run: |
+          docker run --rm -w / tas-agents:ci python -c \
+            "from app.main import create_app; paths = create_app().openapi()['paths']; print(len(paths), 'paths'); assert len(paths) >= 7"
+
+      # team_version is a sha256 over the prompt files' *contents*, so a build that mangled
+      # one - line endings are the realistic way - would not fail. It would quietly answer
+      # as a different team, and split the measured population in two.
+      - name: The image's prompts are the repository's
+        run: |
+          app_dir=$(docker run --rm -w / tas-agents:ci python -c "import app, pathlib; print(pathlib.Path(app.__file__).parent)")
+          (cd src/agents/app && find teams -name '*.md' | sort | xargs sha256sum) > repo-prompts.txt
+          docker run --rm -w "$app_dir" tas-agents:ci sh -c "find teams -name '*.md' | sort | xargs sha256sum" > image-prompts.txt
+          diff repo-prompts.txt image-prompts.txt
+
+      # No database needed: `heads` reads the versions directory. It proves alembic is
+      # installed, that alembic.ini and migrations/ both reached the image, and that the
+      # history has not forked - two heads means two migrations claiming the same parent,
+      # which `upgrade head` refuses at the worst possible moment.
+      - name: The migrate image has one migration head
+        run: |
+          heads=$(docker run --rm tas-agents-migrate:ci heads | grep -c "(head)")
+          test "$heads" = "1" || { echo "$heads heads"; exit 1; }
+
+      - name: The migrate image carries alembic and not the test tools
+        run: |
+          tools=$(docker run --rm --entrypoint sh tas-agents-migrate:ci -c "ls /srv/.venv/bin" | grep -E "^(alembic|pytest|mypy|ruff)$" | sort | tr "\n" " ")
+          test "$tools" = "alembic " || { echo "found: $tools"; exit 1; }
+
+      - name: No .env reached either image
+        run: |
+          for image in tas-agents:ci tas-agents-migrate:ci; do
+            if docker run --rm --entrypoint sh "$image" -c "find / -name '.env' -not -path '/proc/*' 2>/dev/null" | grep -q .; then
+              echo "$image carries a .env"
+              exit 1
+            fi
+          done
+
   secrets:
     name: Secret scan
     runs-on: ubuntu-24.04

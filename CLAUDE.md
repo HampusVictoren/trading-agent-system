@@ -51,8 +51,9 @@ dotnet dotnet-ef migrations has-pending-model-changes --project src/engine
 ```
 
 ```bash
-# The agent schema, from src/agents. Alembic is a dev dependency, the way dotnet-ef is a
-# local tool: the service never imports it, and migrating is something an operator does.
+# The agent schema, from src/agents. Alembic is in the `migrate` dependency group, the way
+# dotnet-ef is a local tool: the service never imports it, and migrating is something an
+# operator does. `dev` includes that group, so a plain `uv sync` still has it.
 uv run alembic upgrade head
 uv run alembic current                      # which revision this database is on
 uv run alembic upgrade head --sql           # read it before trusting it
@@ -109,6 +110,45 @@ dotnet run --project src/engine
 ```
 
 The working directory must be `src/agents` for the `app.*` imports to resolve.
+
+**The agent service builds into two images**, from `src/agents/Dockerfile` with `src/agents`
+as the build context - the repository root would hand the builder the engine's source and the
+root `.env` for nothing. They are two targets of one file so that both come from one
+resolution of one lock file, and two images rather than one because a service that can
+migrate the database it reads is a service that can migrate it by accident.
+
+```bash
+docker build --target service -t tas-agents src/agents            # the service: python -m app, non-root
+docker build --target migrate -t tas-agents-migrate src/agents    # alembic, as the entrypoint
+
+# The schema, pointed at a database. The URL travels as `-x url=` and not through
+# TAS_DATABASE_URL, because get_settings() requires every setting the service needs - so
+# otherwise this container would need an LLM API key to create a table.
+docker run --rm --network <net> tas-agents-migrate -x url=<dsn> upgrade head
+docker run --rm --network <net> tas-agents-migrate -x url=<dsn> current        # where is this one?
+docker run --rm --network <net> tas-agents-migrate -x url=<dsn> upgrade head --sql
+docker run --rm tas-agents-migrate heads                                      # no database needed
+```
+
+Three things about running them are worth knowing before they cost an evening:
+
+- **`app` is installed as a wheel, not copied**, so there is no working directory for an
+  import to resolve against. That is what makes the image unable to repeat the regression CI
+  guards: `app` was once missing from the built wheel and the service ran anyway, because the
+  directory it started in happened to hold the source.
+- **A `.env` passed with `--env-file` overrides the image's `TAS_BIND_HOST=0.0.0.0`**, and the
+  service then binds the container's own loopback - where a published port reaches nothing.
+  Compose has to set it explicitly for the same reason.
+- **Ollama on Windows needs `--add-host=host.docker.internal:host-gateway`** and
+  `http://host.docker.internal:11434/v1`. A container's `127.0.0.1` is the container, not WSL,
+  so mirrored networking does not help by itself; the bridge gateway reaches the WSL host,
+  which mirrored networking has already put on Windows. Verified on this machine - a real
+  three-step analysis ran from inside the container against Ollama in 32 s.
+
+The healthcheck asks `/health` and not `/ready`, which is a decision about what compose does
+with the answer: readiness is 503 until the database and the LLM backend both reply, so gating
+the engine on it would turn a blinking Ollama into a system that refuses to start - over an
+outage the engine already handles by taking no decision that cycle.
 
 **Configuration:** `src/agents/app/settings.py` defines every setting as a typed, **required** field and reads `src/agents/.env` itself, so it applies to uvicorn, scripts and `python -c`. Variables already set in the shell take precedence. Nothing has a default: an incomplete environment stops the service at startup rather than falling back to OpenAI's cloud API or the wrong database role. Read them with `get_settings()`, never `os.getenv`. See `.env.example` for the keys:
 - `TAS_DATABASE_URL` (`SecretStr` - it carries the `agent_svc` password)
