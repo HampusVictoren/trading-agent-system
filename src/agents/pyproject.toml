@@ -30,13 +30,22 @@ requires = ["uv_build>=0.12.18,<0.13.0"]
 build-backend = "uv_build"
 
 [dependency-groups]
-dev = [
+# Applying the schema is an operator's job, not the service's - it never imports alembic -
+# but it is a job done from an image, so it is a group of its own rather than part of dev.
+# The migrate target then carries alembic and SQLAlchemy without carrying pytest, mypy,
+# ruff and testcontainers, which have no business in anything that touches a database.
+migrate = [
     "alembic>=1.16",
+    "sqlalchemy[asyncio]>=2.0.54",
+]
+
+dev = [
+    # The test suite runs the real migrations, so it needs exactly what the operator has.
+    { include-group = "migrate" },
     "mypy>=1.14",
     "pytest>=8.3",
     "pytest-asyncio>=0.25",
     "ruff>=0.9",
-    "sqlalchemy[asyncio]>=2.0.54",
     "testcontainers[postgres]>=4.15.0",
 ]
 

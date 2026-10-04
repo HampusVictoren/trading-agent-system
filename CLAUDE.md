@@ -51,8 +51,9 @@ dotnet dotnet-ef migrations has-pending-model-changes --project src/engine
 ```
 
 ```bash
-# The agent schema, from src/agents. Alembic is a dev dependency, the way dotnet-ef is a
-# local tool: the service never imports it, and migrating is something an operator does.
+# The agent schema, from src/agents. Alembic is in the `migrate` dependency group, the way
+# dotnet-ef is a local tool: the service never imports it, and migrating is something an
+# operator does. `dev` includes that group, so a plain `uv sync` still has it.
 uv run alembic upgrade head
 uv run alembic current                      # which revision this database is on
 uv run alembic upgrade head --sql           # read it before trusting it
@@ -80,7 +81,8 @@ docker exec -it trading-db psql -U postgres -d tradingdb   # superuser, via the 
 
 # Python agent service — run from src/agents (Python 3.12, managed with uv)
 uv sync
-uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+uv run python -m app                        # the service's own entrypoint, as the container runs it
+uv run uvicorn app.main:app --reload        # for --reload; its first two lines are not JSON
 curl -X POST http://127.0.0.1:8000/v1/signals -H "X-Api-Key: $KEY" -H "Content-Type: application/json" \
   -d @../../contracts/examples/request.json
 
@@ -109,6 +111,45 @@ dotnet run --project src/engine
 
 The working directory must be `src/agents` for the `app.*` imports to resolve.
 
+**The agent service builds into two images**, from `src/agents/Dockerfile` with `src/agents`
+as the build context - the repository root would hand the builder the engine's source and the
+root `.env` for nothing. They are two targets of one file so that both come from one
+resolution of one lock file, and two images rather than one because a service that can
+migrate the database it reads is a service that can migrate it by accident.
+
+```bash
+docker build --target service -t tas-agents src/agents            # the service: python -m app, non-root
+docker build --target migrate -t tas-agents-migrate src/agents    # alembic, as the entrypoint
+
+# The schema, pointed at a database. The URL travels as `-x url=` and not through
+# TAS_DATABASE_URL, because get_settings() requires every setting the service needs - so
+# otherwise this container would need an LLM API key to create a table.
+docker run --rm --network <net> tas-agents-migrate -x url=<dsn> upgrade head
+docker run --rm --network <net> tas-agents-migrate -x url=<dsn> current        # where is this one?
+docker run --rm --network <net> tas-agents-migrate -x url=<dsn> upgrade head --sql
+docker run --rm tas-agents-migrate heads                                      # no database needed
+```
+
+Three things about running them are worth knowing before they cost an evening:
+
+- **`app` is installed as a wheel, not copied**, so there is no working directory for an
+  import to resolve against. That is what makes the image unable to repeat the regression CI
+  guards: `app` was once missing from the built wheel and the service ran anyway, because the
+  directory it started in happened to hold the source.
+- **A `.env` passed with `--env-file` overrides the image's `TAS_BIND_HOST=0.0.0.0`**, and the
+  service then binds the container's own loopback - where a published port reaches nothing.
+  Compose has to set it explicitly for the same reason.
+- **Ollama on Windows needs `--add-host=host.docker.internal:host-gateway`** and
+  `http://host.docker.internal:11434/v1`. A container's `127.0.0.1` is the container, not WSL,
+  so mirrored networking does not help by itself; the bridge gateway reaches the WSL host,
+  which mirrored networking has already put on Windows. Verified on this machine - a real
+  three-step analysis ran from inside the container against Ollama in 32 s.
+
+The healthcheck asks `/health` and not `/ready`, which is a decision about what compose does
+with the answer: readiness is 503 until the database and the LLM backend both reply, so gating
+the engine on it would turn a blinking Ollama into a system that refuses to start - over an
+outage the engine already handles by taking no decision that cycle.
+
 **Configuration:** `src/agents/app/settings.py` defines every setting as a typed, **required** field and reads `src/agents/.env` itself, so it applies to uvicorn, scripts and `python -c`. Variables already set in the shell take precedence. Nothing has a default: an incomplete environment stops the service at startup rather than falling back to OpenAI's cloud API or the wrong database role. Read them with `get_settings()`, never `os.getenv`. See `.env.example` for the keys:
 - `TAS_DATABASE_URL` (`SecretStr` - it carries the `agent_svc` password)
 - `TAS_EMBEDDINGS_BASE_URL` and `TAS_EMBEDDINGS_API_KEY` (`SecretStr`). The embedding *model* is pinned in `memory.py`, because nomic-embed-text's 768 dimensions are the column width.
@@ -117,7 +158,7 @@ The working directory must be `src/agents` for the `app.*` imports to resolve.
 - `TAS_OUTCOMES_HMAC_SECRET` (`SecretStr`) - shared with the engine, separate from the API key on purpose: a stolen key alone must not be enough to forge measurements into agent memory. The engine HMAC-SHA256-signs the raw `POST /v1/outcomes` body and sends `sha256=<hex>` as `X-Outcomes-Signature`; an unsigned or mismatched body is refused with the same 401 as a bad key. There is no timestamp or nonce, so a captured body can be replayed - harmless only because the agent side stores with `ON CONFLICT DO NOTHING`.
 - `TAS_ENABLE_DOCS` (bool, default false) - `/docs`, `/redoc` and `/openapi.json` sit outside the authenticated router, so they are off. **Known defect:** `create_app` reads this from `os.environ` and never reads `settings.enable_docs`, so setting it in `src/agents/.env` does nothing and only a shell variable works. Stage 6's NSwag drift check needs it on.
 - `TAS_RATE_LIMIT_SIGNALS_PER_MINUTE` (10), `TAS_RATE_LIMIT_SIGNALS_GLOBAL_PER_MINUTE` (30), `TAS_RATE_LIMIT_SCREEN_PER_MINUTE` (30) and `TAS_RATE_LIMIT_SCREEN_GLOBAL_PER_MINUTE` (60) - in-process token buckets on the two costly endpoints, checked *after* authentication so unauthenticated traffic allocates nothing. A measured cycle runs 3.1 signals a minute, so the limit is bound to the model's latency rather than to `ShortlistSize`: a model answering in three seconds instead of nineteen would breach it.
-- `TAS_BIND_HOST` (127.0.0.1) and `TAS_ENVIRONMENT` (development) - an operator-declared hint. Uvicorn owns the real socket, so this only produces a startup warning when a non-loopback bind is declared outside development, and it is silent by default.
+- `TAS_BIND_HOST` (127.0.0.1), `TAS_PORT` (8000) and `TAS_ENVIRONMENT` (development) - the socket, when the service is started through its own entrypoint. `python -m app` configures JSON logging and then binds these, which is what the container runs; start uvicorn by hand and the command line owns the socket while `TAS_BIND_HOST` goes back to being a claim about it. Either way a non-loopback bind declared outside development produces a startup warning, and it is silent by default.
 - `TAS_READY_DETAIL` (bool, default false) - when false `/ready` answers `{"status": "ready"}` and the dependency names stay in the logs.
 - `TAS_LLM__DEFAULT__*` - one `ModelSpec`: `PROVIDER`, `MODEL`, `BASE_URL`, `API_KEY`, `TEMPERATURE`, `TIMEOUT_S`, and optionally `SEED`. `TIMEOUT_S` caps one LLM call; without it the openai client waits 600 s to read a response, which makes a 504 unreachable in practice. `TEMPERATURE` is 0.0 and `SEED` is set, which pins **the decision, not the run**: Ollama returns the same bytes when the same request is repeated in the same state, but a different request in between changes them, because the numerics depend on batching and KV-cache state outside the request. What that buys is that a contradiction can no longer be blamed on the draw. Note the interaction when swapping providers - `anthropic` has no seed field, so `settings.py` refuses the combination at startup rather than dropping it silently, and switching to it means removing `SEED` too.
 - `TAS_LLM__ROLES__<ROLE>__*` - the same fields, overriding one step's model. The roles are the steps of a team (`market_analyst`, `risk_manager`, `portfolio_manager`), and startup refuses a name no step uses, so a typo cannot fall back to the default.

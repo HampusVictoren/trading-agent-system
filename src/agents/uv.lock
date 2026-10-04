@@ -61,6 +61,10 @@ dev = [
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "testcontainers" },
 ]
+migrate = [
+    { name = "alembic" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+]
 
 [package.metadata]
 requires-dist = [
@@ -85,6 +89,10 @@ dev = [
     { name = "ruff", specifier = ">=0.9" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.54" },
     { name = "testcontainers", extras = ["postgres"], specifier = ">=4.15.0" },
+]
+migrate = [
+    { name = "alembic", specifier = ">=1.16" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.54" },
 ]
 
 [[package]]

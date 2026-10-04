@@ -85,7 +85,7 @@ Two things that are easy to misread as broken:
 ## Current state
 
 - **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21, **stage 3 done** 2026-09-23. **Stage 4 started** 2026-09-23. PR 5 and PR 6 were each split in two, so the stage is eight pull requests, and **all eight are merged** as of 2026-09-25. **Stage 5 has started**, with the model and the horizon settled first; stages 6-8 exist only as plan.
-- **`master` is at PR #52** (the security hardening, merged 2026-10-01). Stage 4's eight pull requests and stage 5's first four are on it, plus the live-run record as #53. Nothing reaches it without the three required checks passing, so what is there is green by construction.
+- **`master` is at PR #56** (the trading day's deployment limit, merged 2026-10-01). Stage 4's eight pull requests and all five of stage 5's are on it, plus the live-run record as #53, the security hardening as #52 and the `CLAUDE.md` levelling as #55. Nothing reaches it without the three required checks passing, so what is there is green by construction - and from stage 6 there is a fourth, `Agents (image)`.
 - **Dependabot's bumps are in.** #46 (setup-uv) and #47 (six Python packages) merged to `master` on 2026-09-26 and were merged *into* `stage-5-selling` rather than rebased onto, because the branch was already pushed and a rebase would need a force-push. Two of the six matter behaviourally - **ag2 1.0.5 to 1.0.6** and **openai 3.16.1 to 3.19.1** - and the lock also *downgraded* SQLAlchemy from 2.1.1 to 2.0.54, which the Alembic fixture exercises on every database test. 476 Python tests green on all of it.
 - **Stage 5's merge history:** `stage-5-model-and-horizon` as #42, `stage-5-screening` as #43, `stage-5-sek` as #44, `stage-5-symbol-columns` as #45 - the last of those repairing #44, which merged four of its six commits and left `master` with the widened pattern and the old columns for a few minutes - `stage-5-selling` as #48 and `stage-5-cycle` as #51.
 - **One branch is open:** `stage-5-shortlist-edge`, the stage's fifth and last pull request. Two others are stale and can go: `security/hardening-f01-f14` is the **superseded** first attempt at #52, based on the older master and with nothing the merged branch lacks, and `docs/pr4-live-run` and `stage-5-cycle` were merged as #53 and #51 without being deleted. `plan/jev-placement` is a docs-only branch adding `docs/arkitektur-jev-roadmap.md`, 240 lines, **not reviewed here**.
@@ -115,26 +115,34 @@ Two things that are easy to misread as broken:
 
 ## Next steps
 
-### Resume here — stage 6 (2026-10-01, late)
+### Resume here — stage 6, PR 1 of 5 (2026-10-01, late)
 
-Stage 5 is merged and so are both of its follow-ups: `CLAUDE.md` is level (#55) and the trading
-day's deployment limit is on `stage-5-cycle-budget`. Nothing from stage 5 is outstanding.
+Stage 5 is merged in full, follow-ups included: `CLAUDE.md` level as #55 and the trading day's
+deployment limit as #56. **Stage 6 has started** - read that stage in the roadmap and the stage 6
+log below before continuing, because it carries four decisions and three measurements that changed
+the plan.
 
-1. **Merge `stage-5-cycle-budget`.** `RiskPolicy:MaxDailyDeploymentPercentage` at 20 % of net asset
-   value, with the reasoning in the stage 5 follow-ups below. **The migration is not one** - it is
-   a setting, so nothing has to be applied; but `appsettings.json` gains a required key, so an
-   engine started from an older configuration will refuse until it is there.
+1. **`stage-6-agent-image` is the branch in hand.** The agent service as two images - the service
+   and the Alembic step that owns its schema - plus the module entrypoint that makes the first log
+   line JSON. Verified by running it: a real analysis of VOLV-B.ST through Ollama on Windows from
+   inside the container, and all five revisions applied to a throwaway database by the migrate
+   image. See the PR 1 section of the stage 6 log.
 
-2. **Then stage 6 - containerisation and deploy.** Read that stage in the roadmap first. Two things
-   from stage 5 change it: `openapi_url` defaults to `None` since #52, so the NSwag drift check
-   needs `TAS_ENABLE_DOCS` - which **does not work in `.env`**, only as a shell variable, and that
-   defect is still open.
+2. **Then PRs 2 to 5, in order:** the engine image with its migration bundle, one compose file for
+   the whole system, the contract drift check, and `docker compose up` mechanised in CI as the
+   stage's own success criterion.
 
-**Nothing to run, and the waiting is not idleness.** The first `shortlist_edge` row needs the
-one-trading-day horizon to pass on 2026-10-01's eleven decisions, so it appears after the next
-sweep. When it does, read `agents_edge_gross`: positive means the agents picked better than the
-ranking that handed them the ten candidates. One row is an anecdote; the number means something
-after a few weeks of them.
+**One claim in the previous version of this block was wrong, and it is worth saying which.** It
+said the drift check was blocked on the `TAS_ENABLE_DOCS` defect, because `openapi_url` defaults
+to `None` since #52. It is not: `create_app().openapi()` returns the whole document with no
+server, no database and no flag, because the flag controls the *route* and not the generator. The
+defect is still real - `create_app` reads `os.environ` and never reads `settings.enable_docs`, so
+only a shell variable works - and PR 4 fixes it while it is in the area. It was never in the way.
+
+**The first `shortlist_edge` row needs the one-trading-day horizon to pass** on 2026-10-01's
+eleven decisions, so it appears after the next sweep. When it does, read `agents_edge_gross`:
+positive means the agents picked better than the ranking that handed them the ten candidates. One
+row is an anecdote; the number means something after a few weeks of them.
 
 **Branches are stale again** and the rule is master plus one. Deleting them is refused by this
 session's tooling as a destructive git action, so it is two commands by hand - `git branch -a` will
@@ -590,7 +598,7 @@ open until then.
 - **Known gaps pinned by tests,** documenting current behaviour rather than asserting the right one: `Money` treats `usd` and `USD` as different currencies, and `Position.AddQuantity` adopts the incoming price's currency. Stage 2 gives `Money` a currency guard, together with finding D.
 - **Empty packages:** `app/infrastructure/llm/` and `app/infrastructure/market_data/` hold only `__init__.py`. `app/application/` now holds the error vocabulary.
 - **The engine reads only the status code, not `error_code`.** 502, 503 and 504 all become `AgentUnavailable`, with the status in the log message. The engine's decision is the same in all three cases, so this was left alone in stage 1 — but it is a choice, not an oversight, and worth revisiting when the contract is versioned in stage 3.
-- **Uvicorn prints two lines before startup that are not JSON**, because `configure_logging()` runs in the lifespan. Moving it to import time would catch them but would also reconfigure logging in the middle of pytest. The real fix is a `--log-config` at deploy time, which belongs to stage 6.
+- **Uvicorn's two pre-startup lines are JSON now** (fixed in stage 6's PR 1, 2026-10-01). The guess written here was a `--log-config` at deploy time; what it turned out to want was an entrypoint. `python -m app` configures logging and *then* calls `uvicorn.run(..., log_config=None)`, so uvicorn never replaces the handler and its own loggers propagate to it. A JSON log-config file would have been a second copy of the formatter, drifting from the first. The item stays here because the reasoning that kept it open - moving `configure_logging` to import time would reconfigure logging in the middle of pytest - was right, and the way out was a third option neither of us had listed.
 - **The contract carries no currency.** Every price in it is USD and so is the portfolio. Fine until stage 5 widens the universe, and noted in `TradeSignalMapper`. It goes with finding D's remaining half.
 - **`PositionSizer` and `RiskEngine.Evaluate` are registered but nothing resolves them.** Deliberate: registering them means the options-to-domain mapping is covered by `ValidateOnStart` now, and stage 3 becomes wiring rather than new code.
 - **Memory is wired in as of PR 6b**, and `agent_memories` is gone with the `TEST` row that used to sit in it. `AnalysisMemory` reads the journal rather than a store of its own, and only the part of it the engine has measured.
@@ -1926,9 +1934,112 @@ things running it made visible.
 
 ---
 
+## Stage 6 log (2026-10-01 ->, in progress)
+
+Read the stage in `docs/arkitektur-roadmap.md` first. It is two days of work on paper:
+multi-stage Dockerfiles for both services, compose with healthchecks and
+`depends_on: condition: service_healthy`, `docker build` in CI, and NSwag generating the
+.NET client from FastAPI's `/openapi.json` with CI failing on drift.
+
+### Three measurements taken before the plan was written
+
+Each of them changed it.
+
+1. **A container reaches Ollama on Windows.** `--add-host=host.docker.internal:host-gateway`
+   plus `http://host.docker.internal:11434/v1` answered `{"version":"0.35.0"}` from inside a
+   throwaway container. No firewall in the way and no host IP to look up. This was the stage's
+   largest unknown: a container's `127.0.0.1` is the container, so mirrored networking does
+   not help by itself - but the bridge gateway reaches the WSL host, and mirrored networking
+   has already put that host on Windows.
+2. **The OpenAPI document needs no server.** `create_app().openapi()` returns 7 paths and 20
+   schemas with no database, no Ollama and **no `TAS_ENABLE_DOCS`** - the flag controls the
+   `/openapi.json` *route*, not the generator. The resume note in this file said the drift
+   check was blocked on that defect. It was not. The defect is still real and still worth
+   fixing; it is simply not in the way.
+3. **The wheel carries the prompt files.** All four `.md` files are in it, so installing the
+   project with `--no-editable` works. That also makes `team_version` a **containerisation
+   invariant**: the hash is over the prompt files' contents, so a build that mangled line
+   endings would not fail - it would answer as a different team and split the measured
+   population in two. It is therefore checked rather than assumed.
+
+### The four decisions
+
+| # | Question | Taken |
+|---|---|---|
+| D1 | Who applies the migrations under compose? | One short-lived container per schema - `efbundle` for `trading`, `alembic upgrade head` for `agent` - gated with `service_completed_successfully`. The engine keeps its refusal to start against a database that is behind it, and that refusal becomes the *proof* the migration container ran. |
+| D2 | Does `docker compose up` start the engine? | **No.** Database, agent service and both migrations by default; the engine behind `--profile trade`. It is the only service that spends money and the kill switch does not arrive until stage 7, so until then "not starting it" is the only way to stop it - and that should cost a word on the command line. |
+| D3 | NSwag-generated client, or a drift check? | **A drift check, not generation.** Generating the engine's DTOs from Python's specification would make Python the contract's owner, which inverts contract-first and contradicts CLAUDE.md's *"Neither side generates the other"*; the generated types would also lose `[JsonUnmappedMemberHandling(Disallow)]` and the mappers' length caps, which are the engine's actual defences against a wrong answer. What the roadmap asks for - *"CI fails on drift"* - is obtainable without the inversion. **This is a deviation from the roadmap's text and was raised as one.** |
+| D4 | Where do compose's secrets live? | The root `.env` becomes its single source and gains two keys. Compose hands each container only the variables that are its business, so the rule that the agent service never sees the other two passwords survives. |
+
+### The pull requests
+
+Five, in this order: the agent image, the engine image plus its migration bundle, one compose
+file for the whole system, the contract drift check, and `docker compose up` mechanised in CI.
+
+### PR 1 - the agent service as two images (`stage-6-agent-image`)
+
+- **An entrypoint whose first log line is already JSON.** `python -m app` configures logging
+  and *then* hands the process to uvicorn, which is the opposite of what a uvicorn command
+  line does: uvicorn installs its own logging configuration before the application starts and
+  `configure_logging` runs in the FastAPI lifespan, so the two lines that say whether startup
+  happened came out in uvicorn's format while every line after them was JSON. `log_config=None`
+  is what closes it - uvicorn calls `dictConfig` only when it has a configuration. This was an
+  open item in this file, assigned to stage 6 and described there as "the real fix is a
+  `--log-config` at deploy time"; the module turned out to be smaller and better than a second
+  copy of the formatter in a JSON file.
+- **The socket is no longer in two places.** `TAS_BIND_HOST` was an operator's claim about a
+  socket somebody else opened, which is how a warning comes to describe a bind nobody made.
+  Through the entrypoint the claim *is* the socket, and `TAS_PORT` joins it.
+- **Four tests, and the fake uvicorn logs from inside `run()` on purpose.** A line emitted
+  after `main()` returned would prove nothing about which of the two ran first.
+  *Mutation-tested:* dropping `log_config=None` turns exactly the mechanism test red; moving
+  `configure_logging` after `uvicorn.run` turns exactly the JSON test red; hardcoding the
+  socket turns exactly the bind test red.
+- **Two targets, not one image with two commands.** A service that can migrate the database it
+  reads is a service that can migrate it by accident - the same separation the engine already
+  has. `alembic` is the migrate image's entrypoint, so `current` and `upgrade head --sql` are
+  available to an operator who wants to look before applying.
+- **The migration container does not need an LLM key to create a table.** Its URL travels as
+  `-x url=`, which is `env.py`'s documented path, because `get_settings()` requires *every*
+  setting the service needs. A `migrate` dependency group splits alembic out of `dev`, so the
+  image carries SQLAlchemy without carrying pytest, mypy, ruff and testcontainers.
+- **The healthcheck asks `/health`, not `/ready`**, and that is a decision about what compose
+  does with the answer rather than about which endpoint is more informative. `/ready` is 503
+  until the database and the LLM backend both answer, so a blinking Ollama would make the
+  container unhealthy - and anything gated on this service would then refuse to start over an
+  outage the engine already handles by taking no decision that cycle.
+- **Verified by running it, not by building it.** Every log line JSON including uvicorn's first
+  two; `/ready` reached the real database *and* Ollama on Windows; `/health` 200; an
+  unauthenticated quote 401; `/openapi.json` still 404; a real quote for ERIC-B.ST at 91.56
+  through yfinance from inside the container; and **one real three-step analysis of
+  VOLV-B.ST in 32 s**, a validated HOLD at conviction 0.50 with a 15-day horizon, whose three
+  rows are in `agent.step_outputs`. The image computes `team_version` `5926c629dcbe`, which is
+  the host's. The migrate image applied all five revisions to a throwaway database under
+  `agent_svc`'s own grants, with `alembic_version` landing in the `agent` schema.
+- **Ten CI steps, run locally as written.** Both targets built; uid 10001; the application
+  builds with `-w /`; the image's prompt hashes diffed against the repository's; one migration
+  head; alembic present and the test tools absent; no `.env` in either image.
+  *Mutation-tested:* one trailing newline on a repository prompt file turns the prompt check
+  red, and an image built with a `.env` in it turns the leak check red.
+- **One CI step had a sharp edge and lost it.** `echo ... > src/agents/.env` is harmless on a
+  runner, where there is no such file, and destroys a developer's real secrets the first time
+  anyone runs the job by hand. It is `test -f ... ||` now. **A step that overwrites a file is
+  a worse bug than the one it was guarding.**
+- Image sizes: 563 MB for the service, 602 MB for the migration step. Most of it is pandas,
+  numpy and ag2, which is what a yfinance integration costs.
+
+---
+
 ## Lessons and gotchas
 
 Things that cost time or were not obvious. Most are also recorded where they apply.
+
+**Containers (stage 6)**
+- **A flag that controls a route does not control the generator behind it.** `TAS_ENABLE_DOCS=false` makes `/openapi.json` answer 404, and this file concluded from that that the specification could not be exported without turning the flag on. `create_app().openapi()` returns the whole document regardless - with no server, no database and no flag - because the flag is passed to `FastAPI(openapi_url=...)` and the generator is a method on the app. **A day of plan hung on confusing the door with the room behind it.**
+- **A hash over file contents is a containerisation invariant, whether or not anyone meant it to be.** `team_version` is a sha256 over the prompt files' contents, so a build that changed a line ending would not fail - it would answer as a different team, and two populations that cannot be pooled would start accumulating under one name. Nothing in the build would look wrong. It is checked in CI by diffing the image's hashes against the repository's, which costs one step and closes a failure with no symptom.
+- **A container's `127.0.0.1` is the container.** Mirrored networking puts WSL's localhost on Windows, which is why everything on this machine reaches Ollama at `127.0.0.1:11434` - and that stops being true one layer in. `--add-host=host.docker.internal:host-gateway` reaches the WSL host, which mirrored networking has already put on Windows, so the two mechanisms compose. Worth measuring before planning around: it was the stage's largest unknown and it took one `docker run`.
+- **A CI step that writes a file can destroy the thing it guards.** To prove that a `.env` in the build context does not reach the image, the step first has to put one there - and `echo ... > src/agents/.env` is harmless on a runner and destroys a developer's real secrets the first time anyone runs the job by hand. `test -f ... ||` is the whole fix. The guard was worth keeping; the way it was written was worse than what it guarded against.
+- **An image that installs its own source cannot hide a missing file.** `uv sync --no-editable` puts `app` in site-packages instead of pointing at a copied directory, so there is no working directory for an import to resolve against. That is the same regression CI already guards with a wheel check - `app` was once missing from the wheel and the service ran anyway, because the directory it started in held the source - and the image closes it structurally rather than by assertion.
 
 **Running it, not only testing it**
 - **A code path that does nothing successfully should still say so.** The deterministic exits wrote no log line on a pass where every holding was fine, and they write no decision row by design - so a quiet cycle was indistinguishable from the exits never running and from every holding being unpriceable. Only a live run shows you that, because a test asserts on what happened and an operator has to read what did not. Two counts fixed it: judged, and of how many held.
