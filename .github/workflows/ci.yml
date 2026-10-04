@@ -159,6 +159,96 @@ jobs:
             fi
           done
 
+  engine-image:
+    name: Engine (image)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Local-only configuration, written so the leak check below has something to catch: a
+      # clean checkout holds none of it, so a build from one cannot show that it would be
+      # left out. Only when absent - on a runner there is nothing, on a developer's machine
+      # these hold real values, and a step that overwrote them would be worse than the bug.
+      #
+      # It is not hypothetical. The first build of this image published a gitignored
+      # appsettings.Development.json, because .dockerignore knew about .env and not about it.
+      - name: Put local-only configuration in the build context
+        run: |
+          test -f .env || echo "POSTGRES_PASSWORD=not-a-real-value" > .env
+          test -f src/engine/appsettings.Development.json || echo "{}" > src/engine/appsettings.Development.json
+
+      - name: Build the engine image
+        run: docker build -f src/engine/Dockerfile --target service -t tas-engine:ci .
+
+      - name: Build the migrate image
+        run: docker build -f src/engine/Dockerfile --target migrate -t tas-engine-migrate:ci .
+
+      - name: The engine does not run as root
+        run: |
+          uid=$(docker run --rm --entrypoint sh tas-engine:ci -c "id -u")
+          test "$uid" = "1654" || { echo "running as uid $uid"; exit 1; }
+
+      # Asks git itself, rather than a list somebody has to keep in step: is any published
+      # file one the repository refuses to track? .gitignore and .dockerignore are two lists
+      # of "this must not leave the machine", and nothing holds them together. This needs no
+      # editing when a new local-only file is invented.
+      - name: No file git refuses to track reached the image
+        run: |
+          leaked=0
+          for f in $(docker run --rm --entrypoint sh tas-engine:ci -c "ls /app"); do
+            if git check-ignore -q "src/engine/$f"; then echo "leaked: $f"; leaked=1; fi
+          done
+          test "$leaked" = "0"
+
+      - name: The migration bundle runs
+        run: docker run --rm tas-engine-migrate:ci --version
+
+      # What the bundle is for, against the database the checked-in init script builds. The
+      # engine's own suite already proves the migrations under engine_svc's grants; what this
+      # adds is that the bundle applies them, is safe to run twice, and reverses - which the
+      # roadmap asks for under maintenance, tested rather than assumed. The expected count is
+      # read off the migration files, so a new migration needs no edit here.
+      - name: The bundle applies the schema, twice, and reverses it
+        run: |
+          set -euo pipefail
+          docker network create ci-migrate
+          docker run -d --name ci-db --network ci-migrate \
+            -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=throwaway \
+            -e POSTGRES_DB=tradingdb -e ENGINE_DB_PASSWORD=throwaway-engine \
+            -e AGENT_DB_PASSWORD=throwaway-agent \
+            -v "$PWD/db/init:/docker-entrypoint-initdb.d:ro" \
+            pgvector/pgvector:0.8.6-pg16
+          for _ in $(seq 1 90); do
+            docker exec ci-db psql -U engine_svc -d tradingdb -c "select 1" >/dev/null 2>&1 && break
+            sleep 1
+          done
+          cs="Host=ci-db;Port=5432;Database=tradingdb;Username=engine_svc;Password=throwaway-engine"
+          bundle() { docker run --rm --network ci-migrate tas-engine-migrate:ci --connection "$cs" "$@"; }
+          ask() { docker exec ci-db psql -U engine_svc -d tradingdb -tAc "$1" | tr -d " "; }
+
+          expected=$(ls src/engine/Infrastructure/Persistence/Migrations/*.cs \
+            | grep -v "\.Designer\.cs$" | grep -v "ModelSnapshot" | wc -l | tr -d " ")
+          echo "$expected migrations on disk"
+
+          bundle
+          applied=$(ask "select count(*) from trading.__ef_migrations_history")
+          test "$applied" = "$expected" || { echo "applied $applied of $expected"; exit 1; }
+
+          # Idempotent, because a deploy that is retried must not be a deploy that fails.
+          bundle | tee second.log
+          grep -q "No migrations were applied" second.log
+
+          # And reversible. `0` reverts every migration; the history table survives, empty.
+          bundle 0
+          test "$(ask "select count(*) from trading.__ef_migrations_history")" = "0"
+          test "$(ask "select count(*) from information_schema.tables where table_schema = 'trading'")" = "1"
+
+      - name: Tear down the migration database
+        if: always()
+        run: |
+          docker rm -f ci-db || true
+          docker network rm ci-migrate || true
+
   secrets:
     name: Secret scan
     runs-on: ubuntu-24.04
