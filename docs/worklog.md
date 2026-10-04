@@ -85,7 +85,7 @@ Two things that are easy to misread as broken:
 ## Current state
 
 - **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21, **stage 3 done** 2026-09-23. **Stage 4 started** 2026-09-23. PR 5 and PR 6 were each split in two, so the stage is eight pull requests, and **all eight are merged** as of 2026-09-25. **Stage 5 has started**, with the model and the horizon settled first; stages 6-8 exist only as plan.
-- **`master` is at PR #56** (the trading day's deployment limit, merged 2026-10-01). Stage 4's eight pull requests and all five of stage 5's are on it, plus the live-run record as #53, the security hardening as #52 and the `CLAUDE.md` levelling as #55. Nothing reaches it without the three required checks passing, so what is there is green by construction - and from stage 6 there is a fourth, `Agents (image)`.
+- **`master` is at PR #57** (Dependabot's seven Python bumps, merged 2026-10-04, *after* #58). Stage 4's eight pull requests and all five of stage 5's are on it, plus the live-run record as #53, the security hardening as #52 and the `CLAUDE.md` levelling as #55. Nothing reaches it without the three required checks passing, so what is there is green by construction - and from stage 6 there is a fourth, `Agents (image)`.
 - **Dependabot's bumps are in.** #46 (setup-uv) and #47 (six Python packages) merged to `master` on 2026-09-26 and were merged *into* `stage-5-selling` rather than rebased onto, because the branch was already pushed and a rebase would need a force-push. Two of the six matter behaviourally - **ag2 1.0.5 to 1.0.6** and **openai 3.16.1 to 3.19.1** - and the lock also *downgraded* SQLAlchemy from 2.1.1 to 2.0.54, which the Alembic fixture exercises on every database test. 476 Python tests green on all of it.
 - **Stage 5's merge history:** `stage-5-model-and-horizon` as #42, `stage-5-screening` as #43, `stage-5-sek` as #44, `stage-5-symbol-columns` as #45 - the last of those repairing #44, which merged four of its six commits and left `master` with the widened pattern and the old columns for a few minutes - `stage-5-selling` as #48 and `stage-5-cycle` as #51.
 - **One branch is open:** `stage-5-shortlist-edge`, the stage's fifth and last pull request. Two others are stale and can go: `security/hardening-f01-f14` is the **superseded** first attempt at #52, based on the older master and with nothing the merged branch lacks, and `docs/pr4-live-run` and `stage-5-cycle` were merged as #53 and #51 without being deleted. `plan/jev-placement` is a docs-only branch adding `docs/arkitektur-jev-roadmap.md`, 240 lines, **not reviewed here**.
@@ -108,29 +108,32 @@ Two things that are easy to misread as broken:
 - **The model is `qwen2.5:14b`**, at temperature 0 with seed 42, replacing `llama3.2` (3B). A cycle is about 20 s warm and 28 s cold, against 7-10 s before. `TAS_LLM__DEFAULT__TIMEOUT_S` is 60 and `AgentService:RequestTimeoutSeconds` is 120; the old 30 was below a single step on any 14B model.
 - **Two team_versions are in the data; two more are only in the code.** `default` ran 28 decisions as `6c6da0e6edad` and `default-memory` 8 as `79dfb7307b57`. The model change makes them `5926c629dcbe` and `b856e3edf611`, but the engine has not run since, so neither has a row yet. The stored rows keep their old values, which is the point of putting the version on the row - and the distinction between a version that exists and one that has been *used* is what this file got wrong about `b1234878670a` above.
 - **The engine trades a screened shortlist, not a list.** `Trading:Tickers` was deleted in #51: a cycle is now the portfolio's holdings plus the ten best of 31 OMXS30 names, each analysed at most once a trading day. The quote endpoint is used for the exits every cycle and for the fact-sheet rule when a day is new.
-- **The `trading` schema is live and has real rows in it.** The account was opened at 10 000 USD on 2026-09-24, moved to SEK in #44, and holds 100 000 kr of opening balance with five Swedish positions as of 2026-10-01. The local database has **all twelve** engine migrations and all three Alembic revisions applied, so it is level with `master` plus the unmerged `ShortlistEdge` view. The USD rows from before the move are kept and self-describing - `decisions.reference_currency` and `signal_outcomes.benchmark_symbol` say which world each belongs to. Clear everything with `TRUNCATE trading.shortlists, trading.signal_outcomes, trading.decisions, trading.orders, trading.positions, trading.portfolios RESTART IDENTITY CASCADE` if a clean baseline ever matters; the append-only triggers deliberately do not block that.
+- **The `trading` schema is live and has real rows in it.** The account was opened at 10 000 USD on 2026-09-24, moved to SEK in #44, and holds 100 000 kr of opening balance with five Swedish positions as of 2026-10-01. The local database has **all eleven** engine migrations and all **five** Alembic revisions applied, so it is level with `master`. Both numbers in the previous version of this sentence were wrong - twelve and three - which is the hazard this file keeps rediscovering: a count written into prose is a count nobody updates. Stage 6's CI now reads the engine's off the migration files. The USD rows from before the move are kept and self-describing - `decisions.reference_currency` and `signal_outcomes.benchmark_symbol` say which world each belongs to. Clear everything with `TRUNCATE trading.shortlists, trading.signal_outcomes, trading.decisions, trading.orders, trading.positions, trading.portfolios RESTART IDENTITY CASCADE` if a clean baseline ever matters; the append-only triggers deliberately do not block that.
 - **The engine now needs `Database:ConnectionString`** or it refuses to start. It is in the user secrets store on this machine, set 2026-09-23. `dotnet user-secrets list --project src/engine` prints it, so do not run that where anyone can see the screen.
 - **Migrations are applied by hand, and the engine refuses to start without them.** Decided 2026-09-24: `dotnet dotnet-ef database update` stays a deploy step, but startup names the pending migrations and the command instead of failing on a missing column mid-cycle.
 - **What is now impossible** rather than merely unlikely: the agents cannot name an amount (the contract has no `amount_usd`, and a test refuses one that reappears); an answer that is not the contract cannot deserialise into nulls; a position cannot be sized against cash instead of net asset value; an order cannot be placed on a quote that is stale or dated in the future; nothing can sell shares it does not hold, or sell a holding the agents bought less than three days ago on a new opinion; and a HOLD cannot extend the clock the exits read, because only a purchase moves it.
 
 ## Next steps
 
-### Resume here — stage 6, PR 1 of 5 (2026-10-01, late)
+### Resume here — stage 6, PR 2 of 5 (2026-10-04)
 
 Stage 5 is merged in full, follow-ups included: `CLAUDE.md` level as #55 and the trading day's
 deployment limit as #56. **Stage 6 has started** - read that stage in the roadmap and the stage 6
 log below before continuing, because it carries four decisions and three measurements that changed
 the plan.
 
-1. **`stage-6-agent-image` is the branch in hand.** The agent service as two images - the service
-   and the Alembic step that owns its schema - plus the module entrypoint that makes the first log
-   line JSON. Verified by running it: a real analysis of VOLV-B.ST through Ollama on Windows from
-   inside the container, and all five revisions applied to a throwaway database by the migrate
-   image. See the PR 1 section of the stage 6 log.
+1. **PR 1 merged as #58.** The agent service as two images plus the module entrypoint whose
+   first log line is JSON.
 
-2. **Then PRs 2 to 5, in order:** the engine image with its migration bundle, one compose file for
-   the whole system, the contract drift check, and `docker compose up` mechanised in CI as the
-   stage's own success criterion.
+2. **`stage-6-engine-image` is the branch in hand.** The engine as two images - the Worker and
+   the EF migration bundle - with the whole system run in containers against a throwaway
+   database as its verification. See the PR 2 section of the stage 6 log.
+
+3. **Then PRs 3 to 5, in order:** one compose file for the whole system, the contract drift
+   check, and `docker compose up` mechanised in CI as the stage's own success criterion. PR 3
+   has the least left to discover, because PR 2's verification already wired the stack by hand -
+   what compose adds is healthcheck gating, the engine behind `--profile trade`, and the secrets
+   moving into the root `.env`.
 
 **One claim in the previous version of this block was wrong, and it is worth saying which.** It
 said the drift check was blocked on the `TAS_ENABLE_DOCS` defect, because `openapi_url` defaults
@@ -1834,7 +1837,7 @@ which I checked because I expected the opposite.
     sentence beside a stale one leaves the file worse. The sweep I ran was a grep for phrases I
     expected to be stale - which finds what you already suspect and nothing else. *Current state*
     still said `Trading:Tickers` was AAPL and MSFT, a setting **deleted** in #51, and that the
-    database had "all three" engine migrations when it has twelve. **A section that describes the
+    database had "all three" engine migrations when it had eleven - and the correction written here at the time said twelve, which was also wrong. **A section that describes the
     present has to be read, not searched**, and the review found in minutes what the grep could not
     find by construction.
 
@@ -2028,6 +2031,94 @@ file for the whole system, the contract drift check, and `docker compose up` mec
 - Image sizes: 563 MB for the service, 602 MB for the migration step. Most of it is pandas,
   numpy and ag2, which is what a yfinance integration costs.
 
+### PR 2 - the engine as two images, plus its migration bundle (`stage-6-engine-image`)
+
+- **`runtime:10.0`, not `aspnet`.** The engine is a Worker and never opens a socket, so an
+  aspnet image would carry a web server nothing starts. Non-root as the base image's own uid
+  1654, through `$APP_UID` rather than the number, so it stays right if Microsoft moves it.
+- **The migration bundle is a second target**, for the same reason the agent service's Alembic
+  step is: the engine already refuses to migrate itself, and an image carrying the ability to
+  do it would make that refusal a matter of discipline rather than of fact. It is built in the
+  same stage as the service from the same restore, so the two cannot disagree about which
+  migrations exist - which is the failure the engine's startup check exists to catch and would
+  rather not have to. **No CMD**, because the fallback is the design-time factory's deliberate
+  `Host=design.invalid`: a run without `--connection` fails to resolve a hostname instead of
+  migrating something nobody meant to.
+- **No HEALTHCHECK, as a decision.** Nothing is gated on this container, and what a useful
+  check would ask is not "is the process alive" - Docker knows that from the process exiting -
+  but "did a cycle finish in the last fifteen minutes", which needs the engine to publish that
+  somewhere. Stage 7.
+
+**Two things the first build found, neither theoretical.**
+
+- **It published a gitignored `appsettings.Development.json`.** `.dockerignore` knew about
+  `.env` and not about the file sitting beside it on the next line of `.gitignore`. This one
+  held log levels, so nothing leaked - but `appsettings.Local.json` is in that same section,
+  and that is where a connection string goes when user secrets are a nuisance. The fix is two
+  patterns; the guard is better than the patterns, see below.
+- **Npgsql probes for GSSAPI the runtime image does not carry.** Every run began with two
+  unstructured lines on stderr about `libgssapi_krb5.so.2`, and the migration container printed
+  them too. The connection works regardless, because this system authenticates with a password,
+  so it is noise rather than a fault - and still worth three megabytes of `libgssapi-krb5-2` to
+  remove. In a service whose whole logging discipline is that a line means something, the first
+  two lines an operator reads should not be a library that was never needed.
+
+**The CI job asks git instead of keeping a list.** For every file published into `/app` it asks
+`git check-ignore` whether the repository refuses to track it. `.gitignore` and `.dockerignore`
+are two lists of "this must not leave the machine" and nothing holds them together, so a check
+written as filenames would be one more thing to keep in step - and it was precisely the drift
+between those two lists that published the file above. This formulation needs no editing when
+the next local-only file is invented. *Mutation-tested:* an image with that file in `/app` fails
+the step and names it. The first attempt at that mutation **could not build**, because
+`.dockerignore` now refuses the file into the context at all - which is the fix working, and a
+false "survived" until I noticed the image had never existed.
+
+**The schema goes there and back.** The bundle applies every migration to the database the
+checked-in init script builds, runs a second time to prove a retried deploy is not a failed one
+(*"No migrations were applied"*), and then reverts to nothing but an empty history table. The
+roadmap asks for reversible migrations tested rather than assumed, under *Förvaltning*; this is
+where it is cheap. Verified against **a database with rows in it** as well as an empty one -
+four positions, ten decisions and a shortlist - and the revert dropped all eight tables and both
+views. **The append-only triggers do not stand in the way, because dropping a table is DDL and
+not the `DELETE` they refuse.** That is better than the agent side, where a widen-in-place
+migration cannot reverse while a stored value needs the extra width.
+
+**Eleven migrations, not twelve.** The count is read off the migration files in CI rather than
+written down, which settled a number this file had had wrong in two places - including inside
+the lesson about counts going stale. The local database has eleven applied and Alembic at its
+fifth revision, both checked rather than restated.
+
+**The whole system ran in containers, against a throwaway database.** This is PR 3's success
+criterion reached by hand before compose exists, and it is the verification the images are
+worth: a network of its own, a fresh pgvector built by the checked-in init script, the agent
+schema applied by the Alembic container, the trading schema by the EF bundle, then the agent
+service and the engine.
+
+- The agent service was **healthy in 8 s**; the engine's startup schema check passed against
+  the bundle's work and the workers started.
+- **`Screened 31 instrument(s) for 10/04/2026: 10 shortlisted, 0 rejected`** - the screen ran
+  through the containerised agent service to yfinance.
+- `No portfolio was stored, so one was opened with 100000 SEK.`
+- **Ten analyses, all through Ollama on Windows from inside a container.** Four buys - SCA-B.ST
+  20 at 119.60, EVO.ST 3 at 802.40, SHB-A.ST 16 at 152.85, KINV-B.ST 40 at 62.24 - four HOLDs,
+  and two SELLs on instruments not held, which became no order at all. That last is the
+  no-shorting rule firing in a containerised engine.
+- `Cycle over 10 instrument(s): 10 analysed, 0 already done today, 0 unchanged in price.`
+- The database afterwards: 11 migrations, 1 portfolio, 4 positions, 4 orders, 10 decisions, 10
+  shortlist rows, and on the agent side 10 runs, 30 step rows and 10 embeddings. Cash
+  100 000 -> 90 265.60, which is **9.7 % of net asset value deployed** - under the 20 % daily
+  cap, which therefore did not bind. The same shape as the first real screened cycle, which
+  deployed 10 %.
+- **ag2 1.1.1 was exercised end to end on the way.** Dependabot's bump merged as #57 while this
+  was being built, so the agent image was built from it. Ten analyses answered the contract.
+- Image sizes: 315 MB for the engine, 352 MB for the bundle.
+
+**The concern raised about #57 did not happen, and the reason is worth knowing.** Its first
+branch was cut from `a1ccfb3`, before the agent image landed, and carried a `pyproject.toml`
+with no `migrate` group - merging that would have stopped `--target migrate` building. Dependabot
+regenerated the branch against the new master instead, kept the group and bumped `sqlalchemy`
+*inside* it. **A rebase by the bot closed a hazard that reading the old branch had found.**
+
 ---
 
 ## Lessons and gotchas
@@ -2039,6 +2130,10 @@ Things that cost time or were not obvious. Most are also recorded where they app
 - **A hash over file contents is a containerisation invariant, whether or not anyone meant it to be.** `team_version` is a sha256 over the prompt files' contents, so a build that changed a line ending would not fail - it would answer as a different team, and two populations that cannot be pooled would start accumulating under one name. Nothing in the build would look wrong. It is checked in CI by diffing the image's hashes against the repository's, which costs one step and closes a failure with no symptom.
 - **A container's `127.0.0.1` is the container.** Mirrored networking puts WSL's localhost on Windows, which is why everything on this machine reaches Ollama at `127.0.0.1:11434` - and that stops being true one layer in. `--add-host=host.docker.internal:host-gateway` reaches the WSL host, which mirrored networking has already put on Windows, so the two mechanisms compose. Worth measuring before planning around: it was the stage's largest unknown and it took one `docker run`.
 - **A CI step that writes a file can destroy the thing it guards.** To prove that a `.env` in the build context does not reach the image, the step first has to put one there - and `echo ... > src/agents/.env` is harmless on a runner and destroys a developer's real secrets the first time anyone runs the job by hand. `test -f ... ||` is the whole fix. The guard was worth keeping; the way it was written was worse than what it guarded against.
+- **`.gitignore` and `.dockerignore` are two lists of the same thing, and nothing keeps them in step.** Both say "this must not leave the machine"; one is about commits and the other about layers. The engine image's first build published a gitignored `appsettings.Development.json`, because the ignore file knew about `.env` and not about the line beside it. The durable fix is not two more patterns - it is a check that asks `git check-ignore` about every file the image published, which needs no editing when the next local-only file is invented.
+- **A mutation that fails to build is not a surviving mutation.** The attempt to prove the leak check worked tried to `COPY` the gitignored file into a test image, and the build failed - because `.dockerignore` now refuses it into the context at all. The loop then ran against an image that did not exist and printed "survived", which reads like the check being blind. Second attempt created the file *inside* the image and it was killed immediately. Same shape as the .NET mutations that did not compile: **the thing to check first is that the mutant exists.**
+- **A number written into prose is a number nobody updates.** This file claimed twelve engine migrations in two places, including inside the lesson about sections going stale, and three Alembic revisions when there are five. There are eleven and five, both now checked against the database. CI reads the engine's count off the migration files rather than holding it, which is the only version of this that stays true.
+- **Dropping a table is DDL, not a `DELETE`.** The append-only triggers refuse `UPDATE` and `DELETE`, so it was an open question whether the engine's migrations could reverse against a database with rows in it. They can: a full revert dropped all eight tables and both views with four positions and ten decisions in them. The agent side is the harder case for an unrelated reason - a widen-in-place migration cannot reverse while a stored value needs the extra width.
 - **An image that installs its own source cannot hide a missing file.** `uv sync --no-editable` puts `app` in site-packages instead of pointing at a copied directory, so there is no working directory for an import to resolve against. That is the same regression CI already guards with a wheel check - `app` was once missing from the wheel and the service ran anyway, because the directory it started in held the source - and the image closes it structurally rather than by assertion.
 
 **Running it, not only testing it**
