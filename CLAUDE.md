@@ -30,6 +30,12 @@ cd src/agents && uv run ruff check app/ tests/ migrations/
 cd src/agents && uv run ruff format --check app/ tests/ migrations/
 cd src/agents && uv run mypy app/ migrations/
 cd src/agents && uv run pytest
+
+# The contract drift check. contracts/openapi.json is the agent service's own OpenAPI
+# document, committed; pytest fails when the service stops generating exactly it, and the
+# engine's OpenApiContractTests fail when its DTOs stop agreeing with it. After an intended
+# API change, regenerate it - and read the diff, because that is the change the engine sees:
+cd src/agents && uv run python -m app.openapi_snapshot > ../../contracts/openapi.json
 ```
 
 `global.json` opts `dotnet test` into Microsoft.Testing.Platform, which the .NET 10 SDK
@@ -221,7 +227,7 @@ about four minutes for a first full cycle - screen, account opened, ten analyses
 - `TAS_AGENT_API_KEY` (`SecretStr`) - the **legacy full-access** key, still required, and it grants every scope
 - `TAS_AGENT_API_KEY_SIGNALS`, `TAS_AGENT_API_KEY_SCREEN`, `TAS_AGENT_API_KEY_OUTCOMES` and `TAS_AGENT_API_KEY_MARKET` (`SecretStr`, optional) - single-scope keys, so a market-only key cannot spend LLM time. Note that the legacy key stays required and keeps full access, so **the scopes cannot yet be adopted**: setting these only adds credentials. See *Open decisions* in the worklog.
 - `TAS_OUTCOMES_HMAC_SECRET` (`SecretStr`) - shared with the engine, separate from the API key on purpose: a stolen key alone must not be enough to forge measurements into agent memory. The engine HMAC-SHA256-signs the raw `POST /v1/outcomes` body and sends `sha256=<hex>` as `X-Outcomes-Signature`; an unsigned or mismatched body is refused with the same 401 as a bad key. There is no timestamp or nonce, so a captured body can be replayed - harmless only because the agent side stores with `ON CONFLICT DO NOTHING`.
-- `TAS_ENABLE_DOCS` (bool, default false) - `/docs`, `/redoc` and `/openapi.json` sit outside the authenticated router, so they are off. **Known defect:** `create_app` reads this from `os.environ` and never reads `settings.enable_docs`, so setting it in `src/agents/.env` does nothing and only a shell variable works. Stage 6's NSwag drift check needs it on.
+- `TAS_ENABLE_DOCS` (bool, default false) - `/docs`, `/redoc` and `/openapi.json` sit outside the authenticated router, so they are off. Read at import time by `DocsSwitch`, which reads the same `src/agents/.env` and prefix as `Settings` - so it works in the file as well as in the shell, and a value that is not a bool stops the import. It controls the *routes* only: `create_app().openapi()` returns the whole document regardless, which is what the drift check is generated from.
 - `TAS_RATE_LIMIT_SIGNALS_PER_MINUTE` (10), `TAS_RATE_LIMIT_SIGNALS_GLOBAL_PER_MINUTE` (30), `TAS_RATE_LIMIT_SCREEN_PER_MINUTE` (30) and `TAS_RATE_LIMIT_SCREEN_GLOBAL_PER_MINUTE` (60) - in-process token buckets on the two costly endpoints, checked *after* authentication so unauthenticated traffic allocates nothing. A measured cycle runs 3.1 signals a minute, so the limit is bound to the model's latency rather than to `ShortlistSize`: a model answering in three seconds instead of nineteen would breach it.
 - `TAS_BIND_HOST` (127.0.0.1), `TAS_PORT` (8000) and `TAS_ENVIRONMENT` (development) - the socket, when the service is started through its own entrypoint. `python -m app` configures JSON logging and then binds these, which is what the container runs; start uvicorn by hand and the command line owns the socket while `TAS_BIND_HOST` goes back to being a claim about it. Either way a non-loopback bind declared outside development produces a startup warning, and it is silent by default.
 - `TAS_READY_DETAIL` (bool, default false) - when false `/ready` answers `{"status": "ready"}` and the dependency names stay in the logs.
@@ -371,7 +377,7 @@ idempotent on the other side.
 
 ### Cross-service contract
 
-`contracts/trade-signal.schema.json`, `contracts/quote.schema.json` and `contracts/quote-history.schema.json` are the agreement, with seven examples in `contracts/examples/`. Neither side generates the other; both read the checked-in files in their tests, so drift fails a test rather than a live run.
+The hand-written `contracts/*.schema.json` are the agreement, with examples in `contracts/examples/`. Neither side generates the other; both read the checked-in files in their tests, so drift fails a test rather than a live run.
 
 - `src/agents/app/domain/signals.py`: `TradeSignal`, `SignalRequest`, `TradeView`. **`TradeView` is what the last agent step is asked for** — stance, conviction, thesis, key risks, horizon. `TradeSignal` inherits it and adds what code is responsible for: the instrument, the reference price and its timestamp, and the run's identity. The engine sizes an order as `floor(budget / reference_price)`, so a model that could write that number would decide how many shares are bought.
 - `src/engine/Application/Contracts/`: the same shape as DTOs, with `TradeSignalMapper` as the seam into the domain. It enforces the schema's length caps, because System.Text.Json does not read JSON Schema.
@@ -380,6 +386,8 @@ idempotent on the other side.
 - `contracts/quote-history.schema.json`: what `GET /v1/quotes/{symbol}/history?from=YYYY-MM-DD` answers. It is the engine's **trading calendar** as much as its price series - an outcome is measured by counting bars, so a day with no bar is a day the market was shut. `from` is required, and an empty array is a good answer rather than a 404: it means nothing has traded since that date, which the engine reads as a horizon that has not passed.
 - **There is no `amount_usd` anywhere.** The agents give a view; the engine decides how much money moves. That is decision 1, and it is what bounds what a prompt injection can do.
 - **The account is in SEK, and so is the universe.** `Money.DefaultCurrency` is `SEK` and `TradeSignalMapper` reads every price in the trade-signal contract as the account's currency. That works because the instruments are Swedish: there is no conversion anywhere in the system. It is a measurement decision as much as a bookkeeping one - with a krona account and dollar instruments, an outcome could not say whether a position did well because of the share or because of the exchange rate, and saying which is the whole point of stage 4. The symbol rule is 16 characters rather than 10 for the same reason: `ESSITY-B.ST` is a real OMXS30 member and `XACT-OMXS30.ST` is the benchmark. `trading.decisions` carries `reference_currency` per row and `trading.signal_outcomes` carries `benchmark_symbol`, so the USD history from before the move stays readable and does not have to be deleted.
+
+`contracts/openapi.json` is different in kind: it is the agent service's own OpenAPI document, *generated* by `python -m app.openapi_snapshot` and committed, and it is a record rather than an input - nothing is generated from it. It closes the one gap the hand-written schemas leave, which is whether the engine's DTOs agree with what FastAPI actually serves. Python's suite fails when the service stops generating that exact file, so an API change and the file move in one diff; the engine's `OpenApiContractTests` then hold every endpoint the engine calls and every DTO it sends or reads against the file, by reflection, with directional rules - for an answer, every field the service may send must exist on the DTO, since Disallow would refuse the whole answer; for a request, every field the service requires must be one the engine sends. This is stage 6's decision D3: **a drift check, not NSwag**, because a generated client would make Python the contract's owner and lose `[JsonUnmappedMemberHandling(Disallow)]` and the mappers' caps. Prose (`description`, `summary`) is stripped from the file so a docstring edit is not a contract change.
 
 ### Layering
 

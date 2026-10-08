@@ -7,7 +7,12 @@ A running record of what has been done, what was learned along the way, and what
 
 This file answers "where are we, how did we get here, and what is next". When resuming, read *Current state* and *Next steps* first, then the roadmap section for the next stage.
 
-**Last updated:** 2026-10-01. **Stage 5's fourth pull request is merged as #51, and verified
+**Last updated:** 2026-10-08. **Stage 6 is four pull requests in**: the two images and the
+compose file are merged as #58, #59 and #60, and the contract drift check is the branch in hand
+(`stage-6-contract-drift`, PR 4). *Current state* and *Next steps* are current; the paragraphs
+directly below are the 2026-10-01 record of stage 5 and are kept as they were written.
+
+**2026-10-01: Stage 5's fourth pull request is merged as #51, and verified
 live.** The engine no longer trades a list somebody typed: it screened 31 OMXS30 names with no LLM
 call, analysed the best ten plus the one holding, and **bought four of them on its own** -
 HEXA-B.ST, SEB-A.ST, EVO.ST and KINV-B.ST. The two cycles that followed cost **zero** LLM calls,
@@ -84,11 +89,11 @@ Two things that are easy to misread as broken:
 
 ## Current state
 
-- **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21, **stage 3 done** 2026-09-23. **Stage 4 started** 2026-09-23. PR 5 and PR 6 were each split in two, so the stage is eight pull requests, and **all eight are merged** as of 2026-09-25. **Stage 5 has started**, with the model and the horizon settled first; stages 6-8 exist only as plan.
-- **`master` is at PR #59** (the engine's two images, merged 2026-10-04). Stage 6's first two pull requests are on it, plus Dependabot's seven Python bumps as #57 - which merged *after* #58. Stage 4's eight pull requests and all five of stage 5's are on it, plus the live-run record as #53, the security hardening as #52 and the `CLAUDE.md` levelling as #55. Nothing reaches it without the three required checks passing, so what is there is green by construction - and from stage 6 there is a fourth, `Agents (image)`.
+- **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21, **stage 3 done** 2026-09-23. **Stage 4 started** 2026-09-23. PR 5 and PR 6 were each split in two, so the stage is eight pull requests, and **all eight are merged** as of 2026-09-25. **Stage 5 is merged in full** - #42 to #51, the shortlist edge as #54 and the daily deployment cap as #56. **Stage 6 is in progress**: PRs 1-3 merged (#58, #59, #60), PR 4 is `stage-6-contract-drift`, PR 5 is next. Stages 7-8 exist only as plan.
+- **`master` is at PR #60** (one compose file for the whole system, merged 2026-10-08). Stage 6's first three pull requests are on it, plus Dependabot's seven Python bumps as #57 - which merged *after* #58. Stage 4's eight pull requests and all five of stage 5's are on it, plus the live-run record as #53, the security hardening as #52 and the `CLAUDE.md` levelling as #55. Nothing reaches it without the three required checks passing, so what is there is green by construction - and from stage 6 there is a fourth, `Agents (image)`.
 - **Dependabot's bumps are in.** #46 (setup-uv) and #47 (six Python packages) merged to `master` on 2026-09-26 and were merged *into* `stage-5-selling` rather than rebased onto, because the branch was already pushed and a rebase would need a force-push. Two of the six matter behaviourally - **ag2 1.0.5 to 1.0.6** and **openai 3.16.1 to 3.19.1** - and the lock also *downgraded* SQLAlchemy from 2.1.1 to 2.0.54, which the Alembic fixture exercises on every database test. 476 Python tests green on all of it.
 - **Stage 5's merge history:** `stage-5-model-and-horizon` as #42, `stage-5-screening` as #43, `stage-5-sek` as #44, `stage-5-symbol-columns` as #45 - the last of those repairing #44, which merged four of its six commits and left `master` with the widened pattern and the old columns for a few minutes - `stage-5-selling` as #48 and `stage-5-cycle` as #51.
-- **One branch is open:** `stage-5-shortlist-edge`, the stage's fifth and last pull request. Two others are stale and can go: `security/hardening-f01-f14` is the **superseded** first attempt at #52, based on the older master and with nothing the merged branch lacks, and `docs/pr4-live-run` and `stage-5-cycle` were merged as #53 and #51 without being deleted. `plan/jev-placement` is a docs-only branch adding `docs/arkitektur-jev-roadmap.md`, 240 lines, **not reviewed here**.
+- **Two pull requests are open as of 2026-10-08:** this stage's PR 4 (`stage-6-contract-drift`) and #50, `plan/jev-placement` - a docs-only branch adding `docs/arkitektur-jev-roadmap.md`, **not reviewed here, and left to the owner** - nothing in this repository's work merges, rebases or pushes to it. Five remote branches are stale and can go, all merged or superseded: `security/hardening-f01-f14` (the superseded first attempt at #52), `security/hardening-master-bdf5bf1` (#52), `docs/pr4-live-run` (#53), `stage-5-shortlist-edge` (#54) and `stage-5-cycle` (#51).
 - **The security hardening is merged as #52 and verified live** on 2026-10-01: `POST /v1/outcomes` accepted its HMAC signature end to end (`Delivery 8097ab0f: sent 1 outcomes`), 25 market-scope calls answered 200, `/openapi.json` and `/docs` both answer 404, `/ready` returns `{"status":"ready"}` with no dependency detail, and an unauthenticated signal is refused with 401. Nothing was rate-limited. **Both of its required secrets had to be created first** - neither existed after the merge, so neither service would start.
 - **Two of its paths are not verified live:** `POST /v1/signals` and `POST /v1/screen` with their scope keys, because the verification ran on the same trading day as the live run, so no analysis was due and the shortlist was read from the database. All five call sites go through the same `AddApiKey`/`ApiKeyFor` code and no scoped keys are configured, so all five resolve to the legacy key that the 25 successful calls used - but the first new trading day is what proves it, and that is where the blocker found in review would have shown.
 - **The portfolio holds five instruments as of 2026-10-01**, up from one: ERIC-B.ST (26 at 94.96, from 2026-09-26) plus HEXA-B.ST (25 at 99.02), SEB-A.ST (10 at 229.20), EVO.ST (3 at 791.80) and KINV-B.ST (40 at 61.70), all four bought by the engine's own first screened cycle. Cash is 87 920.14 kr. Every one of the four is a *measurable* decision with `selection = Shortlist`, which is what stage 5 existed to produce.
@@ -115,7 +120,7 @@ Two things that are easy to misread as broken:
 
 ## Next steps
 
-### Resume here — stage 6, PR 3 of 5 (2026-10-04)
+### Resume here — stage 6, PR 4 of 5 (2026-10-08)
 
 Stage 5 is merged in full, follow-ups included: `CLAUDE.md` level as #55 and the trading day's
 deployment limit as #56. **Stage 6 has started** - read that stage in the roadmap and the stage 6
@@ -127,22 +132,26 @@ the plan.
 
 2. **PR 2 merged as #59.** The engine as two images, the Worker and the EF migration bundle.
 
-3. **`stage-6-compose` is the branch in hand.** The whole system in one compose file, with the
+3. **PR 3 merged as #60** on 2026-10-08. The whole system in one compose file, with the
    engine behind `--profile trade`. **The stage's success criterion is met and measured**:
    `docker compose up -d` from nothing is 31.8 s to a provisioned healthy system, 6 s more for
    the engine, four minutes for a first cycle. See the PR 3 section of the stage 6 log.
 
-4. **Then PRs 4 and 5:** the contract drift check, and `docker compose up` mechanised in CI.
-   PR 5 should also compare the `team_version` compose configures against the one
-   `src/agents/.env` configures - the two hold four hash-bearing values each, and PR 3 only
-   checked that they agree *today*.
+4. **`stage-6-contract-drift` is the branch in hand.** The drift check of decision D3: the agent
+   service's OpenAPI document committed as `contracts/openapi.json`, Python failing when it stops
+   generating that file, and the engine failing when its DTOs stop agreeing with it. It also
+   fixes the `TAS_ENABLE_DOCS` defect. See the PR 4 section of the stage 6 log.
+
+5. **Then PR 5:** `docker compose up` mechanised in CI. It should also compare the
+   `team_version` compose configures against the one `src/agents/.env` configures - the two hold
+   four hash-bearing values each, and PR 3 only checked that they agree *today*.
 
 **One claim in the previous version of this block was wrong, and it is worth saying which.** It
 said the drift check was blocked on the `TAS_ENABLE_DOCS` defect, because `openapi_url` defaults
 to `None` since #52. It is not: `create_app().openapi()` returns the whole document with no
 server, no database and no flag, because the flag controls the *route* and not the generator. The
-defect is still real - `create_app` reads `os.environ` and never reads `settings.enable_docs`, so
-only a shell variable works - and PR 4 fixes it while it is in the area. It was never in the way.
+defect was real - `create_app` read `os.environ` and never `settings.enable_docs`, so only a shell
+variable worked - and PR 4 fixes it, as planned. It was never in the way.
 
 **The first `shortlist_edge` row needs the one-trading-day horizon to pass** on 2026-10-01's
 eleven decisions, so it appears after the next sweep. When it does, read `agents_edge_gross`:
@@ -150,9 +159,9 @@ positive means the agents picked better than the ranking that handed them the te
 row is an anecdote; the number means something after a few weeks of them.
 
 **Branches are stale again** and the rule is master plus one. Deleting them is refused by this
-session's tooling as a destructive git action, so it is two commands by hand - `git branch -a` will
-show which, and all of them are merged or superseded except `plan/jev-placement`, which is somebody
-else's and unreviewed.
+session's tooling as a destructive git action, so it is two commands by hand - *Current state*
+names the five, all merged or superseded. `plan/jev-placement` is not one of them: it is #50,
+open, and not to be touched from here.
 
 ---
 
@@ -2196,6 +2205,74 @@ cash at 90 168.96, which is 9.8 % of net asset value deployed.
 - **The gssapi noise is gone**, confirmed here rather than only in the migration container: the
   engine's first log line under compose is its migration-history query.
 
+### PR 4 - the contract drift check (`stage-6-contract-drift`)
+
+**Decision D3, built: a drift check, not NSwag.** The roadmap asked for the engine's client to be
+generated from FastAPI's `/openapi.json` with CI failing on drift. Generation would make Python the
+contract's owner and cost the engine `[JsonUnmappedMemberHandling(Disallow)]` and the mappers'
+caps; the failing-on-drift half is obtainable without that, and this is it.
+
+- **`contracts/openapi.json` is the agent service's own OpenAPI document, committed.** It is
+  written by `uv run python -m app.openapi_snapshot > ../../contracts/openapi.json`, from
+  `create_app().openapi()` - measurement 2 held: no server, no database, no Ollama, no flag. It
+  is a *record*, not an input: nothing is generated from it, and the hand-written
+  `contracts/*.schema.json` remain the agreement.
+- **Python fails when the file stops being true.** `tests/test_openapi_snapshot.py` regenerates
+  it and compares byte for byte, so an API change cannot reach `master` without the file
+  changing in the same diff - which is what makes the file worth reading from the other side.
+- **The engine fails when its DTOs stop agreeing with the file.** `OpenApiContractTests` walks
+  every endpoint `PythonAgentClient` calls - route, method, path and query parameters, request
+  and answer - and compares each DTO with its schema by reflection, following `$ref`, reading
+  pydantic's `anyOf [X, null]` as nullable X, and treating `InstrumentDto` as the union it is.
+  **The rules are directional**: for an answer, every field the service may send must exist on
+  the DTO (Disallow would refuse the whole answer), every `required` member must be one the
+  service always sends, and a null it may send must fit the engine's type; for a request, the
+  mirror image. Beside it, the stances against `Stance`, the outcome enums against the engine's
+  stored spelling, the mappers' caps, and the screen limits `TradingOptions` validates.
+- **The checker is tested for going red.** Eight cases each apply one realistic drift to a copy
+  of the document - `amount_usd` appearing (decision 1's own regression), a newly required
+  request field, a dropped answer field, an answer field turning nullable, a number turning into
+  a string, a moved route, a renamed query parameter, a second instrument variant - and assert
+  the failure names it. They report only what their drift *added*, so a real drift in the
+  committed file shows up once, in the main test, rather than nine times.
+- **Prose is stripped from the file.** `description` and `summary` go everywhere except under
+  `properties`, where keys are field names; keys are sorted. A docstring edit is not a contract
+  change, and a snapshot that moved with every one would train people to regenerate without
+  reading the diff - the habit that lets a real change through.
+- **No workflow change, and no new required check.** The Python half runs inside `uv run
+  pytest` in `Agents (Python)` and the engine half inside `dotnet test` in `Engine (.NET)`, both
+  of which branch protection already requires - so a drift fails a required check as things
+  stand. **A named CI step was written and could not be pushed**: it regenerates the file with
+  the documented command and `git diff --exit-code`s, so a failure is named for the contract and
+  the command cannot rot. GitHub refuses a change under `.github/workflows/` from a token without
+  the `workflow` scope, which this session's token lacks. It adds visibility, not protection, so
+  the pull request went without it; the commit is kept as a patch for the owner to apply.
+- **The `TAS_ENABLE_DOCS` defect is fixed**, as the plan assigned it here. A `DocsSwitch`
+  settings class reads that one field from the same `src/agents/.env` and prefix as `Settings`,
+  which inherits it rather than declaring it twice; it has to be its own class because
+  `create_app` runs at import time, where `Settings` - every field required - cannot be read. A
+  value that is not a bool now stops the import rather than meaning "off".
+
+**The drift was proved end to end, not only by the eight cases.** Making
+`TradeSignal.reference_price` nullable in pydantic - a change **no other test in either suite
+notices**, because the field stays required and every example still reads - turned exactly one
+Python test red (the snapshot comparison). Regenerating the file turned Python green and exactly
+one engine test red: *"POST /v1/signals answer.reference_price: the agent service may send null,
+and the engine's type cannot hold it"* - which in production would have been a refused answer the
+first time the market data had no price. Two more, both reverted: a field added to
+`InstrumentQuote` failed the snapshot comparison and then, once the file was regenerated, the
+engine test, naming `exchange`; an optional `cash_buffer` added to the engine's `ScreenRequestDto` failed the engine
+test, naming it as a field the service does not declare - the 422 every screen would have got.
+
+**Verified as CI runs it, in a clean worktree:** `dotnet build -warnaserror` clean, `dotnet
+format` clean, **528 .NET** tests green (513 before; the Testcontainers database tests included),
+ruff and mypy clean, **507 Python** tests green (499 before), the regenerated file identical, 42 files in
+the wheel. Both agent images built, and **the service image generates the committed file byte for
+byte** - so the snapshot does not depend on anything only this machine has. The engine image could
+not be built on this box: BuildKit fails to prepare the snapshot for the `migrations bundle` layer
+(`failed to prepare ... invalid argument`) before the command runs, twice, once with the builder
+cache disabled - an environment fault, in a Dockerfile this pull request does not touch.
+
 ---
 
 ## Lessons and gotchas
@@ -2203,6 +2280,7 @@ cash at 90 168.96, which is 9.8 % of net asset value deployed.
 Things that cost time or were not obvious. Most are also recorded where they apply.
 
 **Containers (stage 6)**
+- **A snapshot is only worth what reads it, and a checker is only worth what it can fail on.** A committed OpenAPI file that only Python compares against itself proves that Python is consistent with Python. It became a drift check when the engine's suite started reading the same file - and the engine's checker became trustworthy when eight tests applied a drift to a copy of the document and watched it go red. The one drift that convinced was the one nothing else caught: an answer field turning nullable while staying required.
 - **A flag that controls a route does not control the generator behind it.** `TAS_ENABLE_DOCS=false` makes `/openapi.json` answer 404, and this file concluded from that that the specification could not be exported without turning the flag on. `create_app().openapi()` returns the whole document regardless - with no server, no database and no flag - because the flag is passed to `FastAPI(openapi_url=...)` and the generator is a method on the app. **A day of plan hung on confusing the door with the room behind it.**
 - **A hash over file contents is a containerisation invariant, whether or not anyone meant it to be.** `team_version` is a sha256 over the prompt files' contents, so a build that changed a line ending would not fail - it would answer as a different team, and two populations that cannot be pooled would start accumulating under one name. Nothing in the build would look wrong. It is checked in CI by diffing the image's hashes against the repository's, which costs one step and closes a failure with no symptom.
 - **A container's `127.0.0.1` is the container.** Mirrored networking puts WSL's localhost on Windows, which is why everything on this machine reaches Ollama at `127.0.0.1:11434` - and that stops being true one layer in. `--add-host=host.docker.internal:host-gateway` reaches the WSL host, which mirrored networking has already put on Windows, so the two mechanisms compose. Worth measuring before planning around: it was the stage's largest unknown and it took one `docker run`.
