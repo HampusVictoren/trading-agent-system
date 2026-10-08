@@ -19,13 +19,22 @@ public class PythonAgentClient : IAgentClient
 
     public const string OutcomesSignatureHeader = "X-Outcomes-Signature";
 
-    private const string SignalsPath = "v1/signals";
+    // The routes, public so OpenApiContractTests can hold them against the agent service's
+    // committed OpenAPI document in contracts/openapi.json. A path renamed on either side
+    // then fails a test rather than turning into a 404 every cycle.
+    public const string SignalsPath = "v1/signals";
 
-    private const string QuotesPath = "v1/quotes";
+    public const string QuotesPath = "v1/quotes";
 
-    private const string OutcomesPath = "v1/outcomes";
+    /// <summary>Under <see cref="QuotesPath"/>/{symbol}.</summary>
+    public const string HistorySegment = "history";
 
-    private const string ScreenPath = "v1/screen";
+    /// <summary>The history's one query parameter: the first day to return, as yyyy-MM-dd.</summary>
+    public const string HistoryFromParameter = "from";
+
+    public const string OutcomesPath = "v1/outcomes";
+
+    public const string ScreenPath = "v1/screen";
 
     private readonly HttpClient _httpClient;
 
@@ -147,8 +156,8 @@ public class PythonAgentClient : IAgentClient
     public async Task<HistoryDto?> GetHistoryAsync(
         string symbol, DateOnly from, string correlationId, CancellationToken cancellationToken = default)
     {
-        var path = $"{QuotesPath}/{Uri.EscapeDataString(symbol)}/history"
-            + $"?from={Uri.EscapeDataString(from.ToString("O", CultureInfo.InvariantCulture))}";
+        var path = $"{QuotesPath}/{Uri.EscapeDataString(symbol)}/{HistorySegment}"
+            + $"?{HistoryFromParameter}={Uri.EscapeDataString(from.ToString("O", CultureInfo.InvariantCulture))}";
 
         try
         {
