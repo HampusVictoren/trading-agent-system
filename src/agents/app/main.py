@@ -1,5 +1,4 @@
 import logging
-import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
@@ -30,7 +29,7 @@ from app.infrastructure.market_data.yfinance_source import (
 )
 from app.observability.correlation import CorrelationIdMiddleware
 from app.observability.logging import configure_logging
-from app.settings import Settings, get_settings
+from app.settings import DocsSwitch, Settings, get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -193,21 +192,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             yield
 
 
-def _env_flag(name: str) -> bool:
-    """True only for an explicit opt-in. Missing or anything else is False."""
-    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
-
-
 def create_app(*, enable_docs: bool | None = None) -> FastAPI:
     """Builds the service. Docs stay off unless explicitly enabled for local exploration.
 
     FastAPI registers /docs, /redoc and /openapi.json on the app itself, outside the
     authenticated router. Leaving them on in any shared environment hands the full
-    contract to whoever can reach the port, so the default is off. Set TAS_ENABLE_DOCS
-    (or pass enable_docs=True) only on a developer's own loopback.
+    contract to whoever can reach the port, so the default is off. Set TAS_ENABLE_DOCS -
+    in the shell or in src/agents/.env, which DocsSwitch reads the way Settings does - or
+    pass enable_docs=True, only on a developer's own loopback.
+
+    The flag controls the routes, not the document: create_app().openapi() returns the whole
+    specification either way, which is what contracts/openapi.json is generated from.
     """
     if enable_docs is None:
-        enable_docs = _env_flag("TAS_ENABLE_DOCS")
+        enable_docs = DocsSwitch().enable_docs
 
     application = FastAPI(
         title="Trading Agent Service",
@@ -276,5 +274,6 @@ async def readiness_check(
     )
 
 
-# Built once for uvicorn `app.main:app`. Docs follow TAS_ENABLE_DOCS at process start.
+# Built once for uvicorn `app.main:app`. Docs follow TAS_ENABLE_DOCS at process start, from
+# the shell or from src/agents/.env.
 app = create_app()
