@@ -97,12 +97,15 @@ COPY --from=builder /bundle/efbundle ./efbundle
 
 USER $APP_UID
 
-# No CMD, because there is no sensible default. The bundle falls back to the connection
-# string the design-time factory names, which is deliberately `Host=design.invalid` - so a
-# run without --connection fails to resolve a hostname rather than migrating something
-# nobody meant to. The operator passes it:
+# No CMD, because there is no sensible default. The bundle invokes the design-time factory
+# at run time, and that factory reads ENGINE_DATABASE_URL or falls back to a deliberate
+# `Host=design.invalid` - so with neither that variable nor --connection, a run fails to
+# resolve a hostname rather than migrating something nobody meant to. Both routes work and
+# they are not equivalent: the variable keeps the password out of the container's rendered
+# command, which is why compose uses it.
 #
-#   docker run --rm --network <net> <image> --connection "Host=db;...;Username=engine_svc;Password=..."
+#   docker run --rm --network <net> -e ENGINE_DATABASE_URL="Host=db;...;Password=..." <image>
+#   docker run --rm --network <net> <image> --connection "Host=db;...;Password=..."
 #
 # `0` as the argument reverts every migration, and a migration name migrates to that point,
 # which is how a rollback is tested rather than assumed.

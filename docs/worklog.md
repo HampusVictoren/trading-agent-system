@@ -85,7 +85,7 @@ Two things that are easy to misread as broken:
 ## Current state
 
 - **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21, **stage 3 done** 2026-09-23. **Stage 4 started** 2026-09-23. PR 5 and PR 6 were each split in two, so the stage is eight pull requests, and **all eight are merged** as of 2026-09-25. **Stage 5 has started**, with the model and the horizon settled first; stages 6-8 exist only as plan.
-- **`master` is at PR #57** (Dependabot's seven Python bumps, merged 2026-10-04, *after* #58). Stage 4's eight pull requests and all five of stage 5's are on it, plus the live-run record as #53, the security hardening as #52 and the `CLAUDE.md` levelling as #55. Nothing reaches it without the three required checks passing, so what is there is green by construction - and from stage 6 there is a fourth, `Agents (image)`.
+- **`master` is at PR #59** (the engine's two images, merged 2026-10-04). Stage 6's first two pull requests are on it, plus Dependabot's seven Python bumps as #57 - which merged *after* #58. Stage 4's eight pull requests and all five of stage 5's are on it, plus the live-run record as #53, the security hardening as #52 and the `CLAUDE.md` levelling as #55. Nothing reaches it without the three required checks passing, so what is there is green by construction - and from stage 6 there is a fourth, `Agents (image)`.
 - **Dependabot's bumps are in.** #46 (setup-uv) and #47 (six Python packages) merged to `master` on 2026-09-26 and were merged *into* `stage-5-selling` rather than rebased onto, because the branch was already pushed and a rebase would need a force-push. Two of the six matter behaviourally - **ag2 1.0.5 to 1.0.6** and **openai 3.16.1 to 3.19.1** - and the lock also *downgraded* SQLAlchemy from 2.1.1 to 2.0.54, which the Alembic fixture exercises on every database test. 476 Python tests green on all of it.
 - **Stage 5's merge history:** `stage-5-model-and-horizon` as #42, `stage-5-screening` as #43, `stage-5-sek` as #44, `stage-5-symbol-columns` as #45 - the last of those repairing #44, which merged four of its six commits and left `master` with the widened pattern and the old columns for a few minutes - `stage-5-selling` as #48 and `stage-5-cycle` as #51.
 - **One branch is open:** `stage-5-shortlist-edge`, the stage's fifth and last pull request. Two others are stale and can go: `security/hardening-f01-f14` is the **superseded** first attempt at #52, based on the older master and with nothing the merged branch lacks, and `docs/pr4-live-run` and `stage-5-cycle` were merged as #53 and #51 without being deleted. `plan/jev-placement` is a docs-only branch adding `docs/arkitektur-jev-roadmap.md`, 240 lines, **not reviewed here**.
@@ -115,7 +115,7 @@ Two things that are easy to misread as broken:
 
 ## Next steps
 
-### Resume here — stage 6, PR 2 of 5 (2026-10-04)
+### Resume here — stage 6, PR 3 of 5 (2026-10-04)
 
 Stage 5 is merged in full, follow-ups included: `CLAUDE.md` level as #55 and the trading day's
 deployment limit as #56. **Stage 6 has started** - read that stage in the roadmap and the stage 6
@@ -125,15 +125,17 @@ the plan.
 1. **PR 1 merged as #58.** The agent service as two images plus the module entrypoint whose
    first log line is JSON.
 
-2. **`stage-6-engine-image` is the branch in hand.** The engine as two images - the Worker and
-   the EF migration bundle - with the whole system run in containers against a throwaway
-   database as its verification. See the PR 2 section of the stage 6 log.
+2. **PR 2 merged as #59.** The engine as two images, the Worker and the EF migration bundle.
 
-3. **Then PRs 3 to 5, in order:** one compose file for the whole system, the contract drift
-   check, and `docker compose up` mechanised in CI as the stage's own success criterion. PR 3
-   has the least left to discover, because PR 2's verification already wired the stack by hand -
-   what compose adds is healthcheck gating, the engine behind `--profile trade`, and the secrets
-   moving into the root `.env`.
+3. **`stage-6-compose` is the branch in hand.** The whole system in one compose file, with the
+   engine behind `--profile trade`. **The stage's success criterion is met and measured**:
+   `docker compose up -d` from nothing is 31.8 s to a provisioned healthy system, 6 s more for
+   the engine, four minutes for a first cycle. See the PR 3 section of the stage 6 log.
+
+4. **Then PRs 4 and 5:** the contract drift check, and `docker compose up` mechanised in CI.
+   PR 5 should also compare the `team_version` compose configures against the one
+   `src/agents/.env` configures - the two hold four hash-bearing values each, and PR 3 only
+   checked that they agree *today*.
 
 **One claim in the previous version of this block was wrong, and it is worth saying which.** It
 said the drift check was blocked on the `TAS_ENABLE_DOCS` defect, because `openapi_url` defaults
@@ -2119,6 +2121,81 @@ with no `migrate` group - merging that would have stopped `--target migrate` bui
 regenerated the branch against the new master instead, kept the group and bumped `sqlalchemy`
 *inside* it. **A rebase by the bot closed a hazard that reading the old branch had found.**
 
+### PR 3 - one compose file for the whole system (`stage-6-compose`)
+
+**The stage's own success criterion, measured.** `docker compose up -d` from nothing: **31.8
+seconds** to a provisioned, healthy system, and 6 seconds more for the engine. A first full
+cycle - screen, account opened, ten analyses - is about four minutes.
+
+- **The engine is behind `--profile trade`**, which was decision D2. Everything else comes up
+  by default, both migration steps included, because a provisioned database is not trading:
+  after a plain `up` the schemas are current and a host-run engine can point at the same
+  database. The engine is the only service here that spends money and the kill switch does not
+  arrive until stage 7, so until then "not starting it" is the only way to stop it.
+- **Each schema is applied by a container of its own**, and whatever needs it waits on
+  `service_completed_successfully` rather than on a port. The log of a clean `up` reads in the
+  right order: db started, db healthy, both migrations started, `agent-migrate` **exited**,
+  then the agent service started. Neither service can migrate its own schema from inside
+  itself - already true of the engine, which refuses to - and these containers make that a
+  property of the deployment rather than of anyone's discipline.
+- **The engine's bundle takes `ENGINE_DATABASE_URL`, not `--connection`**, so the password is
+  not in the container's rendered command. Alembic's takes `-x url=` because its other route is
+  `get_settings()`, which would need an LLM API key to create a table. The asymmetry is the
+  agent side's, not a preference.
+
+**The Dockerfile's claim about the bundle was incomplete, and finding that out is what chose
+the wiring.** It said a run without `--connection` fails to resolve a hostname. Tested: it does
+- *unless* `ENGINE_DATABASE_URL` is set, which the design-time factory reads and **the bundle
+  invokes that factory at run time**. So there are two routes, they are not equivalent, and the
+  one the comment did not mention is the better one for compose.
+
+**The secrets separation changed shape, and the old sentence had to go.** CLAUDE.md said the
+agent service never sees the other two database passwords *because they are in a different
+file*. Compose has to hand the same API key and HMAC secret to both sides, so the root `.env`
+now holds those too and that sentence is no longer the mechanism. The mechanism is each
+service's explicit `environment:` list: compose interpolates the file itself and never passes
+it to a container, so a password that is not on a service's list cannot arrive. An `env_file:`
+would have been shorter and would have given the agent service everything in the file.
+
+- The two shared values were copied into the root `.env` from `src/agents/.env` rather than
+  regenerated, so nothing had to be rotated in three places. Verified by fingerprint:
+  `576bfc53` for the API key and `809f98a6` for the HMAC secret, the latter being the same
+  fingerprint this file recorded on 2026-10-01. Values never printed.
+- **`${VAR:?message}` fail-fast works**, and the first `docker compose config` proved it by
+  refusing with four lines naming exactly which variables were missing and what to do.
+
+**`team_version` is the drift risk in a compose file, and it is now checked rather than
+hoped.** Provider, model, temperature and seed are part of the hash, and they are spelled out
+in the compose file because a clean checkout has no `src/agents/.env` and `up` has to work from
+one. Two places holding four values is how the same team comes to answer under two versions,
+with two populations that cannot be pooled accumulating under one name. The clean stack logged
+`5926c629dcbe` and `b856e3edf611` - the host's own - so they agree today. A CI step comparing
+the two belongs with PR 5.
+
+**Tested against a clean volume without touching the real one.** A compose project of its own
+(`-p stage6clean`) gets its own volume, so `up` from nothing is a genuine clean state while the
+volume holding 54 real decisions keeps running beside it. That needed the container name and
+both published ports to become variables with today's values as defaults - which is not a
+feature looking for a use but the only way to test this file honestly. Confirmed after the run:
+the real database still had its 54 decisions and 5 positions.
+
+**What the clean stack produced:** 11 engine migrations, Alembic at its fifth revision, 10
+objects in `trading` (eight tables and both views) and 5 in `agent`. `/ready` answered ready
+through the published port, so the container reached the database *and* Ollama on Windows. An
+unauthenticated signal was refused with 401. Then, with the trade profile: 31 instruments
+screened, an account opened at 100 000 kr, **ten analyses** - four buys, six HOLDs - 4 orders,
+10 decisions all at `selection = Shortlist`, 10 runs and 30 step rows on the agent side, and
+cash at 90 168.96, which is 9.8 % of net asset value deployed.
+
+- **The stances were not identical to the hand-wired run of PR 2**, which bought SCA-B.ST, EVO,
+  SHB-A and KINV-B and answered SELL twice on instruments not held; this one bought SWED-A.ST
+  among others and answered HOLD six times. That is the known shape of the seed: it pins the
+  decision when the same request is repeated in the same state, and a different request in
+  between changes the numerics. Worth recording because it looks like a difference between the
+  two ways of running the system and is not one.
+- **The gssapi noise is gone**, confirmed here rather than only in the migration container: the
+  engine's first log line under compose is its migration-history query.
+
 ---
 
 ## Lessons and gotchas
@@ -2130,6 +2207,10 @@ Things that cost time or were not obvious. Most are also recorded where they app
 - **A hash over file contents is a containerisation invariant, whether or not anyone meant it to be.** `team_version` is a sha256 over the prompt files' contents, so a build that changed a line ending would not fail - it would answer as a different team, and two populations that cannot be pooled would start accumulating under one name. Nothing in the build would look wrong. It is checked in CI by diffing the image's hashes against the repository's, which costs one step and closes a failure with no symptom.
 - **A container's `127.0.0.1` is the container.** Mirrored networking puts WSL's localhost on Windows, which is why everything on this machine reaches Ollama at `127.0.0.1:11434` - and that stops being true one layer in. `--add-host=host.docker.internal:host-gateway` reaches the WSL host, which mirrored networking has already put on Windows, so the two mechanisms compose. Worth measuring before planning around: it was the stage's largest unknown and it took one `docker run`.
 - **A CI step that writes a file can destroy the thing it guards.** To prove that a `.env` in the build context does not reach the image, the step first has to put one there - and `echo ... > src/agents/.env` is harmless on a runner and destroys a developer's real secrets the first time anyone runs the job by hand. `test -f ... ||` is the whole fix. The guard was worth keeping; the way it was written was worse than what it guarded against.
+- **A separation enforced by two files stops being a separation the moment one tool reads both.** The agent service never saw the engine's database password because they lived in different files - true, and it stopped being the mechanism the day compose needed to hand one shared secret to both services. What enforces it now is each service's explicit `environment:` list, which is a thing you can read rather than a thing you have to remember. The lesson is not "don't use files"; it is that **a safety property should be stated where it is enforced**, and CLAUDE.md was still describing the old enforcement.
+- **A comment that is true in one branch and silent about the other is an incomplete comment.** The engine Dockerfile said a bundle run without `--connection` fails to resolve a hostname. It does - unless `ENGINE_DATABASE_URL` is set, which the design-time factory reads and the bundle invokes at run time. Testing the claim found the second route, and the second route is the better one for compose, because it keeps the password out of the container's rendered command. **The comment did not just need fixing; following it is what chose the design.**
+- **A fixed `container_name` is what stops a second stack existing.** That matters because the only honest way to test "`up` from a clean state" is a second stack: a compose project of its own gets its own volume, so a clean start does not mean deleting the volume holding real decisions. The name and the published ports became variables with today's values as defaults - not a feature looking for a use, but the thing that made the test possible.
+- **Four values in a compose file are part of `team_version`.** Provider, model, temperature and seed feed the hash, and the compose file has to spell them out because a clean checkout has no `src/agents/.env`. Two places holding the same four values is how the same team comes to answer under two versions, with two unpoolable populations accumulating under one name - and nothing would look wrong. Checked by reading the hash out of the clean stack's logs; worth a CI step rather than a check somebody remembers.
 - **`.gitignore` and `.dockerignore` are two lists of the same thing, and nothing keeps them in step.** Both say "this must not leave the machine"; one is about commits and the other about layers. The engine image's first build published a gitignored `appsettings.Development.json`, because the ignore file knew about `.env` and not about the line beside it. The durable fix is not two more patterns - it is a check that asks `git check-ignore` about every file the image published, which needs no editing when the next local-only file is invented.
 - **A mutation that fails to build is not a surviving mutation.** The attempt to prove the leak check worked tried to `COPY` the gitignored file into a test image, and the build failed - because `.dockerignore` now refuses it into the context at all. The loop then ran against an image that did not exist and printed "survived", which reads like the check being blind. Second attempt created the file *inside* the image and it was killed immediately. Same shape as the .NET mutations that did not compile: **the thing to check first is that the mutant exists.**
 - **A number written into prose is a number nobody updates.** This file claimed twelve engine migrations in two places, including inside the lesson about sections going stale, and three Alembic revisions when there are five. There are eleven and five, both now checked against the database. CI reads the engine's count off the migration files rather than holding it, which is the only version of this that stays true.

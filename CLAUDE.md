@@ -75,8 +75,12 @@ tests double as a drift guard: change a configuration without adding a migration
 one of them goes red.
 
 ```bash
-# Database: compose owns the trading-db container. Needs .env in the repo root (see .env.example).
-docker compose up -d
+# The system. Compose owns every container, trading-db included. Needs .env in the repo root
+# (see .env.example); compose reads that file itself and never hands it to a container.
+docker compose up -d                      # database, both schemas, agent service on :8000
+docker compose --profile trade up -d      # and the engine, which places orders
+docker compose logs -f engine             # what a cycle did
+docker compose down                       # stop; the volume and its decisions stay
 docker exec -it trading-db psql -U postgres -d tradingdb   # superuser, via the container's local socket
 
 # Python agent service — run from src/agents (Python 3.12, managed with uv)
@@ -153,7 +157,7 @@ outage the engine already handles by taking no decision that cycle.
 **The engine builds into two images too**, from `src/engine/Dockerfile` with the **repository
 root** as the build context - it inherits `Directory.Build.props` and reaches `dotnet-ef`
 through `dotnet-tools.json`, and both live there. That also means the context contains the
-root `.env` with three passwords in it, which is what the root `.dockerignore` is for.
+root `.env` - three database passwords and the two secrets both services share - which is what the root `.dockerignore` is for.
 
 ```bash
 docker build -f src/engine/Dockerfile --target service -t tas-engine .
@@ -181,6 +185,35 @@ docker run --rm tas-engine-migrate --version
 - **The `trading` schema has eleven migrations** and `agent` has five. CI reads the first number
   off the migration files rather than holding it, because this file and the worklog have both
   had it wrong.
+
+**`docker-compose.yml` is the whole system**, and two things in it are decisions rather than
+configuration.
+
+- **The engine is behind a profile.** `docker compose up -d` brings up the database, both
+  schemas and the agent service; `--profile trade` adds the engine. The engine is the only
+  service here that spends money, and the kill switch does not arrive until stage 7 - so until
+  then "not starting it" is the only way to stop it, and that should cost a word on the command
+  line rather than being what `up` happens to do. Both migration steps run **by default**,
+  because a provisioned database is not trading: after a plain `up` the schemas are current and
+  a host-run engine can point at the same database.
+- **Each schema is applied by a container of its own**, and whatever needs it waits on
+  `service_completed_successfully` rather than on a port. Neither service can migrate its own
+  schema from inside itself - already true of the engine, which refuses to - and these two
+  containers are what make it true of the deployment rather than merely intended. The engine's
+  bundle takes its connection from `ENGINE_DATABASE_URL`, so the password is not in the
+  container's rendered command; Alembic's takes `-x url=`, because its other route is
+  `get_settings()` and that would need an LLM API key to create a table.
+
+Four values in the `agents` service are **part of `team_version`** - provider, model,
+temperature and seed - because the hash covers each role's resolved model. They are spelled out
+in the compose file rather than read from `src/agents/.env`, since a clean checkout does not
+have that file and `up` has to work from one. **Change them in both places or in neither**, or
+the same team answers under two versions and two populations that cannot be pooled start
+accumulating under one name. Verified equal today: compose produces `5926c629dcbe`, which is
+what the host produces.
+
+Measured from nothing: **31 s** to a provisioned, healthy system, 6 s more for the engine, and
+about four minutes for a first full cycle - screen, account opened, ten analyses.
 
 **Configuration:** `src/agents/app/settings.py` defines every setting as a typed, **required** field and reads `src/agents/.env` itself, so it applies to uvicorn, scripts and `python -c`. Variables already set in the shell take precedence. Nothing has a default: an incomplete environment stops the service at startup rather than falling back to OpenAI's cloud API or the wrong database role. Read them with `get_settings()`, never `os.getenv`. See `.env.example` for the keys:
 - `TAS_DATABASE_URL` (`SecretStr` - it carries the `agent_svc` password)
@@ -230,8 +263,9 @@ dotnet user-secrets set "Database:ConnectionString" \
 - **Use explicit IPv4 `127.0.0.1`, never `localhost`**, for Ollama, FastAPI and Postgres. `localhost` can resolve to `::1` and time out.
 - The lifespan creates the Ollama client with `httpx2.AsyncClient(trust_env=False)`, so a system proxy can't intercept local calls. Keep that for any new client that talks to Ollama. It is `httpx2`, not `httpx`, because that is what `openai` 3.x types `http_client` against.
 - **Embeddings are 768-dimensional** (`nomic-embed-text`), not OpenAI's 1536. If you switch embedding models, you have to change the column type too.
-- **The DB container is `trading-db`, and `docker-compose.yml` owns it.** Never create it by hand. It binds to `127.0.0.1:5432` only. Other Postgres containers (e.g. `stockinvestor-db`, `backend-db-1`) conflict on port 5432 and must be stopped.
-- **Secrets live in two gitignored files, on purpose.** `.env` in the repo root holds the superuser, `engine_svc` and `agent_svc` passwords for compose. `src/agents/.env` holds only the agent's own `DATABASE_URL`. The agent service must never see the other two, or the per-service roles mean nothing.
+- **The DB container is `trading-db`, and `docker-compose.yml` owns it.** Never create it by hand. It binds to `127.0.0.1:5432` only. Other Postgres containers (e.g. `stockinvestor-db`, `backend-db-1`) conflict on port 5432 and must be stopped. The name and both published ports are variables with those defaults, so a **second stack** can run beside the first - which is how the compose file is tested against a clean volume without touching the one holding real decisions.
+- **Secrets live in two gitignored files, and the separation is now enforced by the compose file rather than by the files.** The root `.env` holds the three database passwords *and* the two values both services share, `AGENT_API_KEY` and `OUTCOMES_HMAC_SECRET`, because compose needs to hand the same value to each side. `src/agents/.env` is the agent service's own configuration for running it outside compose, and it holds those two as well - three places, one value each, and a mismatch shows up as the engine reporting that the agent service answered 401.
+- **What keeps the agent service from seeing the other two database passwords is the compose file's explicit `environment:` list**, not the fact that they are in a different file. Compose reads the root `.env` itself, to interpolate `${...}`; it is never passed to a container. That is why each service enumerates what it gets instead of taking an `env_file:` - the list is auditable by reading it, and a password that is not on it cannot arrive.
 
 ## Database schema
 
