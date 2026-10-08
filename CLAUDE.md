@@ -36,7 +36,25 @@ cd src/agents && uv run pytest
 # engine's OpenApiContractTests fail when its DTOs stop agreeing with it. After an intended
 # API change, regenerate it - and read the diff, because that is the change the engine sees:
 cd src/agents && uv run python -m app.openapi_snapshot > ../../contracts/openapi.json
+
+# The compose checks. The cheap half runs on every pull request; the rest - the whole system
+# from a clean volume - runs on master and nightly, because it builds four images.
+docker compose config --quiet
+docker compose --profile trade config --services
 ```
+
+**CI has seven jobs:** `Engine (.NET)`, `Agents (Python)`, `Agents (image)`,
+`Engine (image)`, `Compose`, `Secret scan` and `Vulnerability scan`. The last is advisory on
+purpose, so a new CVE in an untouched transitive dependency does not stop unrelated work;
+everything else fails the run. `Compose` validates the compose file on every pull request and
+brings the whole system up on master and nightly - the nightly trigger exists for it, because
+it is the only check that starts the system and therefore the only one that would notice a
+base image moving or a published port being taken on a day when nothing was pushed.
+
+**Which of them block a merge is branch protection, not this file**, and the three stage-6
+jobs were added after it was last set. Worth checking under *Settings - Branches* that the
+required list names the jobs you want: a job that runs and is not required is a job whose red
+cross somebody can merge past.
 
 `global.json` opts `dotnet test` into Microsoft.Testing.Platform, which the .NET 10 SDK
 requires for xunit v3. Note the `--solution` flag: the new runner needs it.
