@@ -1,0 +1,1004 @@
+{
+  "components": {
+    "schemas": {
+      "Candidate": {
+        "additionalProperties": false,
+        "properties": {
+          "instrument": {
+            "$ref": "#/components/schemas/Instrument"
+          },
+          "median_dollar_volume": {
+            "minimum": 0.0,
+            "title": "Median Dollar Volume",
+            "type": "number"
+          },
+          "return_3m": {
+            "title": "Return 3M",
+            "type": "number"
+          },
+          "score": {
+            "title": "Score",
+            "type": "number"
+          },
+          "volatility_30d": {
+            "title": "Volatility 30D",
+            "type": "number"
+          }
+        },
+        "required": [
+          "instrument",
+          "score",
+          "return_3m",
+          "volatility_30d",
+          "median_dollar_volume"
+        ],
+        "title": "Candidate",
+        "type": "object"
+      },
+      "Currency": {
+        "maxLength": 8,
+        "minLength": 1,
+        "type": "string"
+      },
+      "ExistingPosition": {
+        "additionalProperties": false,
+        "properties": {
+          "average_price": {
+            "exclusiveMinimum": 0.0,
+            "title": "Average Price",
+            "type": "number"
+          },
+          "quantity": {
+            "exclusiveMinimum": 0.0,
+            "title": "Quantity",
+            "type": "number"
+          }
+        },
+        "required": [
+          "quantity",
+          "average_price"
+        ],
+        "title": "ExistingPosition",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HorizonUnit": {
+        "enum": [
+          "TradingDays",
+          "CalendarDays"
+        ],
+        "title": "HorizonUnit",
+        "type": "string"
+      },
+      "Instrument": {
+        "additionalProperties": false,
+        "properties": {
+          "symbol": {
+            "pattern": "^[A-Z][A-Z0-9.-]{0,15}$",
+            "title": "Symbol",
+            "type": "string"
+          },
+          "type": {
+            "const": "equity",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "symbol"
+        ],
+        "title": "EquityInstrument",
+        "type": "object"
+      },
+      "InstrumentHistory": {
+        "additionalProperties": false,
+        "properties": {
+          "bars": {
+            "items": {
+              "$ref": "#/components/schemas/PriceBar"
+            },
+            "title": "Bars",
+            "type": "array"
+          },
+          "instrument": {
+            "$ref": "#/components/schemas/Instrument"
+          }
+        },
+        "required": [
+          "instrument",
+          "bars"
+        ],
+        "title": "InstrumentHistory",
+        "type": "object"
+      },
+      "InstrumentQuote": {
+        "additionalProperties": false,
+        "properties": {
+          "as_of": {
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "currency": {
+            "$ref": "#/components/schemas/Currency"
+          },
+          "instrument": {
+            "$ref": "#/components/schemas/Instrument"
+          },
+          "price": {
+            "exclusiveMinimum": 0.0,
+            "title": "Price",
+            "type": "number"
+          }
+        },
+        "required": [
+          "instrument",
+          "price",
+          "currency",
+          "as_of"
+        ],
+        "title": "InstrumentQuote",
+        "type": "object"
+      },
+      "MeasuredOutcome": {
+        "additionalProperties": false,
+        "properties": {
+          "benchmark_return": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Benchmark Return"
+          },
+          "benchmark_symbol": {
+            "pattern": "^[A-Z][A-Z0-9.-]{0,15}$",
+            "title": "Benchmark Symbol",
+            "type": "string"
+          },
+          "correlation_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "cost_fraction": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Fraction"
+          },
+          "excess_return": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Excess Return"
+          },
+          "hit": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hit"
+          },
+          "horizon_days": {
+            "minimum": 1.0,
+            "title": "Horizon Days",
+            "type": "integer"
+          },
+          "horizon_unit": {
+            "$ref": "#/components/schemas/HorizonUnit"
+          },
+          "instrument_return": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Instrument Return"
+          },
+          "measured_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Measured On"
+          },
+          "measured_price": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Measured Price"
+          },
+          "net_edge": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Edge"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "status": {
+            "$ref": "#/components/schemas/OutcomeStatus"
+          }
+        },
+        "required": [
+          "correlation_id",
+          "horizon_unit",
+          "horizon_days",
+          "status",
+          "benchmark_symbol"
+        ],
+        "title": "MeasuredOutcome",
+        "type": "object"
+      },
+      "OutcomeReport": {
+        "additionalProperties": false,
+        "properties": {
+          "outcomes": {
+            "items": {
+              "$ref": "#/components/schemas/MeasuredOutcome"
+            },
+            "maxItems": 500,
+            "minItems": 1,
+            "title": "Outcomes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "outcomes"
+        ],
+        "title": "OutcomeReport",
+        "type": "object"
+      },
+      "OutcomeStatus": {
+        "enum": [
+          "Measured",
+          "NotMeasurable"
+        ],
+        "title": "OutcomeStatus",
+        "type": "string"
+      },
+      "PriceBar": {
+        "additionalProperties": false,
+        "properties": {
+          "close": {
+            "exclusiveMinimum": 0.0,
+            "title": "Close",
+            "type": "number"
+          },
+          "on": {
+            "format": "date",
+            "title": "On",
+            "type": "string"
+          }
+        },
+        "required": [
+          "on",
+          "close"
+        ],
+        "title": "PriceBar",
+        "type": "object"
+      },
+      "Rejection": {
+        "additionalProperties": false,
+        "properties": {
+          "instrument": {
+            "$ref": "#/components/schemas/Instrument"
+          },
+          "reason": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "instrument",
+          "reason"
+        ],
+        "title": "Rejection",
+        "type": "object"
+      },
+      "RunInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "revisions": {
+            "minimum": 0.0,
+            "title": "Revisions",
+            "type": "integer"
+          },
+          "team_id": {
+            "minLength": 1,
+            "title": "Team Id",
+            "type": "string"
+          },
+          "team_version": {
+            "minLength": 1,
+            "title": "Team Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "team_id",
+          "team_version",
+          "revisions"
+        ],
+        "title": "RunInfo",
+        "type": "object"
+      },
+      "ScreenRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "correlation_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "limit": {
+            "maximum": 50.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "min_dollar_volume": {
+            "minimum": 0.0,
+            "title": "Min Dollar Volume",
+            "type": "number"
+          },
+          "universe": {
+            "items": {
+              "$ref": "#/components/schemas/Instrument"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Universe",
+            "type": "array"
+          }
+        },
+        "required": [
+          "universe",
+          "limit",
+          "min_dollar_volume",
+          "correlation_id"
+        ],
+        "title": "ScreenRequest",
+        "type": "object"
+      },
+      "ScreenResult": {
+        "additionalProperties": false,
+        "properties": {
+          "as_of": {
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/Candidate"
+            },
+            "maxItems": 50,
+            "title": "Candidates",
+            "type": "array"
+          },
+          "rejected": {
+            "items": {
+              "$ref": "#/components/schemas/Rejection"
+            },
+            "title": "Rejected",
+            "type": "array"
+          }
+        },
+        "required": [
+          "candidates",
+          "rejected",
+          "as_of"
+        ],
+        "title": "ScreenResult",
+        "type": "object"
+      },
+      "SignalRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "as_of": {
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "available_risk_budget": {
+            "minimum": 0.0,
+            "title": "Available Risk Budget",
+            "type": "number"
+          },
+          "correlation_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "existing_position": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExistingPosition"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "instrument": {
+            "$ref": "#/components/schemas/Instrument"
+          },
+          "max_position_pct": {
+            "exclusiveMinimum": 0.0,
+            "maximum": 1.0,
+            "title": "Max Position Pct",
+            "type": "number"
+          },
+          "team_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Team Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "instrument",
+          "team_id",
+          "as_of",
+          "existing_position",
+          "available_risk_budget",
+          "max_position_pct",
+          "correlation_id"
+        ],
+        "title": "SignalRequest",
+        "type": "object"
+      },
+      "Stance": {
+        "enum": [
+          "BUY",
+          "SELL",
+          "HOLD"
+        ],
+        "title": "Stance",
+        "type": "string"
+      },
+      "TradeSignal": {
+        "additionalProperties": false,
+        "properties": {
+          "conviction": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Conviction",
+            "type": "number"
+          },
+          "horizon_days": {
+            "maximum": 30.0,
+            "minimum": 1.0,
+            "title": "Horizon Days",
+            "type": "integer"
+          },
+          "instrument": {
+            "$ref": "#/components/schemas/Instrument"
+          },
+          "key_risks": {
+            "items": {
+              "maxLength": 300,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 5,
+            "title": "Key Risks",
+            "type": "array"
+          },
+          "quote_as_of": {
+            "format": "date-time",
+            "title": "Quote As Of",
+            "type": "string"
+          },
+          "reference_price": {
+            "exclusiveMinimum": 0.0,
+            "title": "Reference Price",
+            "type": "number"
+          },
+          "run": {
+            "$ref": "#/components/schemas/RunInfo"
+          },
+          "stance": {
+            "$ref": "#/components/schemas/Stance"
+          },
+          "thesis": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Thesis",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stance",
+          "conviction",
+          "thesis",
+          "key_risks",
+          "horizon_days",
+          "instrument",
+          "reference_price",
+          "quote_as_of",
+          "run"
+        ],
+        "title": "TradeSignal",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "Trading Agent Service",
+    "version": "1.0.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/health": {
+      "get": {
+        "operationId": "health_check_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Health Check Health Get",
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ready": {
+      "get": {
+        "operationId": "readiness_check_ready_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/outcomes": {
+      "post": {
+        "operationId": "record_outcomes_v1_outcomes_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-outcomes-signature",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Outcomes-Signature"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OutcomeReport"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "integer"
+                  },
+                  "title": "Response Record Outcomes V1 Outcomes Post",
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/quotes/{symbol}": {
+      "get": {
+        "operationId": "get_quote_v1_quotes__symbol__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "symbol",
+            "required": true,
+            "schema": {
+              "maxLength": 16,
+              "pattern": "^[A-Z][A-Z0-9.-]{0,15}$",
+              "title": "Symbol",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstrumentQuote"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/quotes/{symbol}/history": {
+      "get": {
+        "operationId": "get_history_v1_quotes__symbol__history_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "symbol",
+            "required": true,
+            "schema": {
+              "maxLength": 16,
+              "pattern": "^[A-Z][A-Z0-9.-]{0,15}$",
+              "title": "Symbol",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "from",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "From",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstrumentHistory"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/screen": {
+      "post": {
+        "operationId": "screen_v1_screen_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Api-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScreenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScreenResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/signals": {
+      "post": {
+        "operationId": "create_signal_v1_signals_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Api-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradeSignal"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

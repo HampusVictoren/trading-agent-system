@@ -103,7 +103,30 @@ class LlmSettings(BaseModel):
         return self.roles.get(role, self.default)
 
 
-class Settings(BaseSettings):
+class DocsSwitch(BaseSettings):
+    """The one setting the app needs before the lifespan runs: whether the docs exist.
+
+    create_app() runs at import time, for `uvicorn app.main:app`, and Settings cannot be read
+    there - every field is required, so importing the module would need a full environment.
+    This reads the same .env file and the same prefix as Settings, and nothing else, so the
+    switch means the same thing in the file .env.example points at as it does in a shell.
+    Settings inherits the field rather than declaring it again, so there is one definition.
+    """
+
+    model_config = SettingsConfigDict(
+        env_file=ENV_FILE,
+        env_file_encoding="utf-8",
+        env_prefix="TAS_",
+        extra="ignore",
+    )
+
+    # OpenAPI/Swagger surfaces. Default False: they sit outside the authenticated router,
+    # so leaving them on is a free map of the attack surface. Opt in with TAS_ENABLE_DOCS
+    # for local exploration only.
+    enable_docs: bool = False
+
+
+class Settings(DocsSwitch):
     """The service's contract with its environment. See .env.example for the keys."""
 
     model_config = SettingsConfigDict(
@@ -160,10 +183,7 @@ class Settings(BaseSettings):
     screen_timeout_s: Annotated[float, Field(gt=0)]
     screen_ttl_s: Annotated[float, Field(ge=0)]
 
-    # OpenAPI/Swagger surfaces. Default False: they sit outside the authenticated router,
-    # so leaving them on is a free map of the attack surface. Opt in with TAS_ENABLE_DOCS
-    # for local exploration only; create_app reads the same flag at process start.
-    enable_docs: bool = False
+    # enable_docs is inherited from DocsSwitch, which create_app reads at import time.
 
     # What the service binds. Through `python -m app` - which is what the container runs -
     # this is the real listen address, because that entrypoint passes it to uvicorn. Start
