@@ -3,7 +3,10 @@ using System.Text;
 using Engine.Application.Contracts;
 using Engine.Application.Interfaces;
 using Engine.Domain.ValueObjects;
+using Engine.Hosting;
+using Engine.Hosting.Options;
 using Engine.Infrastructure.Clients.Agents;
+using Microsoft.Extensions.Options;
 using Polly.Timeout;
 using Shouldly;
 
@@ -47,8 +50,18 @@ public class PythonAgentClientTests
             => Task.FromResult(_respond());
     }
 
+    private static AgentServiceOptions TestOptions { get; } = new()
+    {
+        BaseUrl = "http://127.0.0.1:8000",
+        RequestTimeoutSeconds = 30,
+        ApiKey = "a-test-key",
+        OutcomesHmacSecret = "a-test-hmac-secret",
+    };
+
     private static PythonAgentClient ClientWith(HttpMessageHandler handler) =>
-        new(new HttpClient(handler) { BaseAddress = new Uri("http://127.0.0.1:8000") });
+        new(
+            new HttpClient(handler) { BaseAddress = new Uri("http://127.0.0.1:8000") },
+            Options.Create(TestOptions));
 
     [Fact]
     public async Task Translates_an_answer_that_is_missing_a_contract_field()
@@ -143,7 +156,8 @@ public class PythonAgentClientTests
         // followed across both services. Set from the request, so the two cannot disagree.
         var recorder = new RecordingHandler();
         var client = new PythonAgentClient(
-            new HttpClient(recorder) { BaseAddress = new Uri("http://127.0.0.1:8000") });
+            new HttpClient(recorder) { BaseAddress = new Uri("http://127.0.0.1:8000") },
+            Options.Create(TestOptions));
 
         await client.GetSignalAsync(ARequest, TestContext.Current.CancellationToken);
 
@@ -160,7 +174,8 @@ public class PythonAgentClientTests
         // is interpolated into the path, which is what closed half of finding B.
         var recorder = new RecordingHandler();
         var client = new PythonAgentClient(
-            new HttpClient(recorder) { BaseAddress = new Uri("http://127.0.0.1:8000") });
+            new HttpClient(recorder) { BaseAddress = new Uri("http://127.0.0.1:8000") },
+            Options.Create(TestOptions));
 
         await client.GetSignalAsync(ARequest, TestContext.Current.CancellationToken);
 
@@ -310,5 +325,172 @@ public class PythonAgentClientTests
                 "MSFT", new DateOnly(2026, 9, 21), "cycle-1", TestContext.Current.CancellationToken));
 
         exception.Message.ShouldContain("503");
+    }
+
+    private const string ValidScreen =
+        """
+        {"candidates":[{"instrument":{"type":"equity","symbol":"NVDA"},"score":1.421,
+          "return_3m":0.2842,"volatility_30d":0.2,"median_dollar_volume":41250000.0}],
+         "rejected":[{"instrument":{"type":"equity","symbol":"TINY"},"reason":"too thin"}],
+         "as_of":"2026-09-26T13:45:02.117Z"}
+        """;
+
+    private static readonly ScreenRequestDto AScreenRequest = new()
+    {
+        Universe = [new EquityInstrumentDto { Symbol = "NVDA" }, new EquityInstrumentDto { Symbol = "TINY" }],
+        Limit = 10,
+        MinDollarVolume = 5_000_000m,
+        CorrelationId = "cycle-9"
+    };
+
+    [Fact]
+    public async Task Returns_the_screen_when_the_service_honours_the_contract()
+    {
+        var client = ClientWith(new StubHandler(HttpStatusCode.OK, ValidScreen));
+
+        var screen = await client.GetScreenAsync(AScreenRequest, TestContext.Current.CancellationToken);
+
+        screen.ShouldNotBeNull();
+        screen.Candidates.Count.ShouldBe(1);
+        screen.Candidates[0].Score.ShouldBe(1.421m);
+        screen.Rejected.Count.ShouldBe(1);
+        screen.Rejected[0].Reason.ShouldBe("too thin");
+    }
+
+    [Fact]
+    public async Task A_screen_request_carries_the_universe_in_its_body_and_its_cycle_in_a_header()
+    {
+        // The universe goes in the body rather than a query string, which is what keeps a list
+        // of a hundred symbols from ever becoming part of a URL. The header comes from the
+        // body's own correlation id, so the two cannot name different cycles.
+        var recorder = new RecordingHandler(ValidScreen);
+        var client = ClientWith(recorder);
+
+        await client.GetScreenAsync(AScreenRequest, TestContext.Current.CancellationToken);
+
+        recorder.Seen!.RequestUri!.AbsolutePath.ShouldBe("/v1/screen");
+        recorder.Seen.Headers.GetValues(PythonAgentClient.CorrelationIdHeader).ShouldBe(["cycle-9"]);
+        recorder.Body.ShouldContain("\"symbol\":\"TINY\"");
+        recorder.Body.ShouldContain("\"min_dollar_volume\":5000000");
+    }
+
+    [Fact]
+    public async Task A_screen_the_service_could_not_give_is_an_unavailable_agent_service()
+    {
+        // 503 is the realistic one: the screen is the call that reaches market data for up to a
+        // hundred instruments at once. The message names the size, because a screen that fails
+        // at fifty and not at five is the shape of a rate limit.
+        var client = ClientWith(new StubHandler(HttpStatusCode.ServiceUnavailable, "{}"));
+
+        var exception = await Should.ThrowAsync<AgentServiceUnavailableException>(
+            () => client.GetScreenAsync(AScreenRequest, TestContext.Current.CancellationToken));
+
+        exception.Message.ShouldContain("503");
+        exception.Message.ShouldContain("2 instrument(s)");
+    }
+
+    [Fact]
+    public async Task A_screen_answer_that_is_not_the_contract_is_refused()
+    {
+        var client = ClientWith(new StubHandler(HttpStatusCode.OK, """{"candidates":[]}"""));
+
+        await Should.ThrowAsync<AgentResponseInvalidException>(
+            () => client.GetScreenAsync(AScreenRequest, TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task A_scoped_signals_key_is_preferred_over_the_legacy_key()
+    {
+        var recorder = new RecordingHandler();
+        var options = new AgentServiceOptions
+        {
+            BaseUrl = "http://127.0.0.1:8000",
+            RequestTimeoutSeconds = 30,
+            ApiKey = "legacy-full-access",
+            OutcomesHmacSecret = "a-test-hmac-secret",
+            SignalsApiKey = "signals-only-key",
+            MarketApiKey = "market-only-key",
+        };
+        var client = new PythonAgentClient(
+            new HttpClient(recorder) { BaseAddress = new Uri("http://127.0.0.1:8000") },
+            Options.Create(options));
+
+        await client.GetSignalAsync(ARequest, TestContext.Current.CancellationToken);
+
+        recorder.Seen!.Headers.GetValues(AgentClientExtensions.ApiKeyHeader)
+            .ShouldBe(["signals-only-key"]);
+    }
+
+    [Fact]
+    public async Task A_quote_uses_the_market_scope_key()
+    {
+        var recorder = new RecordingHandler(ValidQuote);
+        var options = new AgentServiceOptions
+        {
+            BaseUrl = "http://127.0.0.1:8000",
+            RequestTimeoutSeconds = 30,
+            ApiKey = "legacy-full-access",
+            OutcomesHmacSecret = "a-test-hmac-secret",
+            MarketApiKey = "market-only-key",
+        };
+        var client = new PythonAgentClient(
+            new HttpClient(recorder) { BaseAddress = new Uri("http://127.0.0.1:8000") },
+            Options.Create(options));
+
+        await client.GetQuoteAsync("MSFT", "cycle-1", TestContext.Current.CancellationToken);
+
+        recorder.Seen!.Headers.GetValues(AgentClientExtensions.ApiKeyHeader)
+            .ShouldBe(["market-only-key"]);
+    }
+
+    [Fact]
+    public async Task A_screen_uses_the_screen_scope_key()
+    {
+        var recorder = new RecordingHandler(ValidScreen);
+        var options = new AgentServiceOptions
+        {
+            BaseUrl = "http://127.0.0.1:8000",
+            RequestTimeoutSeconds = 30,
+            ApiKey = "legacy-full-access",
+            OutcomesHmacSecret = "a-test-hmac-secret",
+            ScreenApiKey = "screen-only-key",
+        };
+        var client = new PythonAgentClient(
+            new HttpClient(recorder) { BaseAddress = new Uri("http://127.0.0.1:8000") },
+            Options.Create(options));
+
+        await client.GetScreenAsync(AScreenRequest, TestContext.Current.CancellationToken);
+
+        recorder.Seen!.Headers.GetValues(AgentClientExtensions.ApiKeyHeader)
+            .ShouldBe(["screen-only-key"]);
+    }
+
+    [Fact]
+    public async Task Signs_outcomes_with_hmac_sha256()
+    {
+        var recorder = new RecordingHandler("{}");
+        var client = ClientWith(recorder);
+        var report = new OutcomeReportDto
+        {
+            Outcomes =
+            [
+                new MeasuredOutcomeDto
+                {
+                    CorrelationId = "c-1",
+                    HorizonUnit = "TradingDays",
+                    HorizonDays = 5,
+                    Status = "NotMeasurable",
+                    Reason = "no bars",
+                    BenchmarkSymbol = "^GSPC",
+                }
+            ]
+        };
+
+        await client.PostOutcomesAsync(report, "sweep-1", TestContext.Current.CancellationToken);
+
+        var signature = recorder.Seen!.Headers.GetValues(PythonAgentClient.OutcomesSignatureHeader).Single();
+        signature.ShouldStartWith("sha256=");
+        signature.Length.ShouldBe("sha256=".Length + 64);
+        recorder.Seen.Headers.GetValues(AgentClientExtensions.ApiKeyHeader).ShouldBe(["a-test-key"]);
     }
 }

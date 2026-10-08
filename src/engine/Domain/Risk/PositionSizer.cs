@@ -22,8 +22,17 @@ public sealed class PositionSizer
     /// how much of it one holding may be; a sale is bounded only by what is held. That
     /// asymmetry is the design rather than a shortcut - see <see cref="SizeSell"/>.
     /// </remarks>
+    /// <param name="deployedToday">
+    /// What the account has already spent on purchases in the trading day being decided in. A
+    /// sale ignores it: selling frees capital rather than committing it, and a daily cap that
+    /// stopped an exit would be the opposite of a risk control.
+    /// </param>
     public OrderIntent Size(
-        TradeSignal signal, Portfolio portfolio, PriceSnapshot holdingPrices, RiskPolicy policy)
+        TradeSignal signal,
+        Portfolio portfolio,
+        PriceSnapshot holdingPrices,
+        RiskPolicy policy,
+        Money deployedToday)
     {
         if (signal.Stance is not (Stance.Buy or Stance.Sell))
             return new OrderIntent.None(signal.Instrument, $"the stance is {signal.Stance}");
@@ -41,7 +50,7 @@ public sealed class PositionSizer
         }
 
         return signal.Stance == Stance.Buy
-            ? SizeBuy(signal, equity, portfolio, holdingPrices, policy, tier)
+            ? SizeBuy(signal, equity, portfolio, holdingPrices, policy, tier, deployedToday)
             : SizeSell(signal, equity, portfolio, tier);
     }
 
@@ -51,7 +60,8 @@ public sealed class PositionSizer
         Portfolio portfolio,
         PriceSnapshot holdingPrices,
         RiskPolicy policy,
-        decimal tier)
+        decimal tier,
+        Money deployedToday)
     {
         var price = signal.ReferencePrice;
         var valuation = portfolio.Value(holdingPrices.With(equity.Ticker, price));
@@ -72,8 +82,15 @@ public sealed class PositionSizer
 
         var spendable = portfolio.CashBalance.Subtract(valued.NetAssetValue.Multiply(policy.CashBufferPct));
 
+        // What is left of the trading day's own allowance. A third term in the same min rather
+        // than a separate refusal, so an order shrinks against it exactly the way it already
+        // shrinks against the cash buffer - and a day with nothing left simply sizes to nothing.
+        var leftToday = valued.NetAssetValue
+            .Multiply(policy.MaxDailyDeploymentPct)
+            .Subtract(deployedToday);
+
         // Whichever limit binds first is the one that applies.
-        var budget = Money.Min(headroom, spendable).Multiply(tier);
+        var budget = Money.Min(Money.Min(headroom, spendable), leftToday).Multiply(tier);
         var quantity = decimal.Floor(budget.Amount / price.Amount);
 
         if (quantity < 1m)

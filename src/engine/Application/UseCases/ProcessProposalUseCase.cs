@@ -5,6 +5,7 @@ using Engine.Application.Interfaces;
 using Engine.Application.Persistence;
 using Engine.Domain.Aggregates.Portfolio;
 using Engine.Domain.Risk;
+using Engine.Domain.Screening;
 using Engine.Domain.Signals;
 using Engine.Domain.ValueObjects;
 using Engine.Hosting.Options;
@@ -13,7 +14,8 @@ using Microsoft.Extensions.Options;
 public class ProcessProposalUseCase
 {
     private readonly IAgentClient _agentClient;
-    private readonly HoldingQuoteReader _quotes;
+    private readonly IPortfolioRepository _portfolios;
+    private readonly QuoteReader _quotes;
     private readonly IDecisionLog _decisions;
     private readonly PositionSizer _sizer;
     private readonly RiskEngine _riskEngine;
@@ -23,7 +25,8 @@ public class ProcessProposalUseCase
 
     public ProcessProposalUseCase(
         IAgentClient agentClient,
-        HoldingQuoteReader quotes,
+        IPortfolioRepository portfolios,
+        QuoteReader quotes,
         IDecisionLog decisions,
         PositionSizer sizer,
         RiskEngine riskEngine,
@@ -32,6 +35,7 @@ public class ProcessProposalUseCase
         TimeProvider clock)
     {
         _agentClient = agentClient;
+        _portfolios = portfolios;
         _quotes = quotes;
         _decisions = decisions;
         _sizer = sizer;
@@ -54,18 +58,16 @@ public class ProcessProposalUseCase
     /// </remarks>
     public async Task<TradeDecisionResult> ExecuteAsync(
         Portfolio portfolio,
-        string tickerSymbol,
+        InstrumentSelection selected,
         string correlationId,
         CancellationToken cancellationToken = default)
     {
-        // Configuration is validated at startup, so a ticker that is not a ticker is a bug
-        // here rather than an outcome.
-        var requested = new Ticker(tickerSymbol);
+        var requested = selected.Ticker;
         var request = BuildRequest(portfolio, requested, _clock.GetUtcNow(), correlationId);
 
         var cycle = await DecideAsync(portfolio, requested, request, cancellationToken);
 
-        _decisions.Record(ToRecord(portfolio.Id, requested, request, cycle));
+        _decisions.Record(ToRecord(portfolio.Id, selected, request, cycle));
 
         return cycle.Result;
     }
@@ -147,7 +149,15 @@ public class ProcessProposalUseCase
 
         var prices = await PricesForSizingAsync(portfolio, signal, requested, request, cancellationToken);
 
-        var intent = _sizer.Size(signal, portfolio, prices, _policy);
+        // Read once and handed to both halves, so the sizer and the gate cannot disagree about how
+        // much of the day is left. A sale needs none of it - selling frees capital rather than
+        // committing it - so the query is only made when there is a purchase to bound.
+        var deployedToday = signal.Stance == Stance.Buy
+            ? await _portfolios.DeployedOnAsync(
+                DateOnly.FromDateTime(request.AsOf.UtcDateTime), cancellationToken)
+            : Money.Zero();
+
+        var intent = _sizer.Size(signal, portfolio, prices, _policy, deployedToday);
 
         if (intent is OrderIntent.None nothing)
             return new Cycle(new TradeDecisionResult.NotSized(requested, nothing.Reason), signal);
@@ -158,7 +168,8 @@ public class ProcessProposalUseCase
         // held. That the two take different parameters is what says so.
         var decision = intent switch
         {
-            OrderIntent.Buy buy => _riskEngine.Evaluate(buy, signal, portfolio, prices, _policy, request.AsOf),
+            OrderIntent.Buy buy =>
+                _riskEngine.Evaluate(buy, signal, portfolio, prices, _policy, request.AsOf, deployedToday),
             OrderIntent.Sell sell => _riskEngine.Evaluate(sell, portfolio, _policy, request.AsOf),
 
             // Unreachable: None returned above, and the hierarchy is closed. Throwing rather
@@ -234,11 +245,12 @@ public class ProcessProposalUseCase
     /// the agent service was down, not that the agents were cautious.
     /// </summary>
     private static DecisionRecord ToRecord(
-        Guid portfolioId, Ticker requested, TradeSignalRequestDto request, Cycle cycle) => new()
+        Guid portfolioId, InstrumentSelection selected, TradeSignalRequestDto request, Cycle cycle) => new()
         {
             CorrelationId = request.CorrelationId,
             PortfolioId = portfolioId,
-            Symbol = requested,
+            Symbol = selected.Ticker,
+            Selection = selected.Source,
 
             // The team that was *asked for*, which is known whatever happens. The version is
             // the answer's own, because only an answer has one.

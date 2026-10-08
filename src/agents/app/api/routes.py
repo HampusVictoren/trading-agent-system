@@ -5,7 +5,15 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query
 
-from app.api.security import require_api_key
+from app.api.outcomes_integrity import require_outcomes_hmac
+from app.api.rate_limit import require_screen_rate_limit, require_signals_rate_limit
+from app.api.security import (
+    require_api_key,
+    require_market_read,
+    require_outcomes_write,
+    require_screen_write,
+    require_signals_write,
+)
 from app.dependencies import Resources, get_resources
 from app.domain.outcomes import OutcomeReport
 from app.domain.quotes import InstrumentHistory, InstrumentQuote
@@ -18,12 +26,20 @@ from app.domain.signals import (
     TradeSignal,
 )
 
-# The dependency sits on the router rather than on the route, so a route added later is
-# closed by default. /health and /ready are defined outside it and stay open.
+# require_api_key sits on the router so a route added later is closed by default.
+# Per-route scopes still narrow which key may call which door, so a market-only key
+# cannot spend LLM time. /health and /ready are defined outside this router and stay open.
 router = APIRouter(dependencies=[Depends(require_api_key)])
 
 
-@router.post("/v1/signals", response_model=TradeSignal)
+@router.post(
+    "/v1/signals",
+    response_model=TradeSignal,
+    dependencies=[
+        Depends(require_signals_write),
+        Depends(require_signals_rate_limit),
+    ],
+)
 async def create_signal(
     request: SignalRequest,
     resources: Annotated[Resources, Depends(get_resources)],
@@ -42,7 +58,14 @@ async def create_signal(
     return await resources.pipeline.run(request)
 
 
-@router.post("/v1/screen", response_model=ScreenResult)
+@router.post(
+    "/v1/screen",
+    response_model=ScreenResult,
+    dependencies=[
+        Depends(require_screen_write),
+        Depends(require_screen_rate_limit),
+    ],
+)
 async def screen(
     request: ScreenRequest,
     resources: Annotated[Resources, Depends(get_resources)],
@@ -64,7 +87,11 @@ async def screen(
     return await resources.screening.screen(request)
 
 
-@router.get("/v1/quotes/{symbol}", response_model=InstrumentQuote)
+@router.get(
+    "/v1/quotes/{symbol}",
+    response_model=InstrumentQuote,
+    dependencies=[Depends(require_market_read)],
+)
 async def get_quote(
     symbol: Annotated[str, Path(pattern=SYMBOL_PATTERN, max_length=MAX_SYMBOL_LENGTH)],
     resources: Annotated[Resources, Depends(get_resources)],
@@ -98,7 +125,11 @@ async def get_quote(
     )
 
 
-@router.get("/v1/quotes/{symbol}/history", response_model=InstrumentHistory)
+@router.get(
+    "/v1/quotes/{symbol}/history",
+    response_model=InstrumentHistory,
+    dependencies=[Depends(require_market_read)],
+)
 async def get_history(
     symbol: Annotated[str, Path(pattern=SYMBOL_PATTERN, max_length=MAX_SYMBOL_LENGTH)],
     since: Annotated[date, Query(alias="from")],
@@ -127,7 +158,13 @@ async def get_history(
     )
 
 
-@router.post("/v1/outcomes")
+@router.post(
+    "/v1/outcomes",
+    dependencies=[
+        Depends(require_outcomes_write),
+        Depends(require_outcomes_hmac),
+    ],
+)
 async def record_outcomes(
     report: OutcomeReport,
     resources: Annotated[Resources, Depends(get_resources)],

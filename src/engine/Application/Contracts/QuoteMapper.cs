@@ -10,13 +10,18 @@ using Engine.Domain.ValueObjects;
 /// </summary>
 public static class QuoteMapper
 {
-    public static InstrumentQuote ToDomain(QuoteDto dto)
+    public static InstrumentQuote ToDomain(QuoteDto dto, Ticker expected)
     {
         if (dto.Instrument is not EquityInstrumentDto equity)
             throw Invalid($"the instrument type '{dto.Instrument.GetType().Name}' is not one the engine trades");
 
         if (!Ticker.TryCreate(equity.Symbol, out var ticker))
             throw Invalid($"the symbol '{equity.Symbol}' is not a ticker");
+
+        // Same mirror as HistoryMapper: the engine asked for one symbol, and an answer about
+        // another must not price a holding or size an order.
+        if (ticker != expected)
+            throw Invalid($"the quote is about {ticker.Value}, not {expected.Value}");
 
         if (dto.Price <= 0m)
             throw Invalid($"the price {dto.Price} is not positive");

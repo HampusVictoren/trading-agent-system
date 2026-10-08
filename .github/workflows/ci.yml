@@ -86,6 +86,169 @@ jobs:
           uv build --wheel -o dist
           uv run python -c 'import glob,sys,zipfile; n=sum(1 for x in zipfile.ZipFile(glob.glob("dist/*.whl")[0]).namelist() if x.startswith("app/") and x.endswith(".py")); print(f"{n} python files under app/ in the wheel"); sys.exit(0 if n >= 10 else 1)'
 
+  agents-image:
+    name: Agents (image)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Written before the build, not committed, and the reason is that it has to be there
+      # for the last step to prove anything: the repository has no .env, so a build from a
+      # clean checkout cannot demonstrate that one would be left out. The Dockerfile names
+      # the files it copies rather than copying the directory, so this is a guard against a
+      # later `COPY . .` rather than against today's code.
+      #
+      # Only when there is not one already. On a runner there never is; on a developer's
+      # machine running these steps by hand there always is, and it holds their real
+      # secrets. A step that overwrote it would be a worse bug than the one it guards.
+      - name: Put a .env in the build context
+        run: |
+          test -f src/agents/.env || echo "TAS_MARKER=not-a-real-value" > src/agents/.env
+
+      # Both targets, so the migration step cannot rot while the service keeps building.
+      - name: Build the service image
+        run: docker build --target service -t tas-agents:ci src/agents
+
+      - name: Build the migrate image
+        run: docker build --target migrate -t tas-agents-migrate:ci src/agents
+
+      - name: The service does not run as root
+        run: |
+          uid=$(docker run --rm tas-agents:ci python -c "import os; print(os.getuid())")
+          test "$uid" = "10001" || { echo "running as uid $uid"; exit 1; }
+
+      # The regression this guards happened once: `app` was missing from the built wheel and
+      # the service ran anyway, because the working directory it was started in happened to
+      # contain the source. -w / removes that hiding place, and building the application
+      # proves the package is whole rather than merely importable.
+      - name: The application builds with no working directory
+        run: |
+          docker run --rm -w / tas-agents:ci python -c \
+            "from app.main import create_app; paths = create_app().openapi()['paths']; print(len(paths), 'paths'); assert len(paths) >= 7"
+
+      # team_version is a sha256 over the prompt files' *contents*, so a build that mangled
+      # one - line endings are the realistic way - would not fail. It would quietly answer
+      # as a different team, and split the measured population in two.
+      - name: The image's prompts are the repository's
+        run: |
+          app_dir=$(docker run --rm -w / tas-agents:ci python -c "import app, pathlib; print(pathlib.Path(app.__file__).parent)")
+          (cd src/agents/app && find teams -name '*.md' | sort | xargs sha256sum) > repo-prompts.txt
+          docker run --rm -w "$app_dir" tas-agents:ci sh -c "find teams -name '*.md' | sort | xargs sha256sum" > image-prompts.txt
+          diff repo-prompts.txt image-prompts.txt
+
+      # No database needed: `heads` reads the versions directory. It proves alembic is
+      # installed, that alembic.ini and migrations/ both reached the image, and that the
+      # history has not forked - two heads means two migrations claiming the same parent,
+      # which `upgrade head` refuses at the worst possible moment.
+      - name: The migrate image has one migration head
+        run: |
+          heads=$(docker run --rm tas-agents-migrate:ci heads | grep -c "(head)")
+          test "$heads" = "1" || { echo "$heads heads"; exit 1; }
+
+      - name: The migrate image carries alembic and not the test tools
+        run: |
+          tools=$(docker run --rm --entrypoint sh tas-agents-migrate:ci -c "ls /srv/.venv/bin" | grep -E "^(alembic|pytest|mypy|ruff)$" | sort | tr "\n" " ")
+          test "$tools" = "alembic " || { echo "found: $tools"; exit 1; }
+
+      - name: No .env reached either image
+        run: |
+          for image in tas-agents:ci tas-agents-migrate:ci; do
+            if docker run --rm --entrypoint sh "$image" -c "find / -name '.env' -not -path '/proc/*' 2>/dev/null" | grep -q .; then
+              echo "$image carries a .env"
+              exit 1
+            fi
+          done
+
+  engine-image:
+    name: Engine (image)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Local-only configuration, written so the leak check below has something to catch: a
+      # clean checkout holds none of it, so a build from one cannot show that it would be
+      # left out. Only when absent - on a runner there is nothing, on a developer's machine
+      # these hold real values, and a step that overwrote them would be worse than the bug.
+      #
+      # It is not hypothetical. The first build of this image published a gitignored
+      # appsettings.Development.json, because .dockerignore knew about .env and not about it.
+      - name: Put local-only configuration in the build context
+        run: |
+          test -f .env || echo "POSTGRES_PASSWORD=not-a-real-value" > .env
+          test -f src/engine/appsettings.Development.json || echo "{}" > src/engine/appsettings.Development.json
+
+      - name: Build the engine image
+        run: docker build -f src/engine/Dockerfile --target service -t tas-engine:ci .
+
+      - name: Build the migrate image
+        run: docker build -f src/engine/Dockerfile --target migrate -t tas-engine-migrate:ci .
+
+      - name: The engine does not run as root
+        run: |
+          uid=$(docker run --rm --entrypoint sh tas-engine:ci -c "id -u")
+          test "$uid" = "1654" || { echo "running as uid $uid"; exit 1; }
+
+      # Asks git itself, rather than a list somebody has to keep in step: is any published
+      # file one the repository refuses to track? .gitignore and .dockerignore are two lists
+      # of "this must not leave the machine", and nothing holds them together. This needs no
+      # editing when a new local-only file is invented.
+      - name: No file git refuses to track reached the image
+        run: |
+          leaked=0
+          for f in $(docker run --rm --entrypoint sh tas-engine:ci -c "ls /app"); do
+            if git check-ignore -q "src/engine/$f"; then echo "leaked: $f"; leaked=1; fi
+          done
+          test "$leaked" = "0"
+
+      - name: The migration bundle runs
+        run: docker run --rm tas-engine-migrate:ci --version
+
+      # What the bundle is for, against the database the checked-in init script builds. The
+      # engine's own suite already proves the migrations under engine_svc's grants; what this
+      # adds is that the bundle applies them, is safe to run twice, and reverses - which the
+      # roadmap asks for under maintenance, tested rather than assumed. The expected count is
+      # read off the migration files, so a new migration needs no edit here.
+      - name: The bundle applies the schema, twice, and reverses it
+        run: |
+          set -euo pipefail
+          docker network create ci-migrate
+          docker run -d --name ci-db --network ci-migrate \
+            -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=throwaway \
+            -e POSTGRES_DB=tradingdb -e ENGINE_DB_PASSWORD=throwaway-engine \
+            -e AGENT_DB_PASSWORD=throwaway-agent \
+            -v "$PWD/db/init:/docker-entrypoint-initdb.d:ro" \
+            pgvector/pgvector:0.8.6-pg16
+          for _ in $(seq 1 90); do
+            docker exec ci-db psql -U engine_svc -d tradingdb -c "select 1" >/dev/null 2>&1 && break
+            sleep 1
+          done
+          cs="Host=ci-db;Port=5432;Database=tradingdb;Username=engine_svc;Password=throwaway-engine"
+          bundle() { docker run --rm --network ci-migrate tas-engine-migrate:ci --connection "$cs" "$@"; }
+          ask() { docker exec ci-db psql -U engine_svc -d tradingdb -tAc "$1" | tr -d " "; }
+
+          expected=$(ls src/engine/Infrastructure/Persistence/Migrations/*.cs \
+            | grep -v "\.Designer\.cs$" | grep -v "ModelSnapshot" | wc -l | tr -d " ")
+          echo "$expected migrations on disk"
+
+          bundle
+          applied=$(ask "select count(*) from trading.__ef_migrations_history")
+          test "$applied" = "$expected" || { echo "applied $applied of $expected"; exit 1; }
+
+          # Idempotent, because a deploy that is retried must not be a deploy that fails.
+          bundle | tee second.log
+          grep -q "No migrations were applied" second.log
+
+          # And reversible. `0` reverts every migration; the history table survives, empty.
+          bundle 0
+          test "$(ask "select count(*) from trading.__ef_migrations_history")" = "0"
+          test "$(ask "select count(*) from information_schema.tables where table_schema = 'trading'")" = "1"
+
+      - name: Tear down the migration database
+        if: always()
+        run: |
+          docker rm -f ci-db || true
+          docker network rm ci-migrate || true
+
   secrets:
     name: Secret scan
     runs-on: ubuntu-24.04

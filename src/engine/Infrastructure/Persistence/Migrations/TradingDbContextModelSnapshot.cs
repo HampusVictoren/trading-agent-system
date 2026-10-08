@@ -119,6 +119,12 @@ namespace engine.Infrastructure.Persistence.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("revisions");
 
+                    b.Property<string>("Selection")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("selection");
+
                     b.Property<string>("Stance")
                         .HasMaxLength(8)
                         .HasColumnType("character varying(8)")
@@ -184,6 +190,83 @@ namespace engine.Infrastructure.Persistence.Migrations
                         .HasName("pk_outcome_deliveries");
 
                     b.ToTable("outcome_deliveries", "trading");
+                });
+
+            modelBuilder.Entity("Engine.Application.Persistence.ShortlistEntry", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityAlwaysColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("CorrelationId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("correlation_id");
+
+                    b.Property<decimal?>("MedianDollarVolume")
+                        .HasPrecision(18, 8)
+                        .HasColumnType("numeric(18,8)")
+                        .HasColumnName("median_dollar_volume");
+
+                    b.Property<int?>("Rank")
+                        .HasColumnType("integer")
+                        .HasColumnName("rank");
+
+                    b.Property<DateTimeOffset>("RecordedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("recorded_at")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<string>("RejectedBecause")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("rejected_because");
+
+                    b.Property<decimal?>("Return3M")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)")
+                        .HasColumnName("return_3m");
+
+                    b.Property<decimal?>("Score")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)")
+                        .HasColumnName("score");
+
+                    b.Property<DateTimeOffset>("ScreenedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("screened_at");
+
+                    b.Property<DateOnly>("ScreenedOn")
+                        .HasColumnType("date")
+                        .HasColumnName("screened_on");
+
+                    b.Property<string>("Symbol")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("symbol");
+
+                    b.Property<decimal?>("Volatility30D")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)")
+                        .HasColumnName("volatility_30d");
+
+                    b.HasKey("Id")
+                        .HasName("pk_shortlists");
+
+                    b.HasIndex("ScreenedOn", "Rank")
+                        .HasDatabaseName("ix_shortlists_screened_on_rank");
+
+                    b.HasIndex("ScreenedOn", "Symbol")
+                        .IsUnique()
+                        .HasDatabaseName("ix_shortlists_screened_on_symbol");
+
+                    b.ToTable("shortlists", "trading");
                 });
 
             modelBuilder.Entity("Engine.Application.Persistence.SignalOutcomeRecord", b =>

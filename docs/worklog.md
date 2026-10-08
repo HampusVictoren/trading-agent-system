@@ -7,10 +7,20 @@ A running record of what has been done, what was learned along the way, and what
 
 This file answers "where are we, how did we get here, and what is next". When resuming, read *Current state* and *Next steps* first, then the roadmap section for the next stage.
 
-**Last updated:** 2026-09-27. **Stage 5's third pull request is complete and open for
-review:** the engine sells on the agents' say-so, and the deterministic exits - stop-loss and
-time limit - run before every cycle's analyses without asking anybody. Verified live: the exits
-fetch a real quote for the one holding and judge it *before* the first `POST /v1/signals`.
+**Last updated:** 2026-10-01. **Stage 5's fourth pull request is merged as #51, and verified
+live.** The engine no longer trades a list somebody typed: it screened 31 OMXS30 names with no LLM
+call, analysed the best ten plus the one holding, and **bought four of them on its own** -
+HEXA-B.ST, SEB-A.ST, EVO.ST and KINV-B.ST. The two cycles that followed cost **zero** LLM calls,
+because an instrument is now analysed once a trading day. See *The live run* under the stage 5 log.
+
+**That closes the last count of finding G.** The system had been asking two hand-picked tickers the
+same question every fifteen seconds; it now asks eleven instruments it chose itself, once a day
+each. The population a baseline needs exists as of today.
+
+**Stage 5 is complete and merged**, all five pull requests: #42, #43, #44/#45, #48, #51 and #54,
+with the security hardening as #52 and the live run as #53. **The stage is not verified**, though:
+two of the roadmap's five conditions need the market to move against a position, and the first
+`shortlist_edge` row needs a horizon to pass. Read *Next steps*.
 **Stage 4's code is complete and merged** - all eight pull requests. The machinery runs end to end: decisions are stored, the portfolio survives a
 restart, a sweep scores every signal whose horizon has passed, the engine posts what it
 measured to the agent service, and memory reads the journal back. 21 signals are scored and
@@ -75,32 +85,79 @@ Two things that are easy to misread as broken:
 ## Current state
 
 - **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21, **stage 3 done** 2026-09-23. **Stage 4 started** 2026-09-23. PR 5 and PR 6 were each split in two, so the stage is eight pull requests, and **all eight are merged** as of 2026-09-25. **Stage 5 has started**, with the model and the horizon settled first; stages 6-8 exist only as plan.
-- **`master` is at PR #41**, and stage 4 is fully merged: 6a (#39), 6b (#40) and the docs-only record of finding G (#41), all on 2026-09-25. Nothing reaches `master` without the three required checks passing, so what is there is green by construction.
+- **`master` is at PR #59** (the engine's two images, merged 2026-10-04). Stage 6's first two pull requests are on it, plus Dependabot's seven Python bumps as #57 - which merged *after* #58. Stage 4's eight pull requests and all five of stage 5's are on it, plus the live-run record as #53, the security hardening as #52 and the `CLAUDE.md` levelling as #55. Nothing reaches it without the three required checks passing, so what is there is green by construction - and from stage 6 there is a fourth, `Agents (image)`.
 - **Dependabot's bumps are in.** #46 (setup-uv) and #47 (six Python packages) merged to `master` on 2026-09-26 and were merged *into* `stage-5-selling` rather than rebased onto, because the branch was already pushed and a rebase would need a force-push. Two of the six matter behaviourally - **ag2 1.0.5 to 1.0.6** and **openai 3.16.1 to 3.19.1** - and the lock also *downgraded* SQLAlchemy from 2.1.1 to 2.0.54, which the Alembic fixture exercises on every database test. 476 Python tests green on all of it.
-- **One branch is open:** `stage-5-selling`, PR 3 of stage 5's four, all four commits made and pushed. `stage-5-model-and-horizon` merged as #42, `stage-5-screening` as #43, `stage-5-sek` as #44 and `stage-5-symbol-columns` as #45 - the last of those repairing #44, which merged four of its six commits and left `master` with the widened pattern and the old columns for a few minutes.
-- **The account and the universe are Swedish, and there is no currency conversion anywhere.** `Money.DefaultCurrency` is SEK, the engine trades ERIC-B.ST and VOLV-B.ST, and outcomes are measured against XACT-OMXS30.ST. The opening balance is 100 000 kr, which is what makes the conviction tiers differ in share counts rather than both rounding to one. The 36 USD decisions and 21 SPY measurements from before the move are **kept**: `decisions.reference_currency` and `signal_outcomes.benchmark_symbol` make them self-describing, and finding G's reproduction reads them.
-- **The system can find candidates now.** `POST /v1/screen` ranks a universe with no LLM call at all: risk-adjusted momentum from bars, filtered on liquidity, with everything it left out named and the reason attached. The stage's stated practical risk turned out to be a measurement rather than a worry - **50 instruments in 2.0 seconds**, the same as 8, because `yf.download` batches and the ranking asks for no fundamentals. Nothing calls it yet; the engine starts driving the cycle in PR 3.
+- **Stage 5's merge history:** `stage-5-model-and-horizon` as #42, `stage-5-screening` as #43, `stage-5-sek` as #44, `stage-5-symbol-columns` as #45 - the last of those repairing #44, which merged four of its six commits and left `master` with the widened pattern and the old columns for a few minutes - `stage-5-selling` as #48 and `stage-5-cycle` as #51.
+- **One branch is open:** `stage-5-shortlist-edge`, the stage's fifth and last pull request. Two others are stale and can go: `security/hardening-f01-f14` is the **superseded** first attempt at #52, based on the older master and with nothing the merged branch lacks, and `docs/pr4-live-run` and `stage-5-cycle` were merged as #53 and #51 without being deleted. `plan/jev-placement` is a docs-only branch adding `docs/arkitektur-jev-roadmap.md`, 240 lines, **not reviewed here**.
+- **The security hardening is merged as #52 and verified live** on 2026-10-01: `POST /v1/outcomes` accepted its HMAC signature end to end (`Delivery 8097ab0f: sent 1 outcomes`), 25 market-scope calls answered 200, `/openapi.json` and `/docs` both answer 404, `/ready` returns `{"status":"ready"}` with no dependency detail, and an unauthenticated signal is refused with 401. Nothing was rate-limited. **Both of its required secrets had to be created first** - neither existed after the merge, so neither service would start.
+- **Two of its paths are not verified live:** `POST /v1/signals` and `POST /v1/screen` with their scope keys, because the verification ran on the same trading day as the live run, so no analysis was due and the shortlist was read from the database. All five call sites go through the same `AddApiKey`/`ApiKeyFor` code and no scoped keys are configured, so all five resolve to the legacy key that the 25 successful calls used - but the first new trading day is what proves it, and that is where the blocker found in review would have shown.
+- **The portfolio holds five instruments as of 2026-10-01**, up from one: ERIC-B.ST (26 at 94.96, from 2026-09-26) plus HEXA-B.ST (25 at 99.02), SEB-A.ST (10 at 229.20), EVO.ST (3 at 791.80) and KINV-B.ST (40 at 61.70), all four bought by the engine's own first screened cycle. Cash is 87 920.14 kr. Every one of the four is a *measurable* decision with `selection = Shortlist`, which is what stage 5 existed to produce.
+- **`trading.shortlists` has its first row set**: ten candidates for 2026-10-01, no rejections. The 43 decisions that predate the column are backfilled as `FixedList`, so the two populations never pool - which is the whole reason the column exists.
+- **Stage 5 gained a fifth pull request**, split out of the fourth on 2026-09-27: the shortlist as a benchmark. It was split on the belief that it needed a new measured population, which turned out to be false - stage 4 already scores every signal, bought or not - so it is `trading.shortlist_edge`, a view, rather than a worker change. The split was still right: it touches no decision path and cannot be verified until a horizon has passed, so it reviews on its own.
+- **The account and the universe are Swedish, and there is no currency conversion anywhere.** `Money.DefaultCurrency` is SEK, the universe is 31 OMXS30 names, and outcomes are measured against XACT-OMXS30.ST. The opening balance is 100 000 kr, which is what makes the conviction tiers differ in share counts rather than both rounding to one. The 36 USD decisions and 21 SPY measurements from before the move are **kept**: `decisions.reference_currency` and `signal_outcomes.benchmark_symbol` make them self-describing, and finding G's reproduction reads them.
+- **The system finds candidates and acts on them now.** `POST /v1/screen` ranks a universe with no LLM call at all: risk-adjusted momentum from bars, filtered on liquidity, with everything it left out named and the reason attached. The stage's stated practical risk turned out to be a measurement rather than a worry - **50 instruments in 2.0 seconds**, the same as 8, because `yf.download` batches and the ranking asks for no fundamentals. As of #51 the engine drives the cycle from it, and as of 2026-10-01 it has done so against the real universe.
 - **`b1234878670a` never reached a row, and that is worth knowing rather than forgetting.** On 2026-09-25 `default`'s hash moved from `6c6da0e6edad` to `b1234878670a` without a word of the team changing: adding `sees_memory` to the payload wrote `sees_memory: false` onto every step. The payload was made sparse the same day, before the engine ran again, so the accidental hash was never stored - `SELECT team_id, team_version, count(*) FROM trading.decisions` returns only `6c6da0e6edad` and `79dfb7307b57`. Nothing has to be pooled and nothing has to be written down; the earlier warning in this file that the two hashes had to be reconciled by hand is obsolete, not wrong at the time. The lesson survives the hash: a version payload that lists every flag with its default ties the version to the shape of the payload rather than to the team.
 - **There is one path now.** `POST /v1/signals` is the only endpoint that costs money, the engine calls it every cycle, and the old three-agent chain, `InvestmentProposal`, `ValidateTrade`, `RiskViolationException` and the FastMCP server are gone. Running the engine today produces real quantities at real prices, with the position cap holding across cycles.
 - **Every environment variable was renamed on 2026-09-23.** The local `src/agents/.env` was renamed in place and still works; a fresh clone follows `.env.example`. Nothing outside this repo reads them.
 - **Measurement has produced its first numbers.** A sweep on 2026-09-25 **measured 21** signals at one trading day, left 63 horizons not due, abandoned none, and delivered all 21 to the agent service. `trading.hit_rate` has four rows. They mean nothing yet, and it is worth saying so plainly: one trading day is noise, and all sixteen BUYs "hit" because both names happened to rise that day. The two HOLDs that missed did so with an excess of 3.5 %, which is the band doing its job rather than the model doing well.
 - **Both schemas now hold a copy of the same measurement**, joined by nothing: 21 rows in `trading.signal_outcomes`, 21 in `trading.outcome_deliveries`, 21 in `agent.signal_outcomes`. The correlation id is the only thing they share, and it crosses over HTTP.
 - **Python writes down what its agents were given.** `agent.analysis_runs` and `agent.step_outputs` hold the fact sheet an analysis started from and each step's answer - 8 runs and 24 step rows after one engine session, which is three steps per run exactly as the team specifies.
-- **Memory is wired in and correctly empty.** 8 runs are embedded; none of them has a measured outcome yet, so `recall` answers *"Inga tidigare analyser av AAPL har hunnit mätas färdigt."* - which is the designed behaviour rather than a fault. Worth knowing: **the first 21 measurements can never become memory**, because the analyses behind them predate the journal. Memory starts from the runs journalled since PR 6a, and the first becomes recallable when its one-trading-day horizon is measured.
+- **Memory is wired in and was correctly empty when PR 6b landed.** 8 runs were embedded then; none had a measured outcome, so `recall` answers *"Inga tidigare analyser av AAPL har hunnit mätas färdigt."* - which is the designed behaviour rather than a fault. Worth knowing: **the first 21 measurements can never become memory**, because the analyses behind them predate the journal. Memory starts from the runs journalled since PR 6a, and the first becomes recallable when its one-trading-day horizon is measured.
 - **There are two teams now.** `default` is the baseline and reads no memory; `default-memory` is the same team with its risk manager shown past measured analyses. For their versions, which moved with the model on 2026-09-25, see the bullet above rather than a copy here - two places holding the same hash is how this file came to assert one that existed nowhere. `Trading:TeamId` stays `default`; the memory team was run once by environment override to prove it works, which is where those 8 embedded runs came from.
 - **The model asked for horizons of a year, and no longer can.** The full distribution over all 36 stored signals was 6 days (3), 30 (1), 90 (6), 180 (**15**) and 365 (**11**) - 26 of 36 at half a year or more, although the system looks for short-term opportunities. Nobody had told it otherwise: the prompt said "be honest" without naming a range and the schema allowed 365. Capped at 30 on 2026-09-25, in pydantic, in the schema and in the engine's mapper, with the range named in the prompt. The first live signal afterwards asked for 15.
 - **The model is `qwen2.5:14b`**, at temperature 0 with seed 42, replacing `llama3.2` (3B). A cycle is about 20 s warm and 28 s cold, against 7-10 s before. `TAS_LLM__DEFAULT__TIMEOUT_S` is 60 and `AgentService:RequestTimeoutSeconds` is 120; the old 30 was below a single step on any 14B model.
 - **Two team_versions are in the data; two more are only in the code.** `default` ran 28 decisions as `6c6da0e6edad` and `default-memory` 8 as `79dfb7307b57`. The model change makes them `5926c629dcbe` and `b856e3edf611`, but the engine has not run since, so neither has a row yet. The stored rows keep their old values, which is the point of putting the version on the row - and the distinction between a version that exists and one that has been *used* is what this file got wrong about `b1234878670a` above.
-- **The engine trades two instruments.** `Trading:Tickers` is AAPL and MSFT, so a cycle is two analyses and the quote endpoint is used in a real run rather than only by tests.
-- **The `trading` schema is live and has real rows in it.** Runs on 2026-09-24 opened the account at 10 000 USD and bought one AAPL at 337.445 and one MSFT at 497.56, with a second engine process picking the same portfolio up rather than opening another. The local database has **all three** engine migrations and **all three** Alembic revisions applied, which `master` has carried since PR 6a (#39) merged on 2026-09-25 - so the two are level. Delete the rows with `TRUNCATE trading.signal_outcomes, trading.decisions, trading.orders, trading.positions, trading.portfolios RESTART IDENTITY CASCADE` if a clean baseline matters; the append-only triggers deliberately do not block that.
+- **The engine trades a screened shortlist, not a list.** `Trading:Tickers` was deleted in #51: a cycle is now the portfolio's holdings plus the ten best of 31 OMXS30 names, each analysed at most once a trading day. The quote endpoint is used for the exits every cycle and for the fact-sheet rule when a day is new.
+- **The `trading` schema is live and has real rows in it.** The account was opened at 10 000 USD on 2026-09-24, moved to SEK in #44, and holds 100 000 kr of opening balance with five Swedish positions as of 2026-10-01. The local database has **all eleven** engine migrations and all **five** Alembic revisions applied, so it is level with `master`. Both numbers in the previous version of this sentence were wrong - twelve and three - which is the hazard this file keeps rediscovering: a count written into prose is a count nobody updates. Stage 6's CI now reads the engine's off the migration files. The USD rows from before the move are kept and self-describing - `decisions.reference_currency` and `signal_outcomes.benchmark_symbol` say which world each belongs to. Clear everything with `TRUNCATE trading.shortlists, trading.signal_outcomes, trading.decisions, trading.orders, trading.positions, trading.portfolios RESTART IDENTITY CASCADE` if a clean baseline ever matters; the append-only triggers deliberately do not block that.
 - **The engine now needs `Database:ConnectionString`** or it refuses to start. It is in the user secrets store on this machine, set 2026-09-23. `dotnet user-secrets list --project src/engine` prints it, so do not run that where anyone can see the screen.
 - **Migrations are applied by hand, and the engine refuses to start without them.** Decided 2026-09-24: `dotnet dotnet-ef database update` stays a deploy step, but startup names the pending migrations and the command instead of failing on a missing column mid-cycle.
 - **What is now impossible** rather than merely unlikely: the agents cannot name an amount (the contract has no `amount_usd`, and a test refuses one that reappears); an answer that is not the contract cannot deserialise into nulls; a position cannot be sized against cash instead of net asset value; an order cannot be placed on a quote that is stale or dated in the future; nothing can sell shares it does not hold, or sell a holding the agents bought less than three days ago on a new opinion; and a HOLD cannot extend the clock the exits read, because only a purchase moves it.
 
 ## Next steps
 
+### Resume here — stage 6, PR 3 of 5 (2026-10-04)
+
+Stage 5 is merged in full, follow-ups included: `CLAUDE.md` level as #55 and the trading day's
+deployment limit as #56. **Stage 6 has started** - read that stage in the roadmap and the stage 6
+log below before continuing, because it carries four decisions and three measurements that changed
+the plan.
+
+1. **PR 1 merged as #58.** The agent service as two images plus the module entrypoint whose
+   first log line is JSON.
+
+2. **PR 2 merged as #59.** The engine as two images, the Worker and the EF migration bundle.
+
+3. **`stage-6-compose` is the branch in hand.** The whole system in one compose file, with the
+   engine behind `--profile trade`. **The stage's success criterion is met and measured**:
+   `docker compose up -d` from nothing is 31.8 s to a provisioned healthy system, 6 s more for
+   the engine, four minutes for a first cycle. See the PR 3 section of the stage 6 log.
+
+4. **Then PRs 4 and 5:** the contract drift check, and `docker compose up` mechanised in CI.
+   PR 5 should also compare the `team_version` compose configures against the one
+   `src/agents/.env` configures - the two hold four hash-bearing values each, and PR 3 only
+   checked that they agree *today*.
+
+**One claim in the previous version of this block was wrong, and it is worth saying which.** It
+said the drift check was blocked on the `TAS_ENABLE_DOCS` defect, because `openapi_url` defaults
+to `None` since #52. It is not: `create_app().openapi()` returns the whole document with no
+server, no database and no flag, because the flag controls the *route* and not the generator. The
+defect is still real - `create_app` reads `os.environ` and never reads `settings.enable_docs`, so
+only a shell variable works - and PR 4 fixes it while it is in the area. It was never in the way.
+
+**The first `shortlist_edge` row needs the one-trading-day horizon to pass** on 2026-10-01's
+eleven decisions, so it appears after the next sweep. When it does, read `agents_edge_gross`:
+positive means the agents picked better than the ranking that handed them the ten candidates. One
+row is an anecdote; the number means something after a few weeks of them.
+
+**Branches are stale again** and the rule is master plus one. Deleting them is refused by this
+session's tooling as a destructive git action, so it is two commands by hand - `git branch -a` will
+show which, and all of them are merged or superseded except `plan/jev-placement`, which is somebody
+else's and unreviewed.
+
+---
+
 **Stage 4 - persistence and outcome measurement** is merged, all eight pull requests. **Stage
-5 - finding candidates and selling** is next, in three pull requests; read that stage in
+5 - finding candidates and selling** is next, in five pull requests; read that stage in
 `docs/arkitektur-roadmap.md` before continuing, since it carries several decisions that are
 easy to miss.
 
@@ -171,7 +228,7 @@ The model and the horizon are now settled - see *Before stage 5*, and the measur
 SELL, SELL, SELL where `llama3.2` gave three different answers. What is left of finding G is
 the population, and that is **stage 5** itself.
 
-**Stage 5 goes out as four pull requests.** Three were decided 2026-09-25; the second was
+**Stage 5 goes out as five pull requests.** Three were decided 2026-09-25; the second was
 inserted on 2026-09-26 when the account moved to kronor, because a contract rename and a
 migration have no business sharing a review with selling logic. The roadmap calls the stage
 3-4 days, which is too much for one review:
@@ -181,7 +238,8 @@ migration have no business sharing a review with selling logic. The roadmap call
 | 1 | `app/screening/` and `POST /v1/screen` - a universe, the factors from `facts.py` over all of it, filters and a ranking | Pure functions over fixed datasets, TDD, and **no engine changes at all**. It can be run and judged before anything else moves. The stage's stated practical risk lives here: yfinance is unofficial and rate-limited, and fundamentals are fetched per instrument |
 | 2 | **SEK end to end**: the symbol rule widens for Swedish tickers, the account currency becomes SEK, `available_risk_budget_usd` is renamed on the wire and in the database, and the engine points at Stockholm | A contract rename plus a migration. Inserted before selling because everything after it is written against whichever currency world exists, and because mixing it into the selling review would make it impossible to tell which change broke what |
 | 3 | Selling: the SELL branch in `PositionSizer`, `Portfolio.ExecuteSell` with realised profit and loss, and the deterministic exits - stop-loss, time limit, minimum holding period | Test-first with the same table technique as stage 2. The exits are the half that does not depend on the LLM answering, which is decision 1 applied to selling. **In progress**, four commits: the aggregate, sizing and the gate, the exits, then the wiring |
-| 4 | The engine drives the cycle: universe to shortlist, shortlist union holdings, one analysis per fact-sheet change, and the shortlist stored per cycle | This is where the regime column goes, and where "do the agents beat the screening that picked their candidates?" becomes answerable |
+| 4 ✅ | The engine drives the cycle: universe to shortlist, shortlist union holdings, one analysis per fact-sheet change, and the shortlist stored per trading day | This is where the regime column goes. **Merged as #51 and verified live** 2026-10-01 - see the stage 5 log |
+| 5 | The shortlist as a benchmark: `trading.shortlist_edge`, the buys of a screened day against the shortlist itself | Split out of PR 4 on 2026-09-27, written 2026-10-01. It is where "do the agents beat the screening that picked their candidates?" becomes answerable. It turned out **not** to need a new measured population - stage 4 already scores every signal, bought or not - so it is a view rather than a worker change, and it cannot be judged until a horizon has passed |
 
 Stage 8's condition survives untouched, because stage 5
 does not touch the team.
@@ -545,7 +603,7 @@ open until then.
 - **Known gaps pinned by tests,** documenting current behaviour rather than asserting the right one: `Money` treats `usd` and `USD` as different currencies, and `Position.AddQuantity` adopts the incoming price's currency. Stage 2 gives `Money` a currency guard, together with finding D.
 - **Empty packages:** `app/infrastructure/llm/` and `app/infrastructure/market_data/` hold only `__init__.py`. `app/application/` now holds the error vocabulary.
 - **The engine reads only the status code, not `error_code`.** 502, 503 and 504 all become `AgentUnavailable`, with the status in the log message. The engine's decision is the same in all three cases, so this was left alone in stage 1 — but it is a choice, not an oversight, and worth revisiting when the contract is versioned in stage 3.
-- **Uvicorn prints two lines before startup that are not JSON**, because `configure_logging()` runs in the lifespan. Moving it to import time would catch them but would also reconfigure logging in the middle of pytest. The real fix is a `--log-config` at deploy time, which belongs to stage 6.
+- **Uvicorn's two pre-startup lines are JSON now** (fixed in stage 6's PR 1, 2026-10-01). The guess written here was a `--log-config` at deploy time; what it turned out to want was an entrypoint. `python -m app` configures logging and *then* calls `uvicorn.run(..., log_config=None)`, so uvicorn never replaces the handler and its own loggers propagate to it. A JSON log-config file would have been a second copy of the formatter, drifting from the first. The item stays here because the reasoning that kept it open - moving `configure_logging` to import time would reconfigure logging in the middle of pytest - was right, and the way out was a third option neither of us had listed.
 - **The contract carries no currency.** Every price in it is USD and so is the portfolio. Fine until stage 5 widens the universe, and noted in `TradeSignalMapper`. It goes with finding D's remaining half.
 - **`PositionSizer` and `RiskEngine.Evaluate` are registered but nothing resolves them.** Deliberate: registering them means the options-to-domain mapping is covered by `ValidateOnStart` now, and stage 3 becomes wiring rather than new code.
 - **Memory is wired in as of PR 6b**, and `agent_memories` is gone with the `TEST` row that used to sit in it. `AnalysisMemory` reads the journal rather than a store of its own, and only the part of it the engine has measured.
@@ -553,6 +611,8 @@ open until then.
 - **`orders.placed_at` is a shadow property** filled by the database's `now()`. It is audit metadata today; stage 5 counts a holding period from the last purchase, and that is when it becomes domain data and has to come from the engine's injected clock instead.
 - **Quotes share the analysis client's resilience policy**, which does not retry a failing response. That rule was written for a call costing 12-15 s of LLM time and is stricter than an idempotent GET needs; the cost of leaving it is one cycle without a price for one holding, and the cost of a second typed client is a second place for the key and the timeouts to drift. Revisit if missing quotes ever show up in the decision rows.
 - **A quote for a symbol that is not a symbol answers 404, not 422.** FastAPI rejects it at routing, before validation, so it never reaches the error vocabulary. Honest but inconsistent with every other refusal in the contract; worth a `Path` converter or a catch-all route if the difference ever matters to a caller.
+- **How much one trading day may deploy is now capped** - built 2026-10-01 as `RiskPolicy:MaxDailyDeploymentPercentage`, 20 % of net asset value. **Counted per day, not per cycle, which is a change from how this item was first written.** The two are nearly the same thing since #51 - an instrument is analysed once a day, so a day has one buying cycle and the rest buy nothing - but the day is both the truer unit for the risk being controlled and the robust one: a cycle that failed halfway would otherwise be handed a fresh budget fifteen minutes later. What remains open is only the number, which wants measurements rather than argument.
+- **`Trading:MinDollarVolume` filters nothing, and that is settled as correct** - decided 2026-10-01: **keep 10 000 000 SEK, unchanged.** The live screen put all 31 OMXS30 names through it and rejected none, which is the evidence this item was waiting for. **A guard that does not fire on healthy data is a guard working.** Its job is to catch a symbol whose listing has gone inactive or whose data has gone stale, not to filter live large caps; raising it until it bites would be optimising a number against the wrong objective, and removing it would let a delisted name with a stale thirty-day volume rank. The condition to revisit it is the account size rather than the market: at 100 000 kr a 5 % position is about 5 000 kr against a 10 MSEK floor - 0.05 % of a day's turnover - so liquidity starts to matter somewhere above a ten-million-krona account, and the floor should move with it rather than on its own.
 - **Nothing translates a duplicate `correlation_id`.** `UnitOfWork` turns EF's concurrency exception into `ConcurrentChangeException`, but a unique-index violation still surfaces as `DbUpdateException` and lands in the worker's general handler with a stack trace. That is arguably right - the ids are fresh Guids, so a duplicate is a bug - but it has never been seen, so it has never been read.
 
 ---
@@ -1492,11 +1552,670 @@ steps* rather than here, because they are still being spent.
   reason. The shape says the shared testcontainers fixture rather than any assertion. If CI shows
   it, this is a known thing and not a new one.
 
+- **PR 4 of 5 - the engine drives the cycle** (branch `stage-5-cycle`, 2026-09-27). Four commits,
+  all green at **473 .NET** and 476 Python, `dotnet format` clean, no model drift, every step
+  re-run in a throwaway worktree. **Merged as #51** on 2026-10-01 and verified live the same day.
+
+  The stage's last review, and the one that turns "bedöm en ticker som någon annan valt" into
+  the target: a universe of 31 OMXS30 names, ranked without an LLM, ten of them analysed, and an
+  instrument asked about once a trading day instead of once every fifteen seconds.
+
+  | Commit | What |
+  |---|---|
+  | `0a1a35e` | The screen reaches the engine: DTOs, `ScreenMapper`, `GetScreenAsync`, `Trading:Universe`/`ShortlistSize`/`MinDollarVolume` |
+  | `6ef7ab7` | `trading.shortlists` and `SelectShortlistUseCase` - one screen per trading day, read back on every cycle after the first |
+  | `84bcabd` | The cycle is the holdings ∪ today's shortlist. `Trading:Tickers` deleted, the cadence moved to minutes |
+  | `c589c7c` | An instrument is analysed once a day and once a price. `decisions.selection`, and `hit_rate` grouped by it |
+
+  - **Three decisions, all taken the recommended way 2026-09-27.**
+
+    | Decision | Taken | Why |
+    |---|---|---|
+    | What counts as the fact sheet having changed | **Neither today nor this price**: skip if the last analysis was today, or was at the price the quote shows now | Gives one analysis per instrument per trading day during market hours, and silence at night and at weekends - without a calendar. A closed market cannot move a price, so the engine waits for the open by itself |
+    | Whether the screen runs every cycle | **Once per trading day**, read back from `trading.shortlists` otherwise | The contract already says two screens on the same day rank the same way, because the factors are daily bars. It makes yfinance's rate limit a non-issue and the cycle idempotent per day |
+    | The shortlist as a benchmark | **Split into its own pull request** | Comparing buys against the shortlist average needs the *unbought* members measured too, which is a new population in `MeasurementWorker`. PR 4 is what the engine does; PR 5 is how it is scored. Six to eight commits in one review otherwise. **The reason was wrong** (2026-10-01): those measurements already existed, so PR 5 was two commits rather than most of a day. The decision stands, the premise did not |
+
+    Two more I took without asking, both argued in the code: `trading.shortlists` stores the
+    rejections as well (nullable rank and score, nullable reason), because a universe that quietly
+    rots is otherwise invisible; and the cycle interval is **15 minutes**, which is now the slack
+    in a stop-loss rather than the pace of the analyses.
+
+  - **The roadmap was half wrong about daily data, and reading the source is what showed it.**
+    It says an instrument need only be analysed when its `FactSheet` changes, "vilket med dagsdata
+    blir en gång per handelsdag". The returns, the volatility and the turnover are daily - but the
+    *price* is `currentPrice`/`regularMarketPrice` from `.info`, and `pct_below_52w_high` is
+    computed from it. So the fact sheet moves continuously while the market is open, and a rule
+    written on the price alone would never skip anything between nine and half past five. Hence
+    two conditions, each covering the other's blind spot.
+
+  - **The contract claimed more than the code does.** `contracts/screen.schema.json` said
+    `rejected` holds "every instrument that was looked at and left out". It does not:
+    `screening.py` truncates to the requested limit, so an instrument that ranked 15th of 31
+    appears in neither array. The description now says so and names the consequence - the agents
+    can be compared against the shortlist, but **the ranking itself cannot be checked against the
+    names it passed over**. Whether to fix that (by adding the un-shortlisted to `rejected` with
+    their ranks) is a decision for PR 5, because it is that PR's question.
+
+  - **Mutation testing found two holes rather than confirming the tests**, which had not happened
+    on this branch before:
+
+    | Mutation | What it revealed |
+    |---|---|
+    | Swapping the order of the two conditions turned **nothing** red | The commonest case of all was missing: analysed today **and** the price unchanged. Both verdicts skip, so nothing about trading depends on which - but the cycle's summary line counts them separately, and that line exists to tell "already done today" apart from "the market is shut" |
+    | Dropping the `ReferencePrice != null` filter turned **nothing** red | So the rule that keeps an agent-service outage from costing a whole trading day was untested. An attempt is a row - it has to be - but it is not an analysis |
+
+    Both have tests now, and the mutations turn exactly those red. The other mutations behaved:
+    trusting the promised ranking order, a duplicate check over one list, universe duplicates
+    compared as raw strings, a rank counted from zero, rejections not stored (five red, two of
+    them looking like they were about something else), a table created without its trigger,
+    dropping the holdings from the selection (eight red, including two about restarting), and
+    analysing the shortlist before the holdings.
+
+  - **Four worker tests were rewritten rather than fixed.** They analysed one instrument twice on
+    the same day at the same price, which is exactly what no longer happens - so they now run a
+    day apart at a moved price. One was removed: the harness waits on committed decisions, and the
+    cycle it wanted to observe deliberately produces none, so it could only ever have proved its
+    point by waiting on something it did not control.
+
+  - **The fixture leaked rows** until `trading.shortlists` was named in its `TRUNCATE`. It is the
+    one table with no foreign key into the portfolio graph, so `CASCADE` never reached it.
+
+  - **`git checkout --` destroyed uncommitted work again.** Same file-level mistake as PR 3, same
+    lesson already written down, used this time to revert a mutation on `DecisionLog.cs` - which
+    took `LastAnalysisOfAsync` with it. Rewritten verbatim from my own heredoc, and the guard is
+    not "remember": it is to copy the file to the scratchpad *before* mutating, every time, which
+    is what the other mutations in this branch did do.
+
+  **Merged as #51** on 2026-10-01, and the pull request's own text said it had not been run live.
+  It has been now - see below. Nothing in the review needed answering.
+
+### The live run (2026-10-01) — the stage's own claim, measured
+
+The fourth pull request's main claim was that a cycle does **less**, and that is the one claim no
+test can make convincing: every test proves what happens, and this one is about what stops
+happening. Three cycles against the real universe, with `Trading__CycleIntervalMinutes=1` so the
+second arrived in a minute rather than in fifteen - the rule is about the day and the price, not
+the interval, so shortening it changes nothing under test.
+
+```
+Cycle 1:  The exits judged 1 of 1 holding(s) and sold 0.
+          Screened 31 instrument(s) for 10/01/2026: 10 shortlisted, 0 rejected.
+          Cycle over 11 instrument(s): 11 analysed, 0 already done today, 0 unchanged in price.
+
+Cycle 2:  The exits judged 5 of 5 holding(s) and sold 0.
+          Cycle over 11 instrument(s): 0 analysed, 11 already done today, 0 unchanged in price.
+
+Cycle 3:  The exits judged 5 of 5 holding(s) and sold 0.
+          Cycle over 11 instrument(s): 0 analysed, 11 already done today, 0 unchanged in price.
+```
+
+**No screen line in cycles 2 and 3**, and the agent service's own log says the same thing
+independently: **one** `POST /v1/screen` and **eleven** `POST /v1/signals` across all three
+cycles, every signal in the first. Two cycles that would have cost 22 analyses before this change
+cost nothing at all. The order holds too: the exits first, then `ERIC-B.ST (Holding)` ahead of the
+shortlist, then the shortlist in rank order.
+
+**The engine found four buys by itself**, which is the first time that has happened and the thing
+the whole stage existed for:
+
+| Rank | Symbol | Score | Outcome |
+|---|---|---|---|
+| 1 | SCA-B.ST | 1.226 | HOLD |
+| 2 | HEXA-B.ST | 1.107 | **Bought 25 at 99.02** |
+| 3 | SEB-A.ST | 1.106 | **Bought 10 at 229.20** |
+| 4 | GETI-B.ST | 1.040 | HOLD |
+| 5 | EVO.ST | 0.868 | **Bought 3 at 791.80** |
+| 6 | NIBE-B.ST | 0.770 | HOLD |
+| 7 | SWED-A.ST | 0.556 | HOLD |
+| 8 | KINV-B.ST | 0.439 | **Bought 40 at 61.70** |
+| 9 | SHB-A.ST | 0.432 | HOLD |
+| 10 | SAAB-B.ST | 0.430 | `No order: nothing is held of SAAB-B.ST` |
+
+That last row is worth stopping at: **the agents answered SELL on something the portfolio does not
+hold, and the sizer refused it.** "Blankning - SELL utan innehav blir ingen order" from the
+roadmap's *Medvetna nej* had never fired outside a test before.
+
+`trading.decisions` for the day: `Holding/NoAction` 1, `Shortlist/Executed` 4, `Shortlist/NoAction`
+5, `Shortlist/NotSized` 1. The `selection` column does exactly what it was added for.
+
+**3.1 signals a minute, measured** - eleven over 211 seconds, from the agent service's own
+timestamps, against the security branch's limit of ten per minute per key. The token bucket refills
+at 10/min and consumption is one every nineteen seconds, so it **fills faster than it empties** and
+cannot run dry on this model. The earlier guess in this log that `ShortlistSize` was the setting to
+watch was **wrong**: at nineteen seconds an analysis the ceiling is about 3.2 a minute whatever the
+shortlist's length, because fifty instruments only take longer. What would breach the limit is a
+*faster model* - something in `llama3.2`'s class at three seconds a step would be around 20 a
+minute. The limit is bound to the model choice, not to the universe.
+
+**Against the roadmap's own verification for stage 5**, which is the list that says when the stage
+is done, the run settles three of five:
+
+| Condition | Status |
+|---|---|
+| `POST /v1/screen` ranks the whole universe with no LLM call | ✅ 31 names, no model touched the ranking |
+| A cycle analyses the shortlist plus the holdings | ✅ 11 = 10 shortlisted + 1 held |
+| An unchanged `FactSheet` produces no new analysis | ✅ cycles 2 and 3, zero analyses |
+| **A SELL on a holding reduces the position in the log** | ❌ the only SELL was on something *not* held |
+| **A holding that falls through the stop-loss is sold with no agent asked** | ❌ the exits judged 5 of 5 and sold 0 |
+
+The two that are open cannot be run on demand: both need the market to move against a position, and
+PR 3's run did not produce them either. They are the honest remainder of the stage's definition of
+done - **not** a reason to hold stage 6, but a reason not to call stage 5 verified. The cheapest
+path to the fourth row is the time-limit exit rather than the stop-loss: the four new positions
+carry a fifteen-day thesis, so one of them will reach it without anything unusual happening.
+
+**Three things the run found that no test had:**
+
+- **The liquidity floor filtered nothing.** All 31 OMXS30 names cleared `MinDollarVolume`, nothing
+  was rejected, and no dead symbol cost a failed lookup. This log called it "a filter with no
+  evidence behind it"; it now has evidence, and the evidence is that it does nothing at this
+  account size. That is what it was designed to do, but it is measured rather than assumed now.
+- **The log's date format is ambiguous.** `Screened 31 instrument(s) for 10/01/2026` is the first
+  of October, formatted with the current culture, and reads as the tenth of January to a Swedish
+  reader. One format string, and the kind of thing that only costs anything when somebody reads an
+  old log.
+- **Nothing caps how much a single cycle deploys.** Four buys took the cash from 97 531 to 87 920 -
+  ten percent of the portfolio in four minutes. Each position is capped at 5 % and the cash buffer
+  holds 10 % back, so nothing was breached; but with ten BUYs at the full conviction tier a single
+  cycle could put out half the account. That is what the rules say today and it is the first time
+  the *pace* has been visible. Recorded under *Open decisions* rather than changed.
+
+### The security hardening review (2026-10-01)
+
+Reviewed on request, twice: `security/hardening-f01-f14` first, then
+`security/hardening-master-bdf5bf1` after it was rebased onto #51 and a new finding added. Both are
+somebody else's work; what follows is what the review found, because the findings outlive the
+branches.
+
+**F-18 was a hole in PR 4's own code, and it is the most valuable finding in either branch.**
+`ScreenMapper` checked sort order, uniqueness, ticker format, volatility, turnover and reason
+length - but not that the answer was *about the universe the engine sent*. The chain: a screen
+answers with a symbol outside `Trading:Universe`, it is stored in `trading.shortlists`,
+`CycleSelection` puts it in the cycle, `ProcessProposalUseCase` asks about it and the
+instrument check **passes** because the answer is about what was asked, the sizer sizes it, the risk
+gate approves - and the engine buys an instrument its owner never authorised. One field in one HTTP
+response walks past the configuration that decision 1 rests on. The same rule was already applied to
+the signal (*"a model that replies TSLA to a question about AAPL makes the engine buy TSLA"*) and
+simply not to the screen, which is what decides what gets asked about at all.
+
+Its quote half is correct but milder than its commit message claims. `ApplyExitsUseCase` looks the
+position up by `quote.Ticker` and skips what it cannot match, and `PricesForSizingAsync` keys the
+snapshot on the answer's own ticker so a wrong symbol leaves the holding unpriced and sizing
+refuses - both already fail closed. The place it actually fixes is **`AnalysisDueCheck`**, which
+compared `quote?.Price.Amount` against the last analysis's price with no symbol check, so a quote
+about another instrument could decide whether this one was analysed. That costs an analysis rather
+than money, and the commit message does not mention it.
+
+**The blocker the first review found, and what it says about the fix.** The first branch deleted
+`client.DefaultRequestHeaders.Add(ApiKeyHeader, ...)` - whose comment read *"It is set once here
+rather than per request, so no code path can forget it"* - and set the key at each call site
+instead. A trial merge proved the consequence: `GetScreenAsync`, written in parallel in PR 4, sent
+no `X-Api-Key` at all, so every screen would have answered 401 and `ScreenOrNothingAsync` would have
+swallowed it as a warning - the engine running holdings-only, every day, with nothing visibly
+broken. The second branch fixes it, with a test per scope. **It fixes the instance, not the class:**
+the key is still a convention at five call sites, and nothing would catch a sixth one forgetting it.
+
+**Carried and unaddressed**, all three now in *Open decisions*: `TAS_ENABLE_DOCS` is read from
+`os.environ` while `settings.enable_docs` is declared and never used, so the switch does nothing in
+the `.env` file that `.env.example` points at - proved by probing it; `agent_api_key` is
+`[Required]` on both sides and grants every scope, so a full-access key always exists and the
+scopes cannot be adopted in any configuration; and `CLAUDE.md`, `contracts/` and this log are
+untouched by either branch.
+
+**What is good in it, because it is:** the outcomes HMAC signs the exact bytes that are sent
+(`SerializeToUtf8Bytes` into `ByteArrayContent`, with the reasoning in the comment) rather than
+re-serialising, which is the mistake most implementations make; the closed-by-default router was
+kept with scopes narrowing on top, so a route added later still needs a key; and the rate limiter
+runs *after* authentication - twenty-five requests with random keys allocated **zero** buckets,
+which I checked because I expected the opposite.
+
+- **PR 5 of 5 - the shortlist as a benchmark** (branch `stage-5-shortlist-edge`, 2026-10-01). Two
+  commits. **489 .NET** and 476 Python green, `dotnet format` clean, no model drift.
+
+  `trading.shortlist_edge` answers the question the project turns on: per screened day, horizon and
+  team version, the average excess return of the whole shortlist beside the average of the subset
+  the engine actually bought, and the difference between them. Positive means the agents picked
+  better than the ranking that handed them the candidates; negative means the LLM is cost rather
+  than value, and the roadmap already says what follows from that - *"då är en bättre rankning värd
+  mer än ett bättre team"*.
+
+  - **It needed no new measurement, and that is the finding.** Both this log and the review of PR 4
+    said PR 5 would add a second population to `MeasurementWorker` - the shortlisted instruments
+    nobody bought. **They are already measured.** Stage 4's PR 5b scores *every* signal at the
+    fixed horizons, including HOLD and everything the risk gate refused, on the explicit grounds
+    that measuring only the trades that went through measures the wrong population. The database
+    says so: 20 `NoAction` and 41 `NotSized` measurements were already stored before this branch
+    existed. What was missing was never the data - it was a join from a measurement back to the
+    shortlist it came from, and that is a view. The planned pull request was most of a day's work;
+    the real one is two commits. **Checking the premise cost one SQL query and saved the rest.**
+
+  - **Three decisions, taken rather than asked** (the owner said to do what seemed best):
+
+    | Decision | Taken | Why |
+    |---|---|---|
+    | What to average | **`excess_return`, not `net_edge`** | `net_edge` is null for every HOLD - checked against all 67 stored measurements, 20 of 20 HOLDs null - because a HOLD has no edge to compute, only a band it stays inside. Averaging it across a shortlist would silently average the buys and sells alone, which is this view's own comparison inverted into a number that reads like data. `excess_return` is a fact about prices rather than about a stance |
+    | Gross or net | **Gross against gross, with net beside it** | The shortlist average is a paper portfolio that paid no commission and no spread, so subtracting costs from the bought side alone would flatter the screen by about three basis points a round trip. `bought_edge_net` is what the account really earned, reported next to the comparison rather than inside it - the same reasoning that put both in `hit_rate` |
+    | A new view or a column on `hit_rate` | **A new view** | Different grain. `hit_rate` groups by a decision's own attributes; this groups by a screened day and compares two subsets of it. Forcing them together would make both harder to read and neither more useful |
+
+  - **Deferred, with the design named rather than left vague:** whether to store the ranks of the
+    instruments the screen passed over. `rank(candidates, limit)` truncates, so the 21 names that
+    ranked 11th to 31st on 2026-10-01 exist in no row - which means the agents can be compared
+    against the shortlist, but **the ranking itself can never be validated**. Nobody can ask whether
+    rank 15 would have done better than rank 3. The fix is not a line in this view: the contract has
+    to carry every ranked instrument with a flag for the ones selected, `trading.shortlists` needs
+    that flag as a column, and the engine has to analyse only the flagged ones. That is a pull
+    request, and burying a contract widening inside a measurement change is the mistake that
+    splitting SEK out of selling avoided. **The half-measure is worse than either:** putting the
+    rank in a rejection's free-text reason would cost twenty rows a day and answer nothing, because
+    a measurement cannot parse prose.
+
+  - **Every test fabricates its rows**, which is not convenience. The view cannot be checked against
+    real data until a horizon has passed on a day that was screened, and the first screened day is
+    today - so a test with made-up measurements is the only thing standing between this view and a
+    number nobody has ever verified. It is also the only way to put a HOLD, a buy and an
+    unmeasurable row in one shortlist on purpose.
+
+  - *Mutation-tested:* averaging `net_edge` instead of `excess_return` turns **seven** tests red,
+    which is the central mistake and the one worth the most coverage; counting the rejected
+    instruments as shortlist members turns exactly the rejection test red; dropping the trading day
+    from the join turns exactly the cross-day test red.
+
+  - **Reviewed externally 2026-10-01**, verdict *accept with nits*, no code blockers, CI green.
+    Four findings, all real, and two of them changed the view:
+
+    | Finding | Answered |
+    |---|---|
+    | `bought` was `outcome = 'Executed'` with no stance, so an executed SELL on a shortlisted holding could inflate the edge | **Fixed.** A sale's `excess_return` is still the instrument's forward return, so a well-timed exit from a share that then fell would have arrived as a *negative* contribution to how the bought instruments did - in a column it was never part of. `AND d.stance = 'Buy'` on all four aggregates, plus a test whose numbers show the difference: the edge reads 0.14 with the filter and 0.00 without it, and 0.00 is the shape of a result that means nothing while looking like agreement |
+    | No test for `NotSized` or `RejectedByRisk`, although 41 `NotSized` measurements were the premise of the whole pull request | **Fixed.** A theory over both. Not hypothetical either: SAAB-B.ST was shortlisted on 2026-10-01, answered SELL and was refused because the portfolio held none of it |
+    | *Current state* still contradicted itself | **Fixed**, and it was worse than the review said - see below |
+    | The inner join drops a shortlisted instrument that was never analysed, biasing the control | **Documented.** It cannot happen while a cycle completes, because every shortlisted instrument is analysed once a day, so it is a property to know rather than a guard to write. The remarks had covered the midnight straddle and not this |
+
+    The empty pull request body is this session's: the text is generated into a pre-filled compare
+    URL and into `pr5-body.md`, so opening the plain compare page gives a blank one.
+
+  - **The stale-claim sweep missed a whole section, which is the second time this file has caught
+    me at the same thing.** The lesson written after PR #42's review says a resume document
+    describing a plan that no longer holds is one you stop trusting, and that writing a new
+    sentence beside a stale one leaves the file worse. The sweep I ran was a grep for phrases I
+    expected to be stale - which finds what you already suspect and nothing else. *Current state*
+    still said `Trading:Tickers` was AAPL and MSFT, a setting **deleted** in #51, and that the
+    database had "all three" engine migrations when it had eleven - and the correction written here at the time said twelve, which was also wrong. **A section that describes the
+    present has to be read, not searched**, and the review found in minutes what the grep could not
+    find by construction.
+
+  - **The backup discipline failed a third time, and differently.** The mutation harness copies the
+    file to the scratchpad in the same command as the edit, which is the guard this log wrote after
+    PR 4. This time the `cp` itself failed - the scratchpad's `mutations/` directory did not exist
+    in a new session - and because it was chained with `&&` after a `cd` that succeeded, the mutation
+    ran anyway on a file that was **not yet committed**, so there was no copy anywhere. It was
+    recoverable only because the mutation was a single known string replacement that could be
+    reversed exactly. The guard that actually works is `mkdir -p` before the copy and checking that
+    the copy exists before touching the original - a backup step that can fail silently is not a
+    backup step.
+
+
+## Stage 5 follow-ups (2026-10-01 ->)
+
+Work the stage produced rather than work the stage planned. Stage 5 itself is merged; these are the
+things running it made visible.
+
+- **`CLAUDE.md` brought level with eleven merges** (branch `docs/claude-md-level`, merged #55). It
+  had not changed since 2026-09-26 while #48, #51, #52, #53 and #54 landed, and its stated job is
+  to describe the repo as it is today. **Following it gave an engine that would not start** -
+  `AgentService:OutcomesHmacSecret` became required in #52 and the document still named two secrets
+  where there are six - which is how this session found out, by following it.
+
+  The levelling itself was **mechanical, because a grep had already failed once.** A script diffed
+  every `TAS_` variable the document names against `.env.example`, and every options property of
+  `TradingOptions`, `AgentServiceOptions` and `RiskPolicyOptions` against the text. It found four
+  things careful reading had not: the document named `DATABASE_URL` **without the `TAS_` prefix its
+  own rule demands**, `TAS_SCREEN_TIMEOUT_S` and `TAS_SCREEN_TTL_S` had never been documented at
+  all since PR 1, `MaxPositionPercentage` and `CashBufferPct` were described in prose but never
+  named, and the four scoped keys were written as a shorthand nobody could grep for.
+
+- **The trading day's deployment limit** (branch `stage-5-cycle-budget`, 2026-10-01). **507 .NET**
+  and 495 Python green. `RiskPolicy:MaxDailyDeploymentPercentage` at 20 % of net asset value - four
+  positions at the full conviction tier, or eight at the half tier.
+
+  - **It is not the position limit again.** `MaxPositionPercentage` bounds any one holding and
+    holds whatever this says. This bounds a *day*, because since #51 a day's buying is up to ten
+    decisions from one model on one screen, taken within a few minutes of each other: they share
+    whatever that day's bias is, and a momentum ranking in a rising market hands the agents ten
+    names that move together. **Ten positions is less diversification than it looks, because the
+    correlation is the screen's own factor.** The first real screened cycle deployed ten percent in
+    four minutes; ten BUYs at the full tier would have been half the account.
+  - **Per day rather than per cycle**, which is a change from how the decision was first written.
+    The engine has no cycle-level state and that is deliberate - each analysis is its own scope and
+    transaction, and the worker was left with no shared mutable state on purpose - so the budget
+    has to be asked of something that already knows. `orders.placed_at` makes it a query, which is
+    the same move as counting bars instead of keeping a holiday table: **the ledger is the
+    accumulator, so nothing has to remember.** A day is also the robust unit, because a cycle that
+    dies halfway would otherwise get a fresh budget on the next one.
+  - **The sizer shrinks and the gate refuses**, which is this engine's standing arrangement for
+    every limit: a third term in the same `min` the cash buffer already lives in, so an order
+    shrinks against the day exactly the way it shrinks against the buffer, and then the gate
+    re-derives the limit because the sizer's arithmetic is not evidence about the sizer's
+    arithmetic. The position limit is reported *before* the day when both are breached - "this
+    position is too big" tells an operator more than "the day is spent", and only one of the two
+    can be fixed by waiting.
+  - **A sale ignores it entirely.** Selling frees capital rather than committing it, and the sell
+    gate takes no deployment figure at all - so a daily *purchase* budget can never trap a
+    position, which is the same reasoning that keeps prices out of the sell gate.
+  - **A daily limit below the position limit is refused**, in the options range and again in the
+    domain. It would make the position limit unreachable, and the two numbers would be quietly
+    fighting each other.
+  - **No optional parameters on the real signatures.** `deployedToday` is required on
+    `PositionSizer.Size` and the buy overload of `RiskEngine.Evaluate`, and the tests get
+    four-argument overloads through an extension class instead. An optional parameter would mean a
+    production call site that forgot it silently said "nothing spent today" - which is the shape of
+    mistake that cost #52 its screen key, where a property that made forgetting impossible was
+    traded for a convention and the first new call site broke it.
+  - *Mutation-tested:* the sizer ignoring the day's budget turns three tests red; the gate trusting
+    the sizer instead of re-deriving turns exactly the gate test red; the ledger query counting
+    sales as purchases turns exactly the ledger test red.
+  - **The cost, stated:** this slows the portfolio's formation and therefore the baseline the
+    measurement needs. It is configuration for that reason, and the number is the part that wants
+    measurements rather than argument.
+
+  - **Reviewed externally 2026-10-01**, verdict *accept with nits*, no blockers, CI green. Five
+    findings, all real, and **the first one was wrong about more than its wording**:
+
+    | Finding | Answered |
+    |---|---|
+    | The `RiskPolicyOptions` remark said the `[Range]` starts at the position limit; it is 0.01-1.0, and the cross-condition lives in the domain | **Fixed, and the remark had been describing behaviour that did not exist.** It also claimed the domain's guard "fails at startup", which is false: `RiskPolicy` is a singleton built by a factory, so it is first resolved when a *cycle* asks for it - the refusal would have arrived as an "Unexpected failure" line from inside the worker's own catch, minutes after a deploy. That is precisely the failure this project builds configuration to avoid. So the fix is a `RiskPolicyOptionsValidator` carrying the cross-condition into `ValidateOnStart`, which is the pattern `TradingOptionsValidator` already set, and the domain keeps its own guard because it does not trust that configuration was validated |
+    | `DeployedOnAsync` has no `portfolio_id` filter | **Documented**, with the invariant named: it leans on the same one `FindAsync` enforces, that the engine trades one account and a second row is a fault rather than a silent pick. The remark now says that if that ever stops being true, this sum has to be scoped before anything else is - a shared daily budget across two accounts would let each spend the other's |
+    | No use-case test with a non-zero `deployedToday` | **Fixed**, and it was a dangling affordance: the parameter had been added to the test builder and never used. Four tests now cover what is only testable there - that the day's spend is read **once**, for the date the request names, given to both halves, and not read at all for a sale |
+    | `CLAUDE.md`'s formula still named two `min` terms | **Fixed** |
+    | Theoretical check-then-act between concurrent workers | **Answered rather than guarded.** Two buys decided at once would read the same spend, but both change the portfolio's cash, so the row version the aggregate already carries fails the second commit as a `ConcurrentChangeException` - the same mechanism that stops two writers spending the same krona. Written into the policy's remarks, because a reader should not have to re-derive it |
+
+    *Mutation-tested again:* a validator that passes everything turns exactly the startup test red;
+    asking the ledger for a sale as well turns exactly the sale test red.
+
+  - **The review's most useful nit was about a comment.** It said the remark and the attribute
+    disagreed, which was true - and following that disagreement showed the remark was describing a
+    guarantee the code did not give. **A comment that is wrong about the code beside it is worth
+    reading as a question about the code, not only about the comment.**
+
+
+---
+
+## Stage 6 log (2026-10-01 ->, in progress)
+
+Read the stage in `docs/arkitektur-roadmap.md` first. It is two days of work on paper:
+multi-stage Dockerfiles for both services, compose with healthchecks and
+`depends_on: condition: service_healthy`, `docker build` in CI, and NSwag generating the
+.NET client from FastAPI's `/openapi.json` with CI failing on drift.
+
+### Three measurements taken before the plan was written
+
+Each of them changed it.
+
+1. **A container reaches Ollama on Windows.** `--add-host=host.docker.internal:host-gateway`
+   plus `http://host.docker.internal:11434/v1` answered `{"version":"0.35.0"}` from inside a
+   throwaway container. No firewall in the way and no host IP to look up. This was the stage's
+   largest unknown: a container's `127.0.0.1` is the container, so mirrored networking does
+   not help by itself - but the bridge gateway reaches the WSL host, and mirrored networking
+   has already put that host on Windows.
+2. **The OpenAPI document needs no server.** `create_app().openapi()` returns 7 paths and 20
+   schemas with no database, no Ollama and **no `TAS_ENABLE_DOCS`** - the flag controls the
+   `/openapi.json` *route*, not the generator. The resume note in this file said the drift
+   check was blocked on that defect. It was not. The defect is still real and still worth
+   fixing; it is simply not in the way.
+3. **The wheel carries the prompt files.** All four `.md` files are in it, so installing the
+   project with `--no-editable` works. That also makes `team_version` a **containerisation
+   invariant**: the hash is over the prompt files' contents, so a build that mangled line
+   endings would not fail - it would answer as a different team and split the measured
+   population in two. It is therefore checked rather than assumed.
+
+### The four decisions
+
+| # | Question | Taken |
+|---|---|---|
+| D1 | Who applies the migrations under compose? | One short-lived container per schema - `efbundle` for `trading`, `alembic upgrade head` for `agent` - gated with `service_completed_successfully`. The engine keeps its refusal to start against a database that is behind it, and that refusal becomes the *proof* the migration container ran. |
+| D2 | Does `docker compose up` start the engine? | **No.** Database, agent service and both migrations by default; the engine behind `--profile trade`. It is the only service that spends money and the kill switch does not arrive until stage 7, so until then "not starting it" is the only way to stop it - and that should cost a word on the command line. |
+| D3 | NSwag-generated client, or a drift check? | **A drift check, not generation.** Generating the engine's DTOs from Python's specification would make Python the contract's owner, which inverts contract-first and contradicts CLAUDE.md's *"Neither side generates the other"*; the generated types would also lose `[JsonUnmappedMemberHandling(Disallow)]` and the mappers' length caps, which are the engine's actual defences against a wrong answer. What the roadmap asks for - *"CI fails on drift"* - is obtainable without the inversion. **This is a deviation from the roadmap's text and was raised as one.** |
+| D4 | Where do compose's secrets live? | The root `.env` becomes its single source and gains two keys. Compose hands each container only the variables that are its business, so the rule that the agent service never sees the other two passwords survives. |
+
+### The pull requests
+
+Five, in this order: the agent image, the engine image plus its migration bundle, one compose
+file for the whole system, the contract drift check, and `docker compose up` mechanised in CI.
+
+### PR 1 - the agent service as two images (`stage-6-agent-image`)
+
+- **An entrypoint whose first log line is already JSON.** `python -m app` configures logging
+  and *then* hands the process to uvicorn, which is the opposite of what a uvicorn command
+  line does: uvicorn installs its own logging configuration before the application starts and
+  `configure_logging` runs in the FastAPI lifespan, so the two lines that say whether startup
+  happened came out in uvicorn's format while every line after them was JSON. `log_config=None`
+  is what closes it - uvicorn calls `dictConfig` only when it has a configuration. This was an
+  open item in this file, assigned to stage 6 and described there as "the real fix is a
+  `--log-config` at deploy time"; the module turned out to be smaller and better than a second
+  copy of the formatter in a JSON file.
+- **The socket is no longer in two places.** `TAS_BIND_HOST` was an operator's claim about a
+  socket somebody else opened, which is how a warning comes to describe a bind nobody made.
+  Through the entrypoint the claim *is* the socket, and `TAS_PORT` joins it.
+- **Four tests, and the fake uvicorn logs from inside `run()` on purpose.** A line emitted
+  after `main()` returned would prove nothing about which of the two ran first.
+  *Mutation-tested:* dropping `log_config=None` turns exactly the mechanism test red; moving
+  `configure_logging` after `uvicorn.run` turns exactly the JSON test red; hardcoding the
+  socket turns exactly the bind test red.
+- **Two targets, not one image with two commands.** A service that can migrate the database it
+  reads is a service that can migrate it by accident - the same separation the engine already
+  has. `alembic` is the migrate image's entrypoint, so `current` and `upgrade head --sql` are
+  available to an operator who wants to look before applying.
+- **The migration container does not need an LLM key to create a table.** Its URL travels as
+  `-x url=`, which is `env.py`'s documented path, because `get_settings()` requires *every*
+  setting the service needs. A `migrate` dependency group splits alembic out of `dev`, so the
+  image carries SQLAlchemy without carrying pytest, mypy, ruff and testcontainers.
+- **The healthcheck asks `/health`, not `/ready`**, and that is a decision about what compose
+  does with the answer rather than about which endpoint is more informative. `/ready` is 503
+  until the database and the LLM backend both answer, so a blinking Ollama would make the
+  container unhealthy - and anything gated on this service would then refuse to start over an
+  outage the engine already handles by taking no decision that cycle.
+- **Verified by running it, not by building it.** Every log line JSON including uvicorn's first
+  two; `/ready` reached the real database *and* Ollama on Windows; `/health` 200; an
+  unauthenticated quote 401; `/openapi.json` still 404; a real quote for ERIC-B.ST at 91.56
+  through yfinance from inside the container; and **one real three-step analysis of
+  VOLV-B.ST in 32 s**, a validated HOLD at conviction 0.50 with a 15-day horizon, whose three
+  rows are in `agent.step_outputs`. The image computes `team_version` `5926c629dcbe`, which is
+  the host's. The migrate image applied all five revisions to a throwaway database under
+  `agent_svc`'s own grants, with `alembic_version` landing in the `agent` schema.
+- **Ten CI steps, run locally as written.** Both targets built; uid 10001; the application
+  builds with `-w /`; the image's prompt hashes diffed against the repository's; one migration
+  head; alembic present and the test tools absent; no `.env` in either image.
+  *Mutation-tested:* one trailing newline on a repository prompt file turns the prompt check
+  red, and an image built with a `.env` in it turns the leak check red.
+- **One CI step had a sharp edge and lost it.** `echo ... > src/agents/.env` is harmless on a
+  runner, where there is no such file, and destroys a developer's real secrets the first time
+  anyone runs the job by hand. It is `test -f ... ||` now. **A step that overwrites a file is
+  a worse bug than the one it was guarding.**
+- Image sizes: 563 MB for the service, 602 MB for the migration step. Most of it is pandas,
+  numpy and ag2, which is what a yfinance integration costs.
+
+### PR 2 - the engine as two images, plus its migration bundle (`stage-6-engine-image`)
+
+- **`runtime:10.0`, not `aspnet`.** The engine is a Worker and never opens a socket, so an
+  aspnet image would carry a web server nothing starts. Non-root as the base image's own uid
+  1654, through `$APP_UID` rather than the number, so it stays right if Microsoft moves it.
+- **The migration bundle is a second target**, for the same reason the agent service's Alembic
+  step is: the engine already refuses to migrate itself, and an image carrying the ability to
+  do it would make that refusal a matter of discipline rather than of fact. It is built in the
+  same stage as the service from the same restore, so the two cannot disagree about which
+  migrations exist - which is the failure the engine's startup check exists to catch and would
+  rather not have to. **No CMD**, because the fallback is the design-time factory's deliberate
+  `Host=design.invalid`: a run without `--connection` fails to resolve a hostname instead of
+  migrating something nobody meant to.
+- **No HEALTHCHECK, as a decision.** Nothing is gated on this container, and what a useful
+  check would ask is not "is the process alive" - Docker knows that from the process exiting -
+  but "did a cycle finish in the last fifteen minutes", which needs the engine to publish that
+  somewhere. Stage 7.
+
+**Two things the first build found, neither theoretical.**
+
+- **It published a gitignored `appsettings.Development.json`.** `.dockerignore` knew about
+  `.env` and not about the file sitting beside it on the next line of `.gitignore`. This one
+  held log levels, so nothing leaked - but `appsettings.Local.json` is in that same section,
+  and that is where a connection string goes when user secrets are a nuisance. The fix is two
+  patterns; the guard is better than the patterns, see below.
+- **Npgsql probes for GSSAPI the runtime image does not carry.** Every run began with two
+  unstructured lines on stderr about `libgssapi_krb5.so.2`, and the migration container printed
+  them too. The connection works regardless, because this system authenticates with a password,
+  so it is noise rather than a fault - and still worth three megabytes of `libgssapi-krb5-2` to
+  remove. In a service whose whole logging discipline is that a line means something, the first
+  two lines an operator reads should not be a library that was never needed.
+
+**The CI job asks git instead of keeping a list.** For every file published into `/app` it asks
+`git check-ignore` whether the repository refuses to track it. `.gitignore` and `.dockerignore`
+are two lists of "this must not leave the machine" and nothing holds them together, so a check
+written as filenames would be one more thing to keep in step - and it was precisely the drift
+between those two lists that published the file above. This formulation needs no editing when
+the next local-only file is invented. *Mutation-tested:* an image with that file in `/app` fails
+the step and names it. The first attempt at that mutation **could not build**, because
+`.dockerignore` now refuses the file into the context at all - which is the fix working, and a
+false "survived" until I noticed the image had never existed.
+
+**The schema goes there and back.** The bundle applies every migration to the database the
+checked-in init script builds, runs a second time to prove a retried deploy is not a failed one
+(*"No migrations were applied"*), and then reverts to nothing but an empty history table. The
+roadmap asks for reversible migrations tested rather than assumed, under *Förvaltning*; this is
+where it is cheap. Verified against **a database with rows in it** as well as an empty one -
+four positions, ten decisions and a shortlist - and the revert dropped all eight tables and both
+views. **The append-only triggers do not stand in the way, because dropping a table is DDL and
+not the `DELETE` they refuse.** That is better than the agent side, where a widen-in-place
+migration cannot reverse while a stored value needs the extra width.
+
+**Eleven migrations, not twelve.** The count is read off the migration files in CI rather than
+written down, which settled a number this file had had wrong in two places - including inside
+the lesson about counts going stale. The local database has eleven applied and Alembic at its
+fifth revision, both checked rather than restated.
+
+**The whole system ran in containers, against a throwaway database.** This is PR 3's success
+criterion reached by hand before compose exists, and it is the verification the images are
+worth: a network of its own, a fresh pgvector built by the checked-in init script, the agent
+schema applied by the Alembic container, the trading schema by the EF bundle, then the agent
+service and the engine.
+
+- The agent service was **healthy in 8 s**; the engine's startup schema check passed against
+  the bundle's work and the workers started.
+- **`Screened 31 instrument(s) for 10/04/2026: 10 shortlisted, 0 rejected`** - the screen ran
+  through the containerised agent service to yfinance.
+- `No portfolio was stored, so one was opened with 100000 SEK.`
+- **Ten analyses, all through Ollama on Windows from inside a container.** Four buys - SCA-B.ST
+  20 at 119.60, EVO.ST 3 at 802.40, SHB-A.ST 16 at 152.85, KINV-B.ST 40 at 62.24 - four HOLDs,
+  and two SELLs on instruments not held, which became no order at all. That last is the
+  no-shorting rule firing in a containerised engine.
+- `Cycle over 10 instrument(s): 10 analysed, 0 already done today, 0 unchanged in price.`
+- The database afterwards: 11 migrations, 1 portfolio, 4 positions, 4 orders, 10 decisions, 10
+  shortlist rows, and on the agent side 10 runs, 30 step rows and 10 embeddings. Cash
+  100 000 -> 90 265.60, which is **9.7 % of net asset value deployed** - under the 20 % daily
+  cap, which therefore did not bind. The same shape as the first real screened cycle, which
+  deployed 10 %.
+- **ag2 1.1.1 was exercised end to end on the way.** Dependabot's bump merged as #57 while this
+  was being built, so the agent image was built from it. Ten analyses answered the contract.
+- Image sizes: 315 MB for the engine, 352 MB for the bundle.
+
+**The concern raised about #57 did not happen, and the reason is worth knowing.** Its first
+branch was cut from `a1ccfb3`, before the agent image landed, and carried a `pyproject.toml`
+with no `migrate` group - merging that would have stopped `--target migrate` building. Dependabot
+regenerated the branch against the new master instead, kept the group and bumped `sqlalchemy`
+*inside* it. **A rebase by the bot closed a hazard that reading the old branch had found.**
+
+### PR 3 - one compose file for the whole system (`stage-6-compose`)
+
+**The stage's own success criterion, measured.** `docker compose up -d` from nothing: **31.8
+seconds** to a provisioned, healthy system, and 6 seconds more for the engine. A first full
+cycle - screen, account opened, ten analyses - is about four minutes.
+
+- **The engine is behind `--profile trade`**, which was decision D2. Everything else comes up
+  by default, both migration steps included, because a provisioned database is not trading:
+  after a plain `up` the schemas are current and a host-run engine can point at the same
+  database. The engine is the only service here that spends money and the kill switch does not
+  arrive until stage 7, so until then "not starting it" is the only way to stop it.
+- **Each schema is applied by a container of its own**, and whatever needs it waits on
+  `service_completed_successfully` rather than on a port. The log of a clean `up` reads in the
+  right order: db started, db healthy, both migrations started, `agent-migrate` **exited**,
+  then the agent service started. Neither service can migrate its own schema from inside
+  itself - already true of the engine, which refuses to - and these containers make that a
+  property of the deployment rather than of anyone's discipline.
+- **The engine's bundle takes `ENGINE_DATABASE_URL`, not `--connection`**, so the password is
+  not in the container's rendered command. Alembic's takes `-x url=` because its other route is
+  `get_settings()`, which would need an LLM API key to create a table. The asymmetry is the
+  agent side's, not a preference.
+
+**The Dockerfile's claim about the bundle was incomplete, and finding that out is what chose
+the wiring.** It said a run without `--connection` fails to resolve a hostname. Tested: it does
+- *unless* `ENGINE_DATABASE_URL` is set, which the design-time factory reads and **the bundle
+  invokes that factory at run time**. So there are two routes, they are not equivalent, and the
+  one the comment did not mention is the better one for compose.
+
+**The secrets separation changed shape, and the old sentence had to go.** CLAUDE.md said the
+agent service never sees the other two database passwords *because they are in a different
+file*. Compose has to hand the same API key and HMAC secret to both sides, so the root `.env`
+now holds those too and that sentence is no longer the mechanism. The mechanism is each
+service's explicit `environment:` list: compose interpolates the file itself and never passes
+it to a container, so a password that is not on a service's list cannot arrive. An `env_file:`
+would have been shorter and would have given the agent service everything in the file.
+
+- The two shared values were copied into the root `.env` from `src/agents/.env` rather than
+  regenerated, so nothing had to be rotated in three places. Verified by fingerprint:
+  `576bfc53` for the API key and `809f98a6` for the HMAC secret, the latter being the same
+  fingerprint this file recorded on 2026-10-01. Values never printed.
+- **`${VAR:?message}` fail-fast works**, and the first `docker compose config` proved it by
+  refusing with four lines naming exactly which variables were missing and what to do.
+
+**`team_version` is the drift risk in a compose file, and it is now checked rather than
+hoped.** Provider, model, temperature and seed are part of the hash, and they are spelled out
+in the compose file because a clean checkout has no `src/agents/.env` and `up` has to work from
+one. Two places holding four values is how the same team comes to answer under two versions,
+with two populations that cannot be pooled accumulating under one name. The clean stack logged
+`5926c629dcbe` and `b856e3edf611` - the host's own - so they agree today. A CI step comparing
+the two belongs with PR 5.
+
+**Tested against a clean volume without touching the real one.** A compose project of its own
+(`-p stage6clean`) gets its own volume, so `up` from nothing is a genuine clean state while the
+volume holding 54 real decisions keeps running beside it. That needed the container name and
+both published ports to become variables with today's values as defaults - which is not a
+feature looking for a use but the only way to test this file honestly. Confirmed after the run:
+the real database still had its 54 decisions and 5 positions.
+
+**What the clean stack produced:** 11 engine migrations, Alembic at its fifth revision, 10
+objects in `trading` (eight tables and both views) and 5 in `agent`. `/ready` answered ready
+through the published port, so the container reached the database *and* Ollama on Windows. An
+unauthenticated signal was refused with 401. Then, with the trade profile: 31 instruments
+screened, an account opened at 100 000 kr, **ten analyses** - four buys, six HOLDs - 4 orders,
+10 decisions all at `selection = Shortlist`, 10 runs and 30 step rows on the agent side, and
+cash at 90 168.96, which is 9.8 % of net asset value deployed.
+
+- **The stances were not identical to the hand-wired run of PR 2**, which bought SCA-B.ST, EVO,
+  SHB-A and KINV-B and answered SELL twice on instruments not held; this one bought SWED-A.ST
+  among others and answered HOLD six times. That is the known shape of the seed: it pins the
+  decision when the same request is repeated in the same state, and a different request in
+  between changes the numerics. Worth recording because it looks like a difference between the
+  two ways of running the system and is not one.
+- **The gssapi noise is gone**, confirmed here rather than only in the migration container: the
+  engine's first log line under compose is its migration-history query.
+
 ---
 
 ## Lessons and gotchas
 
 Things that cost time or were not obvious. Most are also recorded where they apply.
+
+**Containers (stage 6)**
+- **A flag that controls a route does not control the generator behind it.** `TAS_ENABLE_DOCS=false` makes `/openapi.json` answer 404, and this file concluded from that that the specification could not be exported without turning the flag on. `create_app().openapi()` returns the whole document regardless - with no server, no database and no flag - because the flag is passed to `FastAPI(openapi_url=...)` and the generator is a method on the app. **A day of plan hung on confusing the door with the room behind it.**
+- **A hash over file contents is a containerisation invariant, whether or not anyone meant it to be.** `team_version` is a sha256 over the prompt files' contents, so a build that changed a line ending would not fail - it would answer as a different team, and two populations that cannot be pooled would start accumulating under one name. Nothing in the build would look wrong. It is checked in CI by diffing the image's hashes against the repository's, which costs one step and closes a failure with no symptom.
+- **A container's `127.0.0.1` is the container.** Mirrored networking puts WSL's localhost on Windows, which is why everything on this machine reaches Ollama at `127.0.0.1:11434` - and that stops being true one layer in. `--add-host=host.docker.internal:host-gateway` reaches the WSL host, which mirrored networking has already put on Windows, so the two mechanisms compose. Worth measuring before planning around: it was the stage's largest unknown and it took one `docker run`.
+- **A CI step that writes a file can destroy the thing it guards.** To prove that a `.env` in the build context does not reach the image, the step first has to put one there - and `echo ... > src/agents/.env` is harmless on a runner and destroys a developer's real secrets the first time anyone runs the job by hand. `test -f ... ||` is the whole fix. The guard was worth keeping; the way it was written was worse than what it guarded against.
+- **A separation enforced by two files stops being a separation the moment one tool reads both.** The agent service never saw the engine's database password because they lived in different files - true, and it stopped being the mechanism the day compose needed to hand one shared secret to both services. What enforces it now is each service's explicit `environment:` list, which is a thing you can read rather than a thing you have to remember. The lesson is not "don't use files"; it is that **a safety property should be stated where it is enforced**, and CLAUDE.md was still describing the old enforcement.
+- **A comment that is true in one branch and silent about the other is an incomplete comment.** The engine Dockerfile said a bundle run without `--connection` fails to resolve a hostname. It does - unless `ENGINE_DATABASE_URL` is set, which the design-time factory reads and the bundle invokes at run time. Testing the claim found the second route, and the second route is the better one for compose, because it keeps the password out of the container's rendered command. **The comment did not just need fixing; following it is what chose the design.**
+- **A fixed `container_name` is what stops a second stack existing.** That matters because the only honest way to test "`up` from a clean state" is a second stack: a compose project of its own gets its own volume, so a clean start does not mean deleting the volume holding real decisions. The name and the published ports became variables with today's values as defaults - not a feature looking for a use, but the thing that made the test possible.
+- **Four values in a compose file are part of `team_version`.** Provider, model, temperature and seed feed the hash, and the compose file has to spell them out because a clean checkout has no `src/agents/.env`. Two places holding the same four values is how the same team comes to answer under two versions, with two unpoolable populations accumulating under one name - and nothing would look wrong. Checked by reading the hash out of the clean stack's logs; worth a CI step rather than a check somebody remembers.
+- **`.gitignore` and `.dockerignore` are two lists of the same thing, and nothing keeps them in step.** Both say "this must not leave the machine"; one is about commits and the other about layers. The engine image's first build published a gitignored `appsettings.Development.json`, because the ignore file knew about `.env` and not about the line beside it. The durable fix is not two more patterns - it is a check that asks `git check-ignore` about every file the image published, which needs no editing when the next local-only file is invented.
+- **A mutation that fails to build is not a surviving mutation.** The attempt to prove the leak check worked tried to `COPY` the gitignored file into a test image, and the build failed - because `.dockerignore` now refuses it into the context at all. The loop then ran against an image that did not exist and printed "survived", which reads like the check being blind. Second attempt created the file *inside* the image and it was killed immediately. Same shape as the .NET mutations that did not compile: **the thing to check first is that the mutant exists.**
+- **A number written into prose is a number nobody updates.** This file claimed twelve engine migrations in two places, including inside the lesson about sections going stale, and three Alembic revisions when there are five. There are eleven and five, both now checked against the database. CI reads the engine's count off the migration files rather than holding it, which is the only version of this that stays true.
+- **Dropping a table is DDL, not a `DELETE`.** The append-only triggers refuse `UPDATE` and `DELETE`, so it was an open question whether the engine's migrations could reverse against a database with rows in it. They can: a full revert dropped all eight tables and both views with four positions and ten decisions in them. The agent side is the harder case for an unrelated reason - a widen-in-place migration cannot reverse while a stored value needs the extra width.
+- **An image that installs its own source cannot hide a missing file.** `uv sync --no-editable` puts `app` in site-packages instead of pointing at a copied directory, so there is no working directory for an import to resolve against. That is the same regression CI already guards with a wheel check - `app` was once missing from the wheel and the service ran anyway, because the directory it started in held the source - and the image closes it structurally rather than by assertion.
 
 **Running it, not only testing it**
 - **A code path that does nothing successfully should still say so.** The deterministic exits wrote no log line on a pass where every holding was fine, and they write no decision row by design - so a quiet cycle was indistinguishable from the exits never running and from every holding being unpriceable. Only a live run shows you that, because a test asserts on what happened and an operator has to read what did not. Two counts fixed it: judged, and of how many held.
@@ -1505,11 +2224,36 @@ Things that cost time or were not obvious. Most are also recorded where they app
 **Working on uncommitted code**
 - **`git checkout -- <file>` on a file that is only in the working tree deletes the work.** It restores from `HEAD`, which for uncommitted work means "before I started". Used as the revert step of a mutation test, it silently wiped the sell branch of `PositionSizer` and the sell overload of `RiskEngine`; the next mutation then failed to build, and its own revert wiped the second file too. **Back the file up to the scratchpad and copy it back.** The tell that something was wrong was a test run that printed no summary at all - a build failure, not a failing test.
 - **Mutate one thing, run, restore, and check the restore.** `grep` for the original text after copying back costs nothing and is the difference between noticing this in a minute and noticing it at the commit.
+- **It happened again in PR 4**, on `DecisionLog.cs`, with this lesson already written down - so the guard is not remembering it. The guard is that the *first* command of every mutation copies the file to the scratchpad, in the same shell line as the edit, so there is never a moment where the only copy is the one about to be overwritten. Every mutation on that branch that did so was fine; the one that reached for `git checkout --` instead lost a method.
+- **A mutation that does not compile is not a passing mutation.** `if (false)` trips unreachable-code analysis under `TreatWarningsAsErrors`, and `GroupBy(x => x)` changes the key's type. In both cases the test run printed no summary at all, which reads exactly like "nothing went red" if you are only grepping for failures. Grep for `Build succeeded` too.
 
 **Time, ids and append-only tables**
 - **A version 7 GUID is ordered to the millisecond and no further.** .NET fills the bits after the timestamp at random, so two ids created in the same millisecond sort arbitrarily. A test that ordered the ledger by id passed in a full run and failed when it ran alone. `placed_at` cannot break the tie either: it defaults to `now()`, which is the *transaction's* clock and identical for every row the transaction writes. Nothing in the engine reads the ledger in order today, and the configuration comment claiming the primary key gives it one is now honest about the limit.
 - **`ADD COLUMN ... DEFAULT` is how you backfill an append-only table.** `trading.orders` raises on `UPDATE`, so a migration's backfill statement would be refused by the table's own trigger - but adding a column with a default is not an UPDATE and never fires it. Drop the default in the next statement, or an `INSERT` that forgets the column silently records the default as though somebody meant it.
 - **A generated migration's default is a placeholder, not a value.** EF proposed `defaultValue: ""` for the new enum column - a value the enum cannot produce and nothing downstream could read. The right default was the one that is *true about the history*: every order in the table was a buy the agents argued for, so `Signal`.
+
+**Running the real thing**
+- **`dotnet ef database update` needs `ENGINE_DATABASE_URL`, and says something else when it is missing.** The design-time factory deliberately uses `Host=design.invalid`, because `migrations add` and `migrations script` never open a connection and going through the host would demand the whole engine's configuration on a machine that only wants to write a file. A command that *does* connect therefore fails with `Name or service not known`, which reads like a broken database rather than a missing variable. The working form is `ENGINE_DATABASE_URL="Host=127.0.0.1;...;Password=$(grep '^ENGINE_DB_PASSWORD=' .env | cut -d= -f2-)" dotnet dotnet-ef database update --project src/engine`, which keeps the password out of the terminal and out of the shell history.
+- **There is a stale `ConnectionStrings:Database` user secret with `Host=localhost`.** Nothing reads it - the engine reads `Database:ConnectionString` and the design-time factory reads the environment variable - but it sent this session looking for a configuration bug that did not exist, because listing the secrets showed two connection strings and one of them used the host CLAUDE.md warns against. Worth deleting.
+- **A claim about what a cycle does *not* do needs a log, not a test.** Every test in the suite proves something happens; the fourth pull request's whole point was that two cycles out of three stop happening, and the only honest evidence was three cycles of real output plus the agent service's own request counts as an independent second witness. Shortening the interval to a minute made it observable without touching the rule under test, because the rule is about the day and the price.
+- **A measured number beat a reasoned one twice in a day.** The rate-limit headroom was argued from `ShortlistSize` and the real constraint turned out to be per-analysis latency; the liquidity floor was argued as a safeguard and turned out to filter nothing. Both arguments were sound and both were about the wrong variable.
+
+- **Cross-check documentation against the code mechanically, not by reading harder.** After the review caught stale claims a grep could not, levelling `CLAUDE.md` used a script instead: extract every `TAS_` variable the document names and diff it against `.env.example`, and extract every options property from `TradingOptions`, `AgentServiceOptions` and `RiskPolicyOptions` and check each appears in the text. It found four things no amount of careful reading had: the document named `DATABASE_URL` without the `TAS_` prefix its own rule demands, two settings the screen introduced (`TAS_SCREEN_TIMEOUT_S`, `TAS_SCREEN_TTL_S`) had never been documented at all, `MaxPositionPercentage` and `CashBufferPct` were described in prose but never named, and four scoped keys were written as a shorthand nobody could grep for. **A document about configuration can be diffed against the configuration.**
+
+- **A grep is not a review of a section that describes the present.** Twice now this file has gone stale in a part I did not touch, and twice I swept for it by grepping phrases I expected to be wrong - which finds what you already suspect and, by construction, nothing else. An external review read *Current state* top to bottom and found in minutes that it still named a configuration setting deleted two pull requests earlier. **Sections that describe today get read; sections that describe history get grepped.**
+
+**Checking the premise**
+- **A whole pull request disappeared into one SQL query.** Two documents and a review all said the shortlist comparison needed a second measured population in `MeasurementWorker`. One `GROUP BY d.outcome` over `signal_outcomes` showed 20 HOLD and 41 NotSized measurements already stored, because stage 4 had deliberately measured every signal rather than every trade. The plan had been repeated often enough to stop being questioned. **Before building what a plan calls for, ask the database whether it is already there** - it is one query, and it is the cheapest piece of work available.
+- **`net_edge` is null for every HOLD, and a report that averages it lies quietly.** Three columns in `signal_outcomes` look interchangeable and are not: `instrument_return` and `excess_return` are facts about prices and populated on every measured row, while `net_edge` needs a stance to be computed against and is null for the answer the agents give most often. Averaging it across a mixed population silently averages the buys alone. `SELECT stance, count(col) ... GROUP BY stance` over every candidate column, before writing the view, is what caught it.
+- **`UseSnakeCaseNamingConvention` applies to a query type too.** `SqlQueryRaw<T>` looks for the snake_case column each property maps to, so aliasing the columns to the property names in the SQL is what *breaks* it - nine tests failed on `The required column 'agents_edge_gross' was not present`.
+- **A backup step that can fail silently is not a backup step.** The mutation harness copies the file to the scratchpad in the same command as the edit, which is the guard written after PR 4 - and it failed anyway, because `mkdir` had never run in a new session and the `cp` was chained after a `cd` that succeeded. The mutation then ran on a file that was not yet committed, so no copy existed anywhere, and only the fact that it was one known string replacement made it reversible. `mkdir -p` first, and check the copy exists before touching the original.
+
+**Rules that only bite outside a test's imagination**
+- **Mutation testing earns its keep when it fails to kill a mutation.** Twice in PR 4 a mutation left the suite green, and both times the tests were wrong rather than the mutation harmless: the missing cases were "analysed today *and* the price unchanged" and "a cycle that never reached an answer". Both are the *commonest* states the rule meets in production, and both were invisible because every existing test happened to vary two things at once.
+- **A pure function's two conditions need a test where both are true.** Ordering two guards is itself a rule, and it is unobservable from cases where only one of them fires. If swapping two `if`s changes nothing, there is a missing test rather than a redundant check.
+- **A new table with no foreign key escapes `TRUNCATE ... CASCADE`.** The test fixture cleared the portfolio graph and `shortlists` sat outside it, so rows leaked between tests and three assertions failed for reasons that had nothing to do with what they were testing. Name every table in the reset, or make the reset enumerate the schema.
+- **Read the implementation before trusting a contract's prose.** `contracts/screen.schema.json` said `rejected` holds every instrument that was looked at and left out; the service truncates to the shortlist size, so a name that ranked 15th of 31 is in neither array. The schema validated everything either way - prose is not a constraint, and only reading `screening.py` showed the difference.
+- **"Daily data" is not the same as "a daily fact sheet".** The returns, the volatility and the turnover come from daily bars, but the price comes from the provider's live quote and one derived field is computed from it. A rule written on the roadmap's summary of the data would have been wrong in exactly the hours it mattered.
 
 **Widths, and the tests that never wrote anything wide**
 - **Widening a validation rule is not widening the column behind it.** The symbol pattern went from 10 characters to 16 for Swedish tickers, and six database columns across two schemas stayed at `varchar(10)`. The first real write would have been `22001: value too long for type character varying(10)` - and for the benchmark it would have been every night, in the sweep. Grep for every column that holds the value, not only the places that validate it.

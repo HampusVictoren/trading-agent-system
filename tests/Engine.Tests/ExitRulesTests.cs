@@ -23,7 +23,8 @@ public class ExitRulesTests
         cashBufferPct: 0.10m,
         maxQuoteAge: TimeSpan.FromMinutes(5),
         minHoldingPeriod: TimeSpan.FromDays(3),
-        stopLossPct: 0.10m);
+        stopLossPct: 0.10m,
+        maxDailyDeploymentPct: 1m);
 
     private static Position Held(decimal cost = 100m, int horizonDays = 15) =>
         new(Eric, quantity: 10m, new Money(cost, Money.DefaultCurrency), Bought, horizonDays);

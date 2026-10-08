@@ -24,9 +24,9 @@ public static class AgentClientExtensions
 
                 client.BaseAddress = new Uri(options.BaseUrl);
 
-                // The agent service refuses an analysis without this. It is set once here
-                // rather than per request, so no code path can forget it.
-                client.DefaultRequestHeaders.Add(ApiKeyHeader, options.ApiKey);
+                // The API key is set per request in PythonAgentClient, so each endpoint can
+                // carry its own scoped key (or fall back to the legacy full-access key).
+                // Putting a default header here would force every call onto one credential.
 
                 // The resilience pipeline below owns the timeouts. HttpClient's own 100 s default
                 // would cut across the whole pipeline and report a less useful cancellation.

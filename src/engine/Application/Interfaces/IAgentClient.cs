@@ -49,4 +49,20 @@ public interface IAgentClient
     /// </remarks>
     Task PostOutcomesAsync(
         OutcomeReportDto report, string correlationId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Ranks a universe and returns the shortlist. No model runs behind it, which is the whole
+    /// point: this is what lets the agents see ten instruments instead of fifty.
+    /// </summary>
+    /// <remarks>
+    /// It is on this port for the same reason the quote endpoint is - same service, same
+    /// client, same key - and it inherits the same resilience policy, which does not retry. A
+    /// screen is cheap to lose: the engine already holds today's shortlist once it has stored
+    /// one, so a failed screen costs a cycle and not a trading day.
+    ///
+    /// The correlation id travels in the body as well as the header, so a stored shortlist can
+    /// be joined to the decisions made from it.
+    /// </remarks>
+    Task<ScreenResultDto?> GetScreenAsync(
+        ScreenRequestDto request, CancellationToken cancellationToken = default);
 }

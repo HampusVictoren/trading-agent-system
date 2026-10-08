@@ -8,35 +8,44 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "ag2[openai]>=1.0.6",
+    "ag2[openai]>=1.1.1",
     "asyncpg>=0.31.0",
-    "fastapi>=0.141.1",
+    "fastapi>=0.142.2",
     # openai 3.x types its http_client against httpx2 (pydantic's successor to httpx), and
     # memory.py needs a client of its own to set trust_env=False. Declared directly rather
     # than relied on through openai, and capped so a new major is its own Dependabot PR.
     "httpx2>=2.13.1,<3",
-    "openai>=3.19.1",
+    "openai>=3.22.1",
     "pgvector>=0.5.0",
     # Imported directly by app/domain/models.py and app/settings.py.
     "pydantic>=2.12,<3",
     "pydantic-settings>=2.15,<3",
-    "uvicorn>=0.53.0",
+    "uvicorn>=0.54.0",
     "yfinance>=1.7.0",
 ]
 
 
 [build-system]
-requires = ["uv_build>=0.12.18,<0.13.0"]
+requires = ["uv_build>=0.12.21,<0.13.0"]
 build-backend = "uv_build"
 
 [dependency-groups]
-dev = [
+# Applying the schema is an operator's job, not the service's - it never imports alembic -
+# but it is a job done from an image, so it is a group of its own rather than part of dev.
+# The migrate target then carries alembic and SQLAlchemy without carrying pytest, mypy,
+# ruff and testcontainers, which have no business in anything that touches a database.
+migrate = [
     "alembic>=1.16",
+    "sqlalchemy[asyncio]>=2.1.1",
+]
+
+dev = [
+    # The test suite runs the real migrations, so it needs exactly what the operator has.
+    { include-group = "migrate" },
     "mypy>=1.14",
     "pytest>=8.3",
     "pytest-asyncio>=0.25",
-    "ruff>=0.9",
-    "sqlalchemy[asyncio]>=2.0.54",
+    "ruff>=0.16.10",
     "testcontainers[postgres]>=4.15.0",
 ]
 

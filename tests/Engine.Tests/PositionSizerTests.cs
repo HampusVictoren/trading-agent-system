@@ -23,7 +23,8 @@ public class PositionSizerTests
         cashBufferPct: 0.10m,
         maxQuoteAge: TimeSpan.FromMinutes(5),
         minHoldingPeriod: TimeSpan.FromDays(3),
-        stopLossPct: 0.10m);
+        stopLossPct: 0.10m,
+        maxDailyDeploymentPct: 1m);
     private static readonly PositionSizer Sizer = new();
 
     private static Portfolio WithCash(decimal cash = 10_000m) => new(new Money(cash, Money.DefaultCurrency));

@@ -1,4 +1,5 @@
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
@@ -107,6 +108,29 @@ def _build_pipeline(
     return SignalPipeline(teams, market, journal, memory)
 
 
+def _warn_if_bound_broadly(settings: Settings) -> None:
+    """Warns when a non-loopback bind is declared outside development.
+
+    This cannot force 127.0.0.1 without breaking intentional Docker publishes, so it warns.
+    Through `python -m app` the setting is the socket; start uvicorn by hand and it is only
+    a claim about one, because FastAPI cannot see what the command line asked for. The
+    warning is the same in both cases, and it is what catches a mistaken TAS_BIND_HOST in
+    staging or production.
+    """
+    host = settings.bind_host.strip().lower()
+    loopback = host in {"127.0.0.1", "localhost", "::1"}
+    if loopback or settings.environment.strip().lower() in {"development", "dev", "test"}:
+        return
+    logger.warning(
+        "TAS_BIND_HOST=%s with TAS_ENVIRONMENT=%s: the agent API should not be reachable "
+        "beyond loopback without a reverse proxy and network policy. Prefer 127.0.0.1 "
+        "for local paper trading; set environment=development only when the broad bind "
+        "is intentional (e.g. Docker on a private network).",
+        settings.bind_host,
+        settings.environment,
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Builds every shared resource once, on the loop that will use it, and closes it again.
@@ -116,6 +140,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """
     configure_logging()
     settings = get_settings()
+    _warn_if_bound_broadly(settings)
 
     # trust_env=False forces the client to ignore any system proxy and connect straight to
     # 127.0.0.1. openai 3.x types http_client as httpx2.AsyncClient, which is what this is.
@@ -168,27 +193,55 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             yield
 
 
-app = FastAPI(
-    title="Trading Agent Service",
-    version="1.0.0",
-    description="Python AI Agent Service for Financial Analysis",
-    lifespan=lifespan,
-)
-app.add_middleware(CorrelationIdMiddleware)
-register_error_handlers(app)
-app.include_router(router)
+def _env_flag(name: str) -> bool:
+    """True only for an explicit opt-in. Missing or anything else is False."""
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-@app.get("/health")
+def create_app(*, enable_docs: bool | None = None) -> FastAPI:
+    """Builds the service. Docs stay off unless explicitly enabled for local exploration.
+
+    FastAPI registers /docs, /redoc and /openapi.json on the app itself, outside the
+    authenticated router. Leaving them on in any shared environment hands the full
+    contract to whoever can reach the port, so the default is off. Set TAS_ENABLE_DOCS
+    (or pass enable_docs=True) only on a developer's own loopback.
+    """
+    if enable_docs is None:
+        enable_docs = _env_flag("TAS_ENABLE_DOCS")
+
+    application = FastAPI(
+        title="Trading Agent Service",
+        version="1.0.0",
+        description="Python AI Agent Service for Financial Analysis",
+        lifespan=lifespan,
+        docs_url="/docs" if enable_docs else None,
+        redoc_url="/redoc" if enable_docs else None,
+        openapi_url="/openapi.json" if enable_docs else None,
+    )
+    application.add_middleware(CorrelationIdMiddleware)
+    register_error_handlers(application)
+    application.include_router(router)
+    application.add_api_route("/health", health_check, methods=["GET"])
+    application.add_api_route("/ready", readiness_check, methods=["GET"])
+    return application
+
+
 def health_check() -> dict[str, str]:
     """Liveness: the process is up. It deliberately checks nothing else, so that a
     restarter does not kill a service whose dependencies are merely slow."""
     return {"status": "alive", "service": "agents"}
 
 
-@app.get("/ready")
-async def readiness_check(resources: Annotated[Resources, Depends(get_resources)]) -> JSONResponse:
-    """Readiness: the service can actually do its job. 503 until both dependencies answer."""
+async def readiness_check(
+    resources: Annotated[Resources, Depends(get_resources)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> JSONResponse:
+    """Readiness: the service can actually do its job. 503 until both dependencies answer.
+
+    By default the public body is only the status string. Dependency detail (database/llm)
+    is useful for operators but helps reconnaissance; it stays in logs and is returned in
+    the body only when TAS_READY_DETAIL=true. /health remains a bare liveness probe.
+    """
     checks: dict[str, str] = {}
 
     try:
@@ -214,7 +267,14 @@ async def readiness_check(resources: Annotated[Resources, Depends(get_resources)
     # "unchecked" does not block readiness: it means this service has no way to ask, not
     # that the answer was bad.
     ready = all(state in ("ok", "unchecked") for state in checks.values())
+    content: dict[str, object] = {"status": "ready" if ready else "not ready"}
+    if settings.ready_detail:
+        content["checks"] = checks
     return JSONResponse(
         status_code=200 if ready else 503,
-        content={"status": "ready" if ready else "not ready", "checks": checks},
+        content=content,
     )
+
+
+# Built once for uvicorn `app.main:app`. Docs follow TAS_ENABLE_DOCS at process start.
+app = create_app()

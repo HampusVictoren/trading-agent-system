@@ -18,7 +18,7 @@
       "items": { "$ref": "#/$defs/candidate" }
     },
     "rejected": {
-      "description": "Every instrument that was looked at and left out, with the reason. Named rather than dropped: a universe that quietly shrinks is one where a systematic data failure reads, months later, as a decision not to hold anything in that sector.",
+      "description": "Every instrument a filter excluded, with the reason. Named rather than dropped: a universe that quietly shrinks is one where a systematic data failure reads, months later, as a decision not to hold anything in that sector. It is not every instrument left out - one that ranked below the shortlist's cut was excluded by the limit rather than by a filter, and appears in neither array. That bounds what a stored screen can be asked afterwards: the shortlist can be compared against what was bought from it, but the ranking cannot be checked against the names it passed over.",
       "type": "array",
       "items": { "$ref": "#/$defs/rejection" }
     },

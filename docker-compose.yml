@@ -1,11 +1,31 @@
-# Local development database. Compose owns this container - do not create
-# trading-db by hand. Secrets come from .env in the repo root; see .env.example.
+# The whole system, on one host. Compose owns every container here - trading-db included, and
+# it is still never created by hand.
+#
+#   docker compose up -d                   # database, both schemas, agent service
+#   docker compose --profile trade up -d   # and the engine, which places orders
+#
+# The split is deliberate. The engine is the only service here that spends money, and the
+# kill switch does not arrive until stage 7 - so until then "not starting it" is the only way
+# to stop it, and that should cost a word on the command line rather than being what `up`
+# happens to do. Everything else comes up by default, including both migration steps, because
+# a provisioned database is not trading: after a plain `up` the schemas are current and a
+# host-run engine (`dotnet run --project src/engine`) can point at the same database.
+#
+# Secrets come from .env in the repository root; see .env.example. **Compose reads that file
+# itself**, for the ${...} below - it is never handed to a container. What each service gets
+# is the explicit list under its own `environment:`, and that is what keeps the agent service
+# from ever seeing the superuser's or the engine's password. The separation is enforced here
+# rather than by two files, now that one file feeds both services.
+
 services:
   db:
     # Pinned rather than the floating :pg16 tag, so every machine and every
     # rebuild gets the same Postgres and pgvector.
     image: pgvector/pgvector:0.8.6-pg16
-    container_name: trading-db
+    # A fixed name, because half the documentation says `docker exec -it trading-db psql`.
+    # A variable, because a fixed name is also what stops a second stack existing - and the
+    # second stack is how this file is tested against a clean volume.
+    container_name: ${DB_CONTAINER:-trading-db}
     environment:
       POSTGRES_DB: tradingdb
       POSTGRES_USER: postgres
@@ -14,8 +34,10 @@ services:
       ENGINE_DB_PASSWORD: ${ENGINE_DB_PASSWORD:?set ENGINE_DB_PASSWORD in .env}
       AGENT_DB_PASSWORD: ${AGENT_DB_PASSWORD:?set AGENT_DB_PASSWORD in .env}
     ports:
-      # Loopback only. A bare "5432:5432" publishes the database to the network.
-      - "127.0.0.1:5432:5432"
+      # Loopback only. A bare "5432:5432" publishes the database to the network. The port is a
+      # variable so a second stack can run beside the first, which is how this file is tested
+      # against a clean volume without touching the one holding real decisions.
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
     volumes:
       - trading-db-data:/var/lib/postgresql/data
       - ./db/init:/docker-entrypoint-initdb.d:ro
@@ -25,6 +47,133 @@ services:
       timeout: 5s
       retries: 10
     restart: unless-stopped
+
+  # The two schemas, each applied by its owner's own tool in a container of its own. They run
+  # to completion and stop; the services that need them wait on that rather than on a port.
+  # Neither service can migrate its own schema from inside itself, which is the invariant
+  # these two containers exist to keep true rather than merely intended.
+  agent-migrate:
+    build:
+      context: ./src/agents
+      target: migrate
+    image: tas-agents-migrate:local
+    depends_on:
+      db:
+        condition: service_healthy
+    # `alembic` is the image's entrypoint, so this is its arguments. The DSN travels as
+    # `-x url=` because env.py's other route is get_settings(), which requires every setting
+    # the service needs - this container would otherwise need an LLM API key to create a table.
+    command:
+      - "-x"
+      - "url=postgresql://agent_svc:${AGENT_DB_PASSWORD:?set AGENT_DB_PASSWORD in .env}@db:5432/tradingdb"
+      - "upgrade"
+      - "head"
+    restart: "no"
+
+  engine-migrate:
+    build:
+      context: .
+      dockerfile: src/engine/Dockerfile
+      target: migrate
+    image: tas-engine-migrate:local
+    depends_on:
+      db:
+        condition: service_healthy
+    # Not --connection, although the bundle takes it: the environment keeps the password out
+    # of the container's rendered command. ENGINE_DATABASE_URL is what the design-time factory
+    # reads, and the bundle invokes that factory at run time. Without either, it fails to
+    # resolve `design.invalid` instead of migrating something nobody meant to.
+    environment:
+      ENGINE_DATABASE_URL: Host=db;Port=5432;Database=tradingdb;Username=engine_svc;Password=${ENGINE_DB_PASSWORD:?set ENGINE_DB_PASSWORD in .env}
+    restart: "no"
+
+  agents:
+    build:
+      context: ./src/agents
+      target: service
+    image: tas-agents:local
+    depends_on:
+      db:
+        condition: service_healthy
+      agent-migrate:
+        condition: service_completed_successfully
+    environment:
+      # agent_svc, and only agent_svc. The other two passwords are interpolated by compose
+      # above and never appear in this list, which is the whole point of listing rather than
+      # passing a file.
+      TAS_DATABASE_URL: postgresql://agent_svc:${AGENT_DB_PASSWORD:?set AGENT_DB_PASSWORD in .env}@db:5432/tradingdb
+      TAS_AGENT_API_KEY: ${AGENT_API_KEY:?set AGENT_API_KEY in .env - the same value the engine gets}
+      TAS_OUTCOMES_HMAC_SECRET: ${OUTCOMES_HMAC_SECRET:?set OUTCOMES_HMAC_SECRET in .env - the same value the engine gets}
+
+      # Ollama runs on the host, and a container's 127.0.0.1 is the container. host-gateway
+      # below reaches the host's network namespace, which WSL's mirrored networking has
+      # already put on Windows - so the two mechanisms compose and no host IP is needed.
+      TAS_EMBEDDINGS_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
+      TAS_EMBEDDINGS_API_KEY: ${OLLAMA_API_KEY:-ollama-needs-no-key}
+      TAS_LLM__DEFAULT__BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
+      TAS_LLM__DEFAULT__API_KEY: ${OLLAMA_API_KEY:-ollama-needs-no-key}
+
+      # **These four are part of team_version.** The hash covers each role's resolved model,
+      # so a model, temperature or seed that differs from src/agents/.env would make the same
+      # team answer under a different version - and two populations that cannot be pooled
+      # would start accumulating under one name. They are spelled out here rather than read
+      # from that file because a clean checkout does not have it, and `up` has to work from
+      # one. Change them in both places or in neither.
+      TAS_LLM__DEFAULT__PROVIDER: openai_compatible
+      TAS_LLM__DEFAULT__MODEL: ${LLM_MODEL:-qwen2.5:14b}
+      TAS_LLM__DEFAULT__TEMPERATURE: "0.0"
+      TAS_LLM__DEFAULT__SEED: "42"
+
+      # One LLM call, one quote, and one whole universe. The engine's own request timeout is
+      # 120 s, so it gives up on a pathological chain before this service's ceiling of 3x60.
+      TAS_LLM__DEFAULT__TIMEOUT_S: "60"
+      TAS_MARKET_DATA_TIMEOUT_S: "30"
+      TAS_MARKET_DATA_TTL_S: "300"
+      TAS_SCREEN_TIMEOUT_S: "120"
+      TAS_SCREEN_TTL_S: "3600"
+
+      # Not TAS_BIND_HOST: the image sets 0.0.0.0, because a container's loopback reaches only
+      # the container. Overriding it here would bind a socket the published port cannot find.
+      TAS_ENVIRONMENT: ${TAS_ENVIRONMENT:-development}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      # Loopback only, like the database. Published at all so that a host-run engine can use
+      # the containerised agent service - which also means this collides with `uv run python
+      # -m app` on the same port, and the collision is a clear error rather than a surprise.
+      - "127.0.0.1:${AGENTS_PORT:-8000}:8000"
+    restart: unless-stopped
+
+  engine:
+    # The one service behind a profile. See the note at the top of this file.
+    profiles: ["trade"]
+    build:
+      context: .
+      dockerfile: src/engine/Dockerfile
+      target: service
+    image: tas-engine:local
+    depends_on:
+      db:
+        condition: service_healthy
+      engine-migrate:
+        condition: service_completed_successfully
+      agents:
+        condition: service_healthy
+    environment:
+      # The three secrets appsettings.json deliberately does not hold. Double underscore is
+      # how .NET configuration reads a nested key out of the environment, so
+      # Database__ConnectionString is Database:ConnectionString.
+      Database__ConnectionString: Host=db;Port=5432;Database=tradingdb;Username=engine_svc;Password=${ENGINE_DB_PASSWORD:?set ENGINE_DB_PASSWORD in .env}
+      AgentService__ApiKey: ${AGENT_API_KEY:?set AGENT_API_KEY in .env - the same value the agent service gets}
+      AgentService__OutcomesHmacSecret: ${OUTCOMES_HMAC_SECRET:?set OUTCOMES_HMAC_SECRET in .env - the same value the agent service gets}
+      # Overrides appsettings.json's 127.0.0.1, which is right for a host-run engine and
+      # reaches nothing from inside a container.
+      AgentService__BaseUrl: http://agents:8000
+    # on-failure rather than unless-stopped: the engine's own loop already survives a failed
+    # cycle, so a process that exits has hit something structural - a configuration it refuses
+    # or a schema behind the build. Restarting is a bet that an operator is fixing it, and
+    # Docker's backoff keeps the bet cheap; a clean exit stays exited.
+    restart: on-failure
 
 volumes:
   trading-db-data:

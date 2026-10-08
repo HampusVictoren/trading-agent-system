@@ -122,9 +122,24 @@ class Settings(BaseSettings):
     # a repr, a log line or an exception message that happens to include the settings.
     database_url: SecretStr
 
-    # What a caller has to present to start an analysis. Without it the machine runs an
-    # unauthenticated endpoint that spends LLM time for anyone who can reach the port.
+    # Legacy full-access key. Still required so existing deployments keep working; it
+    # grants every scope. Prefer the scoped keys below once both sides have rotated.
+    # Deprecated for new deployments - see SECURITY.md and .env.example.
     agent_api_key: SecretStr
+
+    # Optional single-scope keys. When set, each grants only that scope. A request
+    # presenting one of these cannot reach an endpoint outside its scope even though
+    # the legacy key still can. Generate each with secrets.token_urlsafe(32).
+    agent_api_key_signals: SecretStr | None = None
+    agent_api_key_screen: SecretStr | None = None
+    agent_api_key_outcomes: SecretStr | None = None
+    agent_api_key_market: SecretStr | None = None
+
+    # Separate from the API key on purpose: a stolen key alone must not be enough to forge
+    # measurements into agent memory. The engine HMAC-SHA256-signs the raw POST body and
+    # sends the digest as X-Outcomes-Signature; the agent refuses unsigned or mismatched
+    # bodies. Generate with secrets.token_urlsafe(32).
+    outcomes_hmac_secret: SecretStr
 
     # Embeddings are a separate concern from the team's models: the model is pinned in
     # memory.py because changing it means changing the column width, so only the endpoint
@@ -144,6 +159,44 @@ class Settings(BaseSettings):
     # for a quote would refetch a universe that only changes once a trading day.
     screen_timeout_s: Annotated[float, Field(gt=0)]
     screen_ttl_s: Annotated[float, Field(ge=0)]
+
+    # OpenAPI/Swagger surfaces. Default False: they sit outside the authenticated router,
+    # so leaving them on is a free map of the attack surface. Opt in with TAS_ENABLE_DOCS
+    # for local exploration only; create_app reads the same flag at process start.
+    enable_docs: bool = False
+
+    # What the service binds. Through `python -m app` - which is what the container runs -
+    # this is the real listen address, because that entrypoint passes it to uvicorn. Start
+    # uvicorn by hand and it goes back to being an operator-declared hint, since the
+    # service cannot see from inside FastAPI what the command line asked for. Either way it
+    # is what the startup warning reads. Prefer 127.0.0.1 for local paper trading; set
+    # TAS_BIND_HOST=0.0.0.0 deliberately for Docker/compose and accept the warning in
+    # non-development environments.
+    bind_host: str = "127.0.0.1"
+
+    # "development" skips the non-loopback bind warning so intentional docker setups are
+    # not noisy. Set TAS_ENVIRONMENT=production (or staging) to surface the warning.
+    environment: str = "development"
+
+    # The port `python -m app` binds. Defaulted for the same reason bind_host is: it is a
+    # claim about a socket rather than a secret or a model choice. 8000 is what the engine's
+    # AgentService:BaseUrl expects, and inside a container it stays 8000 because compose
+    # maps it - so this setting is for running a second instance beside the first.
+    port: Annotated[int, Field(ge=1, le=65535)] = 8000
+
+    # When False (default), /ready returns only {"status": "ready"|"not ready"}.
+    # Dependency names (database/llm) stay in server logs. Set TAS_READY_DETAIL=true
+    # for local debugging when a load balancer is not scraping the probe.
+    ready_detail: bool = False
+
+    # Rate limits for the costly endpoints. Defaults are budgets, not guesses about
+    # traffic: a paper-trading cycle asking for one signal a minute sits well under them,
+    # and a stolen key that tries to drain the LLM still hits a wall. Units are requests
+    # per rolling minute; see app/api/rate_limit.py.
+    rate_limit_signals_per_minute: Annotated[int, Field(ge=1)] = 10
+    rate_limit_signals_global_per_minute: Annotated[int, Field(ge=1)] = 30
+    rate_limit_screen_per_minute: Annotated[int, Field(ge=1)] = 30
+    rate_limit_screen_global_per_minute: Annotated[int, Field(ge=1)] = 60
 
     llm: LlmSettings
 

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Engine.Application.Contracts;
 using Engine.Application.Interfaces;
+using Engine.Domain.ValueObjects;
 using Shouldly;
 
 namespace Engine.Tests.Application.Contracts;
@@ -21,6 +22,18 @@ public class QuoteContractTests
     private static QuoteDto? Parse(string json) =>
         JsonSerializer.Deserialize<QuoteDto>(json, ContractSerialization.Options);
 
+    private static readonly Ticker Msft = MustTicker("MSFT");
+
+    private static Ticker MustTicker(string symbol)
+    {
+        if (!Ticker.TryCreate(symbol, out var ticker))
+            throw new InvalidOperationException($"test setup: '{symbol}' is not a ticker");
+        return ticker;
+    }
+
+    private static InstrumentQuote Map(QuoteDto dto, Ticker? expected = null) =>
+        QuoteMapper.ToDomain(dto, expected ?? Msft);
+
     private static string AQuote(
         string symbol = "MSFT", string price = "415.25", string currency = "USD") =>
         $$"""
@@ -31,7 +44,7 @@ public class QuoteContractTests
     [Fact]
     public void The_checked_in_example_reads_into_the_engines_types()
     {
-        var quote = QuoteMapper.ToDomain(Parse(Example())!);
+        var quote = Map(Parse(Example())!);
 
         quote.Ticker.Value.ShouldBe("MSFT");
         quote.Price.Amount.ShouldBe(415.25m);
@@ -59,7 +72,7 @@ public class QuoteContractTests
         // System.Text.Json is happy with either. The sizer divides a budget by this number
         // and floors the result, so a zero is an infinite order and a negative one is worse.
         var exception = Should.Throw<AgentResponseInvalidException>(
-            () => QuoteMapper.ToDomain(Parse(AQuote(price: price))!));
+            () => Map(Parse(AQuote(price: price))!));
 
         exception.Message.ShouldContain(expected);
     }
@@ -75,7 +88,7 @@ public class QuoteContractTests
     public void A_symbol_that_is_not_a_ticker_is_refused(string symbol)
     {
         Should.Throw<AgentResponseInvalidException>(
-            () => QuoteMapper.ToDomain(Parse(AQuote(symbol: symbol))!));
+            () => Map(Parse(AQuote(symbol: symbol))!));
     }
 
     [Theory]
@@ -87,7 +100,7 @@ public class QuoteContractTests
         // Money's own rule, reported as a contract failure rather than as an
         // ArgumentException from three layers down.
         var exception = Should.Throw<AgentResponseInvalidException>(
-            () => QuoteMapper.ToDomain(Parse(AQuote(currency: currency))!));
+            () => Map(Parse(AQuote(currency: currency))!));
 
         exception.Message.ShouldContain("is not a currency code");
     }
@@ -98,8 +111,20 @@ public class QuoteContractTests
         // The signal contract has no currency and everything in it is USD. This one does,
         // so a non-dollar price arrives as what it is. Mixing it into a dollar portfolio is
         // refused by Money, which is where that rule belongs - not here.
-        var quote = QuoteMapper.ToDomain(Parse(AQuote(currency: "sek"))!);
+        var quote = Map(Parse(AQuote(currency: "sek"))!);
 
         quote.Price.Currency.ShouldBe("SEK");
+    }
+
+    [Fact]
+    public void A_quote_for_a_different_symbol_is_refused()
+    {
+        // HistoryMapper already refuses a series about the wrong ticker; quotes price positions,
+        // so the same mirror applies before the sizer multiplies.
+        var exception = Should.Throw<AgentResponseInvalidException>(
+            () => Map(Parse(AQuote(symbol: "AAPL"))!, Msft));
+
+        exception.Message.ShouldContain("AAPL");
+        exception.Message.ShouldContain("not MSFT");
     }
 }

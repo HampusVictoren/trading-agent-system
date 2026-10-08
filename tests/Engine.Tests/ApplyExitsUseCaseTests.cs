@@ -30,7 +30,8 @@ public class ApplyExitsUseCaseTests
         cashBufferPct: 0.10m,
         maxQuoteAge: TimeSpan.FromMinutes(5),
         minHoldingPeriod: TimeSpan.FromDays(3),
-        stopLossPct: 0.10m);
+        stopLossPct: 0.10m,
+        maxDailyDeploymentPct: 1m);
 
     private sealed class FixedClock(DateTimeOffset now) : TimeProvider
     {
@@ -100,7 +101,7 @@ public class ApplyExitsUseCaseTests
                 .Returns(Quote(ticker, price, now));
         }
 
-        var reader = new HoldingQuoteReader(client, Policy, NullLogger<HoldingQuoteReader>.Instance);
+        var reader = new QuoteReader(client, Policy, NullLogger<QuoteReader>.Instance);
         var log = new CapturedLog();
 
         return (new ApplyExitsUseCase(reader, new RiskEngine(), Policy, new FixedClock(now), log), log);
@@ -211,7 +212,7 @@ public class ApplyExitsUseCaseTests
             .Returns(Quote(Eric, 85m, now.AddMinutes(-6)));
 
         var sut = new ApplyExitsUseCase(
-            new HoldingQuoteReader(client, Policy, NullLogger<HoldingQuoteReader>.Instance),
+            new QuoteReader(client, Policy, NullLogger<QuoteReader>.Instance),
             new RiskEngine(),
             Policy,
             new FixedClock(now),

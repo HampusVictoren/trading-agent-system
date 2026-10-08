@@ -29,14 +29,14 @@ using Microsoft.Extensions.Logging;
 /// </remarks>
 public sealed class ApplyExitsUseCase
 {
-    private readonly HoldingQuoteReader _quotes;
+    private readonly QuoteReader _quotes;
     private readonly RiskEngine _riskEngine;
     private readonly RiskPolicy _policy;
     private readonly TimeProvider _clock;
     private readonly ILogger<ApplyExitsUseCase> _logger;
 
     public ApplyExitsUseCase(
-        HoldingQuoteReader quotes,
+        QuoteReader quotes,
         RiskEngine riskEngine,
         RiskPolicy policy,
         TimeProvider clock,
