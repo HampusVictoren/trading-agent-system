@@ -83,10 +83,10 @@ USER $APP_UID
 
 # The healthcheck reads a heartbeat rather than asking a port: the engine is a Worker with no
 # inbound surface, and giving it one for this would be its first. The trading loop writes a deadline
-# in Unix seconds to this file at every step of a cycle and before it sleeps; the check is healthy
-# while that deadline is in the future. The deadline is the cycle interval plus twice the longest
-# agent call, worked out by the engine from its own settings, so nothing here has to change when
-# they do. See Hosting/Telemetry/CycleHeartbeat.cs.
+# in Unix seconds to this file at every step of a cycle, after every quote and before it sleeps; the
+# check is healthy while that deadline is in the future. The deadline is the cycle interval plus
+# twice the longest agent call, worked out by the engine from its own settings, so nothing here has
+# to change when they do. See Hosting/Telemetry/CycleHeartbeat.cs.
 #
 # Healthy means the loop is making progress, not that the agent service or the database is up: the
 # loop survives both being down and says so in the log. What it catches is a loop that has hung, or

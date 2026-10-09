@@ -176,7 +176,7 @@ public class ProcessProposalUseCaseTests
             Mode = mode
         });
 
-        var quotes = new QuoteReader(client, inForce, NullLogger<QuoteReader>.Instance);
+        var quotes = new QuoteReader(client, inForce, NoCycleProgress.Instance, NullLogger<QuoteReader>.Instance);
 
         return (
             new ProcessProposalUseCase(

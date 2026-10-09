@@ -1,6 +1,7 @@
 namespace Engine.Hosting.Telemetry;
 
 using System.Globalization;
+using Engine.Application.Interfaces;
 using Engine.Hosting.Options;
 using Microsoft.Extensions.Options;
 
@@ -18,17 +19,19 @@ using Microsoft.Extensions.Options;
 /// </para>
 /// <para>
 /// <b>What it means.</b> Healthy says the loop is making progress: it is written when a cycle
-/// starts, after the exits, after the selection, before each analysis and when the cycle ends. It
-/// does not say the agent service or the database is up - the loop survives both being down, logs
-/// it, and carries on, and an engine that is waiting out an outage correctly is not the engine that
-/// needs looking at. A loop that has hung, or a worker that has died while the process lives on,
-/// is.
+/// starts, after the exits, after the selection, before each analysis, after every quote (through
+/// <see cref="ICycleProgress"/>, from <c>QuoteReader</c>) and when the cycle ends. It does not say
+/// the agent service or the database is up - the loop survives both being down, logs it, and
+/// carries on, and an engine that is waiting out an outage correctly is not the engine that needs
+/// looking at. A loop that has hung, or a worker that has died while the process lives on, is.
 /// </para>
 /// <para>
 /// <b>The deadline</b> is the cycle interval plus an allowance for one step of a cycle. The longest
 /// wait between two beats is the sleep between cycles; the longest step is one call to the agent
-/// service that uses both attempts, about <c>2 × RequestTimeoutSeconds + 5 s</c>. The allowance is
-/// twice that, and never under five minutes. At the shipped settings that is 15 min + 8 min 10 s.
+/// service that uses both attempts, about <c>2 × RequestTimeoutSeconds + 5 s</c>. One call and not
+/// one loop: the exits and the sizing of a buy read a quote per holding, one at a time, and each
+/// quote beats, so the gap does not grow with what the portfolio holds. The allowance is twice
+/// that, and never under five minutes. At the shipped settings that is 15 min + 8 min 10 s.
 /// </para>
 /// <para>
 /// <b>Before the first cycle.</b> The first cycle starts as the worker does, and its first beat is
@@ -43,7 +46,7 @@ using Microsoft.Extensions.Options;
 /// should make the container unhealthy, which it will; it should not stop the exits.
 /// </para>
 /// </remarks>
-public sealed class CycleHeartbeat
+public sealed class CycleHeartbeat : ICycleProgress
 {
     private static readonly TimeSpan MinimumAllowance = TimeSpan.FromMinutes(5);
 

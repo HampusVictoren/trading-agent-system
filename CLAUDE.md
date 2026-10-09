@@ -223,8 +223,9 @@ docker run --rm tas-engine-migrate --version
   is DDL and not the `DELETE` they refuse.
 - **The HEALTHCHECK reads a heartbeat, not a port** (stage 7). The trading loop writes a
   deadline in Unix seconds to `Health:HeartbeatFile` - `/tmp/engine.heartbeat` in the image -
-  when a cycle starts, after the exits, after the selection, before each analysis and before
-  it sleeps, and the check is `test "$(cat file)" -gt "$(date +%s)"`. The deadline is the cycle
+  when a cycle starts, after the exits, after the selection, before each analysis, after every
+  quote (the exits and a buy's sizing read one per holding, so the gap between beats is one agent
+  call however much the portfolio holds) and before it sleeps, and the check is `test "$(cat file)" -gt "$(date +%s)"`. The deadline is the cycle
   interval plus twice one agent call with both attempts, never under five minutes (15 min +
   490 s as shipped), so the check knows no settings. **Healthy means the loop is progressing**,
   not that the agent service or the database is up: the loop survives both and logs it. The

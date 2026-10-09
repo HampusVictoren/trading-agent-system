@@ -1,5 +1,6 @@
 namespace Engine.Hosting.Telemetry;
 
+using Engine.Application.Interfaces;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
 public static class EngineTelemetryExtensions
@@ -16,6 +17,7 @@ public static class EngineTelemetryExtensions
         services.TryAddSingleton<EngineTelemetry>();
         services.TryAddTransient<AgentLatencyHandler>();
         services.TryAddSingleton<CycleHeartbeat>();
+        services.TryAddSingleton<ICycleProgress>(sp => sp.GetRequiredService<CycleHeartbeat>());
 
         return services;
     }
