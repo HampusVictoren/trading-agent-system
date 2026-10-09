@@ -210,6 +210,7 @@ public class ProcessProposalUseCaseTests
 
             var row = decisions.OfTheCycle;
             row.Outcome.ShouldBe(DecisionOutcome.Shadowed);
+            row.TradingMode.ShouldBe(TradingMode.Shadow);
             row.OrderId.ShouldBeNull();
             row.Stance.ShouldBe(Stance.Buy);
         }
@@ -230,13 +231,37 @@ public class ProcessProposalUseCaseTests
         }
 
         [Fact]
-        public async Task A_hold_is_still_a_hold()
+        public async Task A_hold_is_still_a_hold_and_still_says_which_mode_it_was_made_in()
         {
-            // The mode decides what happens to an order, and a HOLD never had one.
+            // The mode decides what happens to an order, and a HOLD never had one. It is on the row
+            // anyway: a Shadow engine never holds what it decided to buy, so its HOLDs are answers
+            // to different questions from a Paper engine's.
             var (sut, _, decisions) = Build(Signal(stance: "HOLD"), mode: TradingMode.Shadow);
 
             (await Run(sut, NewPortfolio())).ShouldBeOfType<TradeDecisionResult.NoAction>();
             decisions.OfTheCycle.Outcome.ShouldBe(DecisionOutcome.NoAction);
+            decisions.OfTheCycle.TradingMode.ShouldBe(TradingMode.Shadow);
+        }
+
+        [Fact]
+        public async Task A_paper_row_says_paper()
+        {
+            var (sut, _, decisions) = Build(Signal());
+
+            await Run(sut, NewPortfolio());
+
+            decisions.OfTheCycle.TradingMode.ShouldBe(TradingMode.Paper);
+        }
+
+        [Fact]
+        public async Task A_row_with_no_answer_still_says_which_mode_it_was_made_in()
+        {
+            var (sut, _, decisions) = Build(
+                throws: new AgentServiceUnavailableException("down"), mode: TradingMode.Shadow);
+
+            await Run(sut, NewPortfolio());
+
+            decisions.OfTheCycle.TradingMode.ShouldBe(TradingMode.Shadow);
         }
 
         [Fact]

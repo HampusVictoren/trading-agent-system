@@ -4,6 +4,7 @@ using Engine.Domain.Aggregates.Portfolio;
 using Engine.Domain.Outcomes;
 using Engine.Domain.Screening;
 using Engine.Domain.Signals;
+using Engine.Domain.Trading;
 using Engine.Domain.ValueObjects;
 using Engine.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -113,6 +114,7 @@ public class ShortlistEdgeTests : IAsyncLifetime
             TeamId = "default",
             TeamVersion = "abc123",
             Selection = selection,
+            TradingMode = TradingMode.Paper,
             RequestedAt = requestedAt ?? RequestedAt,
             AvailableRiskBudget = 100_000m,
             MaxPositionPct = 0.05m,

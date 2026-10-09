@@ -6,6 +6,7 @@ using Engine.Domain.Aggregates.Portfolio;
 using Engine.Domain.Outcomes;
 using Engine.Domain.Screening;
 using Engine.Domain.Signals;
+using Engine.Domain.Trading;
 using Engine.Domain.ValueObjects;
 using Engine.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -54,6 +55,7 @@ public class OutcomeDeliveryTests : IAsyncLifetime
             Symbol = new Ticker("AAPL"),
             TeamId = "default",
             Selection = SelectionSource.Shortlist,
+            TradingMode = TradingMode.Paper,
             RequestedAt = new DateTimeOffset(2026, 9, 21, 14, 0, 0, TimeSpan.Zero),
             AvailableRiskBudget = 10_000m,
             MaxPositionPct = 0.05m,

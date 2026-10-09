@@ -2,6 +2,7 @@ using Engine.Application.Persistence;
 using Engine.Application.UseCases;
 using Engine.Domain.Aggregates.Portfolio;
 using Engine.Domain.Screening;
+using Engine.Domain.Trading;
 using Engine.Domain.ValueObjects;
 using Engine.Hosting;
 using Engine.Hosting.Options;
@@ -309,6 +310,68 @@ public class TradingSchemaTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Decisions_from_before_the_mode_existed_are_paper_and_new_ones_have_to_say()
+    {
+        // The backfill is the ADD COLUMN's default, because the table's own trigger refuses the
+        // UPDATE a backfill would otherwise be. Paper is what is true about the history; and the
+        // default has to be gone afterwards, or a row written without a mode would claim one.
+        var portfolioId = await AnAccountThatHasBought();
+        await using var context = _database.NewContext();
+        var migrator = context.GetService<IMigrator>();
+        var cancellation = TestContext.Current.CancellationToken;
+
+        try
+        {
+            await migrator.MigrateAsync("ShortlistEdge", cancellation);
+
+            await context.Database.ExecuteSqlAsync(
+                $"""
+                INSERT INTO trading.decisions (correlation_id, portfolio_id, symbol, team_id, selection,
+                    requested_at, available_risk_budget, max_position_pct, key_risks, outcome)
+                VALUES ('before-stage-7', {portfolioId}, 'AAPL', 'default', 'Shortlist',
+                    now(), 10000, 0.05, ARRAY[]::varchar(300)[], 'NoAction')
+                """, cancellation);
+
+            await migrator.MigrateAsync(cancellationToken: cancellation);
+
+            (await context.Database.SqlQueryRaw<string>(
+                    """SELECT trading_mode AS "Value" FROM trading.decisions WHERE correlation_id = 'before-stage-7'""")
+                .SingleAsync(cancellation)).ShouldBe("Paper");
+
+            var refused = await Should.ThrowAsync<Exception>(() => context.Database.ExecuteSqlAsync(
+                $"""
+                INSERT INTO trading.decisions (correlation_id, portfolio_id, symbol, team_id, selection,
+                    requested_at, available_risk_budget, max_position_pct, key_risks, outcome)
+                VALUES ('after-stage-7', {portfolioId}, 'AAPL', 'default', 'Shortlist',
+                    now(), 10000, 0.05, ARRAY[]::varchar(300)[], 'NoAction')
+                """, cancellation));
+
+            refused.Message.ShouldContain("trading_mode");
+
+            // And back: the column goes, the report view is rebuilt without it, and the row that
+            // was there before the migration is still there after it.
+            await migrator.MigrateAsync("ShortlistEdge", cancellation);
+
+            (await context.Database.SqlQueryRaw<int>(
+                    """
+                    SELECT count(*)::int AS "Value" FROM information_schema.columns
+                    WHERE table_schema = 'trading' AND table_name = 'decisions' AND column_name = 'trading_mode'
+                    """)
+                .SingleAsync(cancellation)).ShouldBe(0);
+
+            (await ViewsInTradingSchema(context)).ShouldBe(2);
+
+            (await context.Database.SqlQueryRaw<int>(
+                    """SELECT count(*)::int AS "Value" FROM trading.decisions WHERE correlation_id = 'before-stage-7'""")
+                .SingleAsync(cancellation)).ShouldBe(1);
+        }
+        finally
+        {
+            await migrator.MigrateAsync(cancellationToken: cancellation);
+        }
+    }
+
+    [Fact]
     public async Task The_engine_refuses_to_start_against_a_database_that_is_behind()
     {
         // The alternative - migrating at startup - would move the schema before anyone could
@@ -401,6 +464,7 @@ public class TradingSchemaTests : IAsyncLifetime
         Symbol = Aapl,
         TeamId = "default",
         Selection = SelectionSource.Shortlist,
+        TradingMode = TradingMode.Paper,
         RequestedAt = new DateTimeOffset(2026, 9, 23, 14, 0, 0, TimeSpan.Zero),
         AvailableRiskBudget = 10_000m,
         MaxPositionPct = 0.05m,

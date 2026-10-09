@@ -279,13 +279,18 @@ public class ProcessProposalUseCase
     /// trusting, which is itself a measurement: a stretch of rows with nothing in them says
     /// the agent service was down, not that the agents were cautious.
     /// </summary>
-    private static DecisionRecord ToRecord(
+    private DecisionRecord ToRecord(
         Guid portfolioId, InstrumentSelection selected, TradeSignalRequestDto request, Cycle cycle) => new()
         {
             CorrelationId = request.CorrelationId,
             PortfolioId = portfolioId,
             Symbol = selected.Ticker,
             Selection = selected.Source,
+
+            // On every row, including the ones that never reached the gate: a Shadow engine asks
+            // different questions from a Paper one (it never holds what it decided to buy), so a
+            // HOLD in Shadow is not the same population as a HOLD in Paper either.
+            TradingMode = _gate.Mode,
 
             // The team that was *asked for*, which is known whatever happens. The version is
             // the answer's own, because only an answer has one.

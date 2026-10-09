@@ -3,6 +3,7 @@ using Engine.Application.UseCases;
 using Engine.Domain.Aggregates.Portfolio;
 using Engine.Domain.Screening;
 using Engine.Domain.Signals;
+using Engine.Domain.Trading;
 using Engine.Domain.ValueObjects;
 using Engine.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -244,6 +245,7 @@ public class PortfolioRepositoryTests : IAsyncLifetime
                 Symbol = Msft,
                 TeamId = "default",
                 Selection = SelectionSource.Shortlist,
+                TradingMode = TradingMode.Paper,
                 RequestedAt = new DateTimeOffset(2026, 9, 23, 14, 0, 0, TimeSpan.Zero),
                 AvailableRiskBudget = 10_000m,
                 MaxPositionPct = 0.05m,
@@ -282,6 +284,7 @@ public class PortfolioRepositoryTests : IAsyncLifetime
                 Symbol = Msft,
                 TeamId = "default",
                 Selection = SelectionSource.Shortlist,
+                TradingMode = TradingMode.Paper,
                 RequestedAt = new DateTimeOffset(2026, 9, 23, 14, 0, 0, TimeSpan.Zero),
                 AvailableRiskBudget = 10_000m,
                 MaxPositionPct = 0.05m,
@@ -317,6 +320,7 @@ public class PortfolioRepositoryTests : IAsyncLifetime
                 Symbol = Msft,
                 TeamId = "default",
                 Selection = SelectionSource.Holding,
+                TradingMode = TradingMode.Paper,
                 RequestedAt = new DateTimeOffset(2026, 9, 24, 14, 0, 0, TimeSpan.Zero),
                 AvailableRiskBudget = 10_000m,
                 MaxPositionPct = 0.05m,
@@ -438,6 +442,7 @@ public class PortfolioRepositoryTests : IAsyncLifetime
         Symbol = Msft,
         TeamId = "default",
         Selection = SelectionSource.Shortlist,
+        TradingMode = TradingMode.Paper,
         RequestedAt = new DateTimeOffset(2026, 9, 23, 14, 0, 0, TimeSpan.Zero),
         AvailableRiskBudget = 10_000m,
         MaxPositionPct = 0.05m,

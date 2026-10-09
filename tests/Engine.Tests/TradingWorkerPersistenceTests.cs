@@ -299,6 +299,7 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
 
         var decision = await context.Decisions.SingleAsync(TestContext.Current.CancellationToken);
         decision.Outcome.ShouldBe(DecisionOutcome.Shadowed);
+        decision.TradingMode.ShouldBe(TradingMode.Shadow);
         decision.OutcomeReason.ShouldBe("Shadow mode: would have bought 5 AAPL at 100 SEK");
         decision.OrderId.ShouldBeNull();
 

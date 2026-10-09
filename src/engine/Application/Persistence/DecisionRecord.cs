@@ -3,6 +3,7 @@ namespace Engine.Application.Persistence;
 using Engine.Application.UseCases;
 using Engine.Domain.Screening;
 using Engine.Domain.Signals;
+using Engine.Domain.Trading;
 using Engine.Domain.ValueObjects;
 
 /// <summary>
@@ -55,6 +56,19 @@ public sealed class DecisionRecord
     /// sold leaves nothing to infer from.
     /// </remarks>
     public required SelectionSource Selection { get; init; }
+
+    /// <summary>
+    /// Whether an approved order from this decision could reach the portfolio: Paper, or Shadow,
+    /// where nothing is placed.
+    /// </summary>
+    /// <remarks>
+    /// Two populations again, and for a less obvious reason than "one of them traded". A Shadow
+    /// engine never builds a position, so it never analyses a holding it bought and never tells the
+    /// agents it owns anything - the questions it asks differ from Paper's, not only what it does
+    /// with the answers. Every row written before stage 7 is Paper, because that is what the
+    /// engine did.
+    /// </remarks>
+    public required TradingMode TradingMode { get; init; }
 
     /// <summary>The <c>as_of</c> the engine sent, from its injected clock.</summary>
     public required DateTimeOffset RequestedAt { get; init; }
