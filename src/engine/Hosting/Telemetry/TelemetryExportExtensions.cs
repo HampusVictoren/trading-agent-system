@@ -16,6 +16,18 @@ public static class TelemetryExportExtensions
     public const string ProtocolKey = "OTEL_EXPORTER_OTLP_PROTOCOL";
     public const string ServiceNameKey = "OTEL_SERVICE_NAME";
     public const string TimeoutKey = "OTEL_EXPORTER_OTLP_TIMEOUT";
+    public const string DisabledKey = "OTEL_SDK_DISABLED";
+
+    /// <summary>
+    /// The per-signal endpoints the OpenTelemetry specification also defines. Not supported: see
+    /// <see cref="AddTelemetryExport"/>.
+    /// </summary>
+    public static readonly IReadOnlyList<string> PerSignalEndpointKeys =
+    [
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+    ];
 
     /// <summary>
     /// Three seconds per export unless <c>OTEL_EXPORTER_OTLP_TIMEOUT</c> says otherwise, rather
@@ -24,9 +36,10 @@ public static class TelemetryExportExtensions
     /// <remarks>
     /// Measured: against a collector address that never answers, the SDK's default made stopping
     /// the engine take about fifteen seconds, because both providers flush on the way out and each
-    /// waits out its timeout. Compose sends SIGKILL ten seconds after SIGTERM. A collector on the
-    /// same host answers in milliseconds, so three seconds costs nothing when it is up and keeps
-    /// shutdown inside compose's window when it is not.
+    /// waits out its timeout. Docker's default is SIGKILL ten seconds after SIGTERM, and compose
+    /// gives the engine 45 s (docker-compose.yml) to cover the host's own 30 s shutdown as well. A
+    /// collector on the same host answers in milliseconds, so three seconds costs nothing when it
+    /// is up and keeps shutdown inside the window when it is not.
     /// </remarks>
     public const int DefaultTimeoutMilliseconds = 3000;
 
@@ -53,6 +66,16 @@ public static class TelemetryExportExtensions
     /// is reported and ignored rather than refused. Telemetry is not a reason to stop an engine
     /// whose exits are what close losing positions; every other setting here that is wrong is a
     /// refusal at startup, and this one is deliberately not.
+    /// </para>
+    /// <para>
+    /// <b>Two more standard variables.</b> <c>OTEL_SDK_DISABLED=true</c> is honoured: nothing is
+    /// exported, whatever the endpoint says, so a collector can be switched off without unsetting
+    /// it. The per-signal endpoints (<see cref="PerSignalEndpointKeys"/>) are not supported: one
+    /// endpoint takes both signals, and the engine never ships logs. Rather than half-honour them -
+    /// the exporter itself would read a per-signal endpoint and send a signal somewhere other than
+    /// the place the startup line names - setting any of them turns export off and says to set
+    /// <c>OTEL_EXPORTER_OTLP_ENDPOINT</c> instead. The other <c>OTEL_*</c> selectors, such as
+    /// <c>OTEL_TRACES_EXPORTER</c>, are not read.
     /// </para>
     /// <para>
     /// With an endpoint, the exporter runs on a background thread with its own timeout
@@ -105,6 +128,13 @@ public static class TelemetryExportExtensions
 
     private static TelemetryExport Decide(IConfiguration configuration)
     {
+        if (bool.TryParse(configuration[DisabledKey]?.Trim(), out var disabled) && disabled)
+            return new TelemetryExport(false, $"not exported: {DisabledKey} is true");
+
+        if (PerSignalEndpointKeys.FirstOrDefault(key => !string.IsNullOrWhiteSpace(configuration[key])) is { } perSignal)
+            return new TelemetryExport(
+                false, $"not exported: {perSignal} is set, and per-signal endpoints are not supported - set {EndpointKey} instead");
+
         var endpoint = configuration[EndpointKey];
 
         if (string.IsNullOrWhiteSpace(endpoint))

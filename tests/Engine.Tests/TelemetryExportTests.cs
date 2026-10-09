@@ -68,6 +68,60 @@ public class TelemetryExportTests
     }
 
     [Theory]
+    [InlineData("true")]
+    [InlineData("TRUE")]
+    [InlineData(" True ")]
+    public void OTEL_SDK_DISABLED_turns_export_off_whatever_the_endpoint_says(string disabled)
+    {
+        var (export, provider) = Build(
+            (TelemetryExportExtensions.EndpointKey, "http://collector:4317"),
+            (TelemetryExportExtensions.DisabledKey, disabled));
+        using var _ = provider;
+
+        export.Enabled.ShouldBeFalse();
+        export.Description.ShouldContain(TelemetryExportExtensions.DisabledKey);
+        provider.GetService<TracerProvider>().ShouldBeNull();
+        provider.GetService<MeterProvider>().ShouldBeNull();
+    }
+
+    [Theory]
+    [InlineData("false")]
+    [InlineData("")]
+    [InlineData("no")]
+    public void OTEL_SDK_DISABLED_other_than_true_leaves_export_on(string disabled)
+    {
+        // The specification's reading: only true disables.
+        var (export, provider) = Build(
+            (TelemetryExportExtensions.EndpointKey, "http://collector:4317"),
+            (TelemetryExportExtensions.DisabledKey, disabled));
+        using var _ = provider;
+
+        export.Enabled.ShouldBeTrue();
+    }
+
+    [Theory]
+    [InlineData("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", null)]
+    [InlineData("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", null)]
+    [InlineData("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", null)]
+    [InlineData("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "http://collector:4317")]
+    [InlineData("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "http://collector:4317")]
+    public void A_per_signal_endpoint_turns_export_off_and_says_which_variable_to_use(string key, string? general)
+    {
+        // Not supported, and not half-honoured either: with the general endpoint also set, the
+        // exporter would send that signal somewhere other than where the startup line says.
+        var (export, provider) = Build(
+            (key, "http://elsewhere:4318/v1/signal"),
+            (TelemetryExportExtensions.EndpointKey, general));
+        using var _ = provider;
+
+        export.Enabled.ShouldBeFalse();
+        export.Description.ShouldContain(key);
+        export.Description.ShouldContain($"set {TelemetryExportExtensions.EndpointKey} instead");
+        provider.GetService<TracerProvider>().ShouldBeNull();
+        provider.GetService<MeterProvider>().ShouldBeNull();
+    }
+
+    [Theory]
     [InlineData("http://collector:4317", null, "grpc")]
     [InlineData("http://collector:4318", "http/protobuf", "http/protobuf")]
     public void With_an_endpoint_both_metrics_and_traces_are_exported(string endpoint, string? protocol, string described)

@@ -177,6 +177,8 @@ services:
       # and empty means nothing is exported and nothing retries: the engine registers no exporter
       # at all. The collector that would receive them arrives with stage 7's next pull request.
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      # true turns export off without unsetting the endpoint above.
+      OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-false}
     # The healthcheck is the image's own (src/engine/Dockerfile): the trading loop writes a
     # deadline to /tmp/engine.heartbeat at every step of a cycle and after every quote, and the
     # check is healthy while that deadline is in the future. It is not repeated here, so `docker
