@@ -157,10 +157,10 @@ Read the stage in the roadmap (*Etapp 7*) and the stage 7 log below before conti
    tracing and a collector in compose - the PR the stage's check reads. PR 3 sets
    `OTEL_EXPORTER_OTLP_ENDPOINT` for the engine and makes the agent service continue the
    engine's trace from its `traceparent`.
-3. **Open in PR 2, each taken the safe way and listed in its description:** whether to export
-   logs over OTLP too (not done: they carry risk reasons and the agents' stances), and whether
-   the heartbeat should also go stale when the database is unreachable (not done: healthy means
-   the loop is progressing, and the loop survives an outage).
+3. **PR 2's two open questions are decided by Hampus** (2026-10-09), both as recommended - see
+   *Decisions taken by Hampus (2026-10-09)* in the PR 2 entry: **logs are not exported over
+   OTLP in PR 2** (log export is decided with PR 3, when the collector arrives), and **the
+   heartbeat does not go stale when the database is unreachable**. Nothing in PR 2 is open.
 
 Hampus's six answers from 2026-10-09 still stand - see *Hampus's decisions* in the stage 7 log.
 
@@ -2535,6 +2535,9 @@ Six, in this order:
    `stage-7-engine-telemetry`, taken before PR 4 at Hampus's request.
 3. Python tracing: `ag2[tracing]`, `TelemetryMiddleware`, `traceparent` extraction,
    `capture_content=False`, and a collector in compose. This is the PR the stage's check reads.
+   **Also in scope: whether, and which, logs are exported over OTLP** (Hampus, 2026-10-09).
+   The engine's lines carry risk reasons and the agents' stances, so it is decided with the
+   collector that would receive them, for both services at once, not as a side effect of PR 2.
 4. The engine leaves the profile (D2 lifted). **Decided by Hampus**, as its own PR after #63
    merges.
 5. `docs/runbook.md`: restarting, where the logs are, and how to stop trading (the kill switch),
@@ -2683,6 +2686,15 @@ All six of the open questions are answered. Each change is its own commit on the
 5. **Deploy: postponed.** The engine runs on Hampus's machine until he decides on the cloud.
    Plan PR 6 is deferred with no target chosen.
 
+**Decisions taken by Hampus (2026-10-09), on PR 2's two open questions** - both as recommended,
+and recorded in the PR 2 entry below and in #64's description:
+
+6. **Logs are not exported over OTLP in PR 2.** Log export is decided together with PR 3, when
+   the collector arrives in compose, and is now in PR 3's scope in the plan above.
+7. **The heartbeat does not go stale when the database is unreachable.** Health means the loop
+   is making progress; the loop survives an outage and logs it, so a database blip must not
+   restart-loop the engine.
+
 - **Local runs after the decisions:**
   - .NET: 579/579, including Testcontainers. The `-warnaserror` build, `dotnet format` and
     `has-pending-model-changes` are clean.
@@ -2758,6 +2770,16 @@ is still behind its profile here.
   - The engine image was not built locally: BuildKit on this machine failed with "failed to
     prepare ... invalid argument" after eighteen minutes. CI's `Engine (image)` job and the
     dispatched compose bring-up build and run it.
+- **Decisions taken by Hampus (2026-10-09)**, on the two questions this PR left open, both as
+  recommended:
+  1. **Logs are not exported over OTLP here.** They carry the risk rules' reasons and the
+     agents' stances, and already have a home on stdout and compose's log driver. Whether to
+     ship them is decided with PR 3, when the collector that would receive them arrives - for
+     both services at once. Added to PR 3's scope in the plan.
+  2. **The heartbeat does not go stale when the database is unreachable.** Healthy means the
+     loop is making progress, and the loop survives an outage and says so in the log. A
+     dependency-aware heartbeat would turn a database blip into an unhealthy engine, and under
+     a restart policy keyed on health, into a restart loop that helps nothing.
 - **Review (Review Bot: accept with nits, no blockers)**, fixed on the branch, one commit each:
   - **A heartbeat that many holdings could outlast.** The allowance covered one agent call,
     but the exits and a buy's sizing read a quote per holding, one at a time. With four or
