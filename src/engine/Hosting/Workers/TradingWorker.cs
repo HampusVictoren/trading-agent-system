@@ -47,6 +47,9 @@ public class TradingWorker : BackgroundService
                 ? "approved orders are executed against the simulated portfolio."
                 : "every decision is recorded and no order is placed.");
 
+        if (_options.Mode != TradingMode.Paper)
+            await WarnAboutHoldingsNobodyIsManagingAsync(stoppingToken);
+
         while (!stoppingToken.IsCancellationRequested)
         {
             // First, before anything is asked of anyone. A halted engine does not run the exits,
@@ -122,6 +125,48 @@ public class TradingWorker : BackgroundService
 
             if (!await WaitForTheNextCycleAsync(stoppingToken))
                 return;
+        }
+    }
+
+    /// <summary>
+    /// Says loudly, once at startup, that Shadow mode is leaving real positions to themselves.
+    /// </summary>
+    /// <remarks>
+    /// Shadow places nothing, and that includes the stop-loss and time-limit sales. An account
+    /// that was paper-trading and is restarted in Shadow (which is what the shipped default does
+    /// to an engine that never set the mode) keeps its positions, and from then on nothing closes
+    /// them; the exits only log what they would have sold. That is correct for Shadow, but it is
+    /// a change nobody would guess from the word, so it is a warning that names the setting to
+    /// change. Read in a scope of its own, and never allowed to stop the worker: this is
+    /// a message, not a check.
+    /// </remarks>
+    private async Task WarnAboutHoldingsNobodyIsManagingAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var portfolio = await scope.ServiceProvider
+                .GetRequiredService<IPortfolioRepository>()
+                .FindAsync(cancellationToken);
+
+            if (portfolio is null || portfolio.Positions.Count == 0)
+                return;
+
+            _logger.LogWarning(
+                "Trading mode is {Mode} and the portfolio holds {Count} position(s): {Tickers}. Their "
+                + "stop-loss and time-limit exits will be logged but NOT placed, so nothing will close "
+                + "them. Set Trading:Mode to Paper (TRADING_MODE=Paper under compose) to keep managing them.",
+                _options.Mode,
+                portfolio.Positions.Count,
+                string.Join(", ", portfolio.Positions.Select(held => held.Ticker.Value).Order(StringComparer.Ordinal)));
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Shutting down before the first cycle, which is not a failure.
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Could not read the portfolio to check for holdings Shadow mode will not manage.");
         }
     }
 

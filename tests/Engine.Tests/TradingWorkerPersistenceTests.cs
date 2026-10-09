@@ -385,6 +385,37 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
         portfolio.Positions.ShouldBeEmpty();
     }
 
+    [Fact]
+    public async Task A_shadow_engine_warns_at_startup_that_it_will_not_close_what_the_account_holds()
+    {
+        // A paper account with a holding, restarted in Shadow, which is what the shipped default
+        // does to an engine that never set the mode. Its exits stop selling, so it has to say so.
+        await using (var first = AnEngine(AnAgentServiceThatAnswers(ABuy(conviction: 0.6))))
+        {
+            await RunOneCycleAsync(first, expectedDecisionsAfterwards: 1);
+        }
+
+        await using (var second = AnEngine(AnAgentServiceThatAnswers(ABuy(conviction: 0.6)), mode: TradingMode.Shadow))
+        {
+            await RunUntilItLogsAsync(second, "will be logged but NOT placed");
+        }
+
+        _lines.Lines.ShouldContain(line =>
+            line.StartsWith("Trading mode is Shadow and the portfolio holds 1 position(s): AAPL.", StringComparison.Ordinal)
+            && line.Contains("Set Trading:Mode to Paper", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task A_shadow_engine_with_nothing_held_has_nothing_to_warn_about()
+    {
+        await using (var engine = AnEngine(AnAgentServiceThatAnswers(ABuy(conviction: 0.9)), mode: TradingMode.Shadow))
+        {
+            await RunOneCycleAsync(engine, expectedDecisionsAfterwards: 1);
+        }
+
+        _lines.Lines.ShouldNotContain(line => line.Contains("NOT placed", StringComparison.Ordinal));
+    }
+
     /// <summary>
     /// The kill switch's proof. A Paper engine holding a position that has fallen through its stop
     /// and an instrument the agents would buy: everything a cycle could act on. The switch is
