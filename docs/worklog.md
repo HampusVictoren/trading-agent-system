@@ -145,7 +145,9 @@ Read the stage in the roadmap (*Etapp 7*) and the stage 7 log below before conti
    - **one trace per cycle**, with the exits, the selection and each analysis inside it, and
      `traceparent` on every call to the agent service;
    - **a heartbeat** the image's new HEALTHCHECK reads, so `docker compose ps` says whether the
-     trading loop is making progress.
+     trading loop is making progress. It beats at every step and after every quote, so a long
+     portfolio against a hanging agent service stays healthy; compose gives the engine 45 s to
+     stop.
 
    Nothing is exported unless `OTEL_EXPORTER_OTLP_ENDPOINT` is set, and nothing sets it yet:
    **after this merges, a running engine behaves exactly as before**, apart from one new
@@ -2756,6 +2758,26 @@ is still behind its profile here.
   - The engine image was not built locally: BuildKit on this machine failed with "failed to
     prepare ... invalid argument" after eighteen minutes. CI's `Engine (image)` job and the
     dispatched compose bring-up build and run it.
+- **Review (Review Bot: accept with nits, no blockers)**, fixed on the branch, one commit each:
+  - **A heartbeat that many holdings could outlast.** The allowance covered one agent call,
+    but the exits and a buy's sizing read a quote per holding, one at a time. With four or
+    more holdings and a hanging agent service, one step outran 490 s and the engine went
+    falsely unhealthy. `QuoteReader` now beats after every quote, answered or not, through an
+    application port (`ICycleProgress`) that `CycleHeartbeat` implements - not in the HTTP
+    handler, which would tie health to the transport. A test prices eight holdings at 245 s
+    each on a moving clock and checks the real file is ahead of the clock at every answer;
+    without the beat, both new tests fail.
+  - **Shutdown margin.** Docker's 10 s before SIGKILL against the host's 30 s for its workers
+    plus 2 x 3 s of flushing. Compose now gives the engine `stop_grace_period: 45s`; the
+    flush timeout stays 3 s.
+  - **One mode fallback.** `TradingOptions.EffectiveMode` (`Mode ?? Shadow`) is read by the
+    gate, the logs, the trace tag and the counter. Falling back to Paper fails 2 tests.
+  - **`OTEL_SDK_DISABLED=true`** turns export off; **per-signal endpoints** are not
+    supported, and setting one turns export off with a log line naming the variable, rather
+    than letting the exporter send a signal somewhere the log does not say. Compose passes
+    `OTEL_SDK_DISABLED` through. Ignoring either fails its tests (3 and 5).
+  - Ragged comments rewrapped, including those the cycle's extraction left.
+  - .NET after the review: 637/637.
 
 ---
 
