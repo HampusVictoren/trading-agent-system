@@ -47,7 +47,8 @@ docker compose --profile trade config --services
 `Engine (image)`, `Compose`, `Secret scan` and `Vulnerability scan`. The last is advisory on
 purpose, so a new CVE in an untouched transitive dependency does not stop unrelated work;
 everything else fails the run. `Compose` validates the compose file on every pull request and
-brings the whole system up on master and nightly - the nightly trigger exists for it, because
+brings the whole system up on master, nightly and by dispatch - including the engine, which it
+waits on until its heartbeat makes it healthy - and the nightly trigger exists for it, because
 it is the only check that starts the system and therefore the only one that would notice a
 base image moving or a published port being taken on a day when nothing was pushed.
 
@@ -115,6 +116,14 @@ docker exec -it trading-db psql -U postgres -d tradingdb   # superuser, via the 
 docker exec -it trading-db psql -U postgres -d tradingdb -c "INSERT INTO trading.kill_switch (engaged, reason) VALUES (true, '<why>')"
 docker exec -it trading-db psql -U postgres -d tradingdb -c "INSERT INTO trading.kill_switch (engaged, reason) VALUES (false, '<why>')"
 docker exec -it trading-db psql -U postgres -d tradingdb -c "SELECT * FROM trading.kill_switch ORDER BY id DESC LIMIT 5"
+
+# The engine's health and telemetry. Healthy means the trading loop is making progress; the
+# heartbeat holds the Unix second after which it would not be. Metrics and traces leave the
+# process only when OTEL_EXPORTER_OTLP_ENDPOINT is set (root .env under compose); without it
+# the counters can still be read live, with dotnet-counters installed as a global tool.
+docker compose ps engine                                  # (healthy) once a cycle has begun
+docker compose exec engine cat /tmp/engine.heartbeat      # the deadline, in Unix seconds
+dotnet-counters monitor --counters Engine -n engine       # a host-run engine's own counters
 
 # Python agent service — run from src/agents (Python 3.12, managed with uv)
 uv sync
@@ -212,9 +221,17 @@ docker run --rm tas-engine-migrate --version
   `0` reverts everything, a migration name goes to that point. Verified against a database
   with rows in it; the append-only triggers do not stand in the way, because dropping a table
   is DDL and not the `DELETE` they refuse.
-- **There is no HEALTHCHECK**, on purpose. Nothing is gated on this container, and a useful
-  check would have to ask "did a cycle finish in the last fifteen minutes" rather than "is the
-  process alive" - which needs the engine to publish that somewhere. Stage 7.
+- **The HEALTHCHECK reads a heartbeat, not a port** (stage 7). The trading loop writes a
+  deadline in Unix seconds to `Health:HeartbeatFile` - `/tmp/engine.heartbeat` in the image -
+  when a cycle starts, after the exits, after the selection, before each analysis and before
+  it sleeps, and the check is `test "$(cat file)" -gt "$(date +%s)"`. The deadline is the cycle
+  interval plus twice one agent call with both attempts, never under five minutes (15 min +
+  490 s as shipped), so the check knows no settings. **Healthy means the loop is progressing**,
+  not that the agent service or the database is up: the loop survives both and logs it. The
+  grace before the first cycle is the first cycle's own opening beat, which lasts a whole
+  deadline, plus a two-minute start period for configuration and the schema check; a file left
+  by the container's previous run is deleted first thing at startup. Nothing is gated on the
+  engine's health. Unset (as for `dotnet run`), no file is written.
 - **The `trading` schema has sixteen migrations** and `agent` has five. CI reads the first number
   off the migration files rather than holding it, because this file and the worklog have both
   had it wrong.
@@ -273,7 +290,7 @@ about four minutes for a first full cycle - screen, account opened, ten analyses
 
 **Every request carries a correlation id.** `CorrelationIdMiddleware` reads `X-Correlation-Id`, or invents one, echoes it on the response and puts it in every log line. Logs are JSON, configured in the lifespan, so uvicorn's own lines are formatted too - except the two banner lines it prints before startup. `/health` is liveness and checks nothing else on purpose; `/ready` checks the database and the LLM backend and answers 503 until both do, with the dependency names in the body only when `TAS_READY_DETAIL` is set.
 
-The engine reads `AgentService:BaseUrl`, `RequestTimeoutSeconds`, `RiskPolicy` and `Trading` (including `OpeningBalance`, the balance the account is opened with on the very first cycle) from `appsettings.json`, all validated at startup. It also **refuses to start when the database is behind the build**, naming the pending migrations and the command that applies them - and it never migrates itself, because applying at startup would move the schema before anyone could decide to. That check is its first connection, so an unreachable database fails there too. `Trading` holds `Mode` (required: `Shadow`, the shipped default, or `Paper`; `Live` is refused, and compose sets it from `TRADING_MODE`), `Universe` (31 OMXS30 symbols), `ShortlistSize`, `MinDollarVolume`, `CycleIntervalMinutes` and `TeamId`; `TradingOptionsValidator` refuses a universe entry that is not a ticker, or one named twice. **`AgentService:ApiKey`, `AgentService:OutcomesHmacSecret` and `Database:ConnectionString` are not there**, because all three are secrets: locally they live in the user secrets store, outside the repository, and elsewhere they come from the environment. `AgentService:SignalsApiKey`, `ScreenApiKey`, `OutcomesApiKey` and `MarketApiKey` are optional scoped overrides in the same store, and `ApiKeyFor(scope)` falls back to `ApiKey` for any scope without one. Neither has a default - an engine that cannot reach its database refuses to start, because from stage 4 a cycle it cannot store is a cycle whose evidence is lost.
+The engine reads `AgentService:BaseUrl`, `RequestTimeoutSeconds`, `RiskPolicy` and `Trading` (including `OpeningBalance`, the balance the account is opened with on the very first cycle) from `appsettings.json`, all validated at startup. It also **refuses to start when the database is behind the build**, naming the pending migrations and the command that applies them - and it never migrates itself, because applying at startup would move the schema before anyone could decide to. That check is its first connection, so an unreachable database fails there too. `Trading` holds `Mode` (required: `Shadow`, the shipped default, or `Paper`; `Live` is refused, and compose sets it from `TRADING_MODE`), `Universe` (31 OMXS30 symbols), `ShortlistSize`, `MinDollarVolume`, `CycleIntervalMinutes` and `TeamId`; `TradingOptionsValidator` refuses a universe entry that is not a ticker, or one named twice. `Health:HeartbeatFile` is optional and unset in `appsettings.json`; the image sets it. **`OTEL_EXPORTER_OTLP_ENDPOINT`** (and the SDK's other `OTEL_*` variables) decides whether metrics and traces are exported: unset or empty registers no exporter at all, and a value the exporter cannot use is logged and ignored rather than refused, because telemetry is no reason to stop the process whose exits close losing positions. Startup logs one line saying which, with the endpoint cut to scheme, host and port. **`AgentService:ApiKey`, `AgentService:OutcomesHmacSecret` and `Database:ConnectionString` are not there**, because all three are secrets: locally they live in the user secrets store, outside the repository, and elsewhere they come from the environment. `AgentService:SignalsApiKey`, `ScreenApiKey`, `OutcomesApiKey` and `MarketApiKey` are optional scoped overrides in the same store, and `ApiKeyFor(scope)` falls back to `ApiKey` for any scope without one. Neither has a default - an engine that cannot reach its database refuses to start, because from stage 4 a cycle it cannot store is a cycle whose evidence is lost.
 
 ```bash
 # Both sides need the same value. Generate one, then give it to each:
@@ -364,6 +381,8 @@ idempotent on the other side.
    - **The deterministic exits**, through `ApplyExitsUseCase`. One pass over the whole portfolio, taking no signal and asking no agent: `ExitRules` sells a position that has fallen `RiskPolicy:StopLossPercentage` below its average purchase price, or whose `horizon_days` have passed since the last purchase. They run **before** the analyses so a cycle's buying sees the cash and the position headroom they have just released. An empty database is left alone - an account that exists because a sweep for sales ran is an odd thing to explain.
    - **The selection**, through `SelectShortlistUseCase`. `POST /v1/screen` ranks `Trading:Universe` (31 OMXS30 names) with no LLM call and returns the best `Trading:ShortlistSize` (10); the result is stored in `trading.shortlists` and **read back on every later cycle that day**, because the factors come from daily bars so two screens on one day rank identically. `CycleSelection` then makes the cycle **everything the portfolio holds, plus that shortlist** - holdings first, by symbol, so a sale frees cash before a buy is sized, and a held instrument that was also ranked appears once, as a holding.
    - **One analysis per selected instrument**, each in a scope of its own, through `ProcessProposalUseCase`. First `AnalysisDueCheck` asks whether it is worth three LLM calls: `FactSheetChange` skips an instrument that was already analysed today, or whose price is where the last analysis left it. Together that is **at most one analysis per instrument per trading day, and none on a day that is not one** - a market that is shut cannot move a price, so the engine waits for the open without a calendar. The gate sits above the use case because that use case records every cycle it runs, so a skip decided inside it would write a row.
+
+   **One cycle is one trace.** The cycle is the root activity on the `Engine` ActivitySource, with the exits, the selection and each analysis as child spans, and HttpClient writes it into a W3C `traceparent` header on every call to the agent service - so the agent service can continue the same trace (stage 7, PR 3). Spans carry closed sets plus the ticker and the correlation id, never anything the agents wrote; a failure records the exception's type, not its message. The `Engine` meter has `decisions_total{outcome,mode}` and `risk_rejections_total{mode,side}`, both recorded after the commit, and `agent_latency_seconds{operation,outcome}`, timed outside the resilience handler so a retried call is one measurement. Exported over OTLP only when an endpoint is configured (see the configuration paragraph above); logs are not exported, they stay on stdout.
 
    The account is opened at `Trading:OpeningBalance` only when nothing is stored. A correlation id is generated and logged before each call, and every outcome is logged *after* the commit, so a line in the log means a row in the database. A failed commit is an error line and the loop carries on: a buy is in the same transaction as its decision, so nothing was traded. One summary line per cycle names what was analysed and what was skipped, because fourteen of fifteen cycles now do nothing and silence would otherwise mean both "nothing changed" and "the worker stopped".
 2. `PythonAgentClient` posts a `TradeSignalRequestDto` to `POST /v1/signals`. Before sizing a buy, it also asks `GET /v1/quotes/{symbol}` for every *other* holding, carrying the same correlation id; the analysed instrument's price always comes from the signal, so an order is never sized against a quote the agents never saw. A **sale** needs no valuation and makes no quote call at all, which is what keeps a holding the engine cannot price from standing between the agents and a position they have argued should be closed. The instrument travels in the body as a typed object, so nothing is interpolated into a path. The correlation id goes on the `X-Correlation-Id` header, taken from the body so the two cannot disagree. Every call carries `X-Api-Key` **per request** rather than once on the client, so each endpoint can present its own scoped key - see *Configuration*.
