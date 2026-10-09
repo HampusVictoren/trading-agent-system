@@ -12,32 +12,31 @@ using Microsoft.Extensions.Options;
 /// <para>
 /// A Worker has no endpoint, and giving it one would be the engine's first inbound surface - the
 /// same reason the kill switch is a table. So the loop writes a file and the image's HEALTHCHECK
-/// reads it: <c>test "$(cat file)" -gt "$(date +%s)"</c>. What the file holds is a deadline in
-/// Unix seconds rather than a timestamp, so the check needs to know nothing - not the cycle
-/// interval, not the agent timeouts. The engine knows both and does the arithmetic.
+/// reads it: <c>test "$(cat file)" -gt "$(date +%s)"</c>. What the file holds is a deadline in Unix
+/// seconds rather than a timestamp, so the check needs to know nothing - not the cycle interval,
+/// not the agent timeouts. The engine knows both and does the arithmetic.
 /// </para>
 /// <para>
 /// <b>What it means.</b> Healthy says the loop is making progress: it is written when a cycle
-/// starts, after the exits, after the selection, before each analysis and when the cycle ends. It does not say the agent service or the database is up - the loop
-/// survives both being down, logs it, and carries on, and an engine that is waiting out an
-/// outage correctly is not the engine that needs looking at. A loop that has hung, or a worker
-/// that has died while the process lives on, is.
+/// starts, after the exits, after the selection, before each analysis and when the cycle ends. It
+/// does not say the agent service or the database is up - the loop survives both being down, logs
+/// it, and carries on, and an engine that is waiting out an outage correctly is not the engine that
+/// needs looking at. A loop that has hung, or a worker that has died while the process lives on,
+/// is.
 /// </para>
 /// <para>
-/// <b>The deadline</b> is the cycle interval plus an allowance for one step of a cycle. The
-/// longest wait between two beats is the sleep between cycles; the longest step is one call to
-/// the agent service that uses both attempts, about <c>2 × RequestTimeoutSeconds + 5 s</c>. The
-/// allowance is twice that, and never under five minutes. At the shipped settings that is
-/// 15 min + 8 min 10 s.
+/// <b>The deadline</b> is the cycle interval plus an allowance for one step of a cycle. The longest
+/// wait between two beats is the sleep between cycles; the longest step is one call to the agent
+/// service that uses both attempts, about <c>2 × RequestTimeoutSeconds + 5 s</c>. The allowance is
+/// twice that, and never under five minutes. At the shipped settings that is 15 min + 8 min 10 s.
 /// </para>
 /// <para>
 /// <b>Before the first cycle.</b> The first cycle starts as the worker does, and its first beat is
 /// written before it does anything, so a process that has not finished a cycle is healthy for a
-/// whole deadline from then. The
-/// seconds between the process starting and the worker starting (configuration, the schema check)
-/// are the HEALTHCHECK's start period. A file left by a previous run of the same container is
-/// deleted at startup, before anything else, so an engine that crashes on the way up is never
-/// reported healthy on the strength of the run before it.
+/// whole deadline from then. The seconds between the process starting and the worker starting
+/// (configuration, the schema check) are the HEALTHCHECK's start period. A file left by a previous
+/// run of the same container is deleted at startup, before anything else, so an engine that crashes
+/// on the way up is never reported healthy on the strength of the run before it.
 /// </para>
 /// <para>
 /// A beat that cannot be written is logged once as a warning and otherwise ignored. A full disk
