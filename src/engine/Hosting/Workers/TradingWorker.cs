@@ -8,6 +8,7 @@ using Engine.Domain.Signals;
 using Engine.Domain.Trading;
 using Engine.Domain.ValueObjects;
 using Engine.Hosting.Options;
+using Engine.Hosting.Telemetry;
 using Microsoft.Extensions.Options;
 
 public class TradingWorker : BackgroundService
@@ -15,17 +16,20 @@ public class TradingWorker : BackgroundService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly TradingOptions _options;
     private readonly TimeProvider _clock;
+    private readonly EngineTelemetry _telemetry;
     private readonly ILogger<TradingWorker> _logger;
 
     public TradingWorker(
         IServiceScopeFactory scopeFactory,
         IOptions<TradingOptions> options,
         TimeProvider clock,
+        EngineTelemetry telemetry,
         ILogger<TradingWorker> logger)
     {
         _scopeFactory = scopeFactory;
         _options = options.Value;
         _clock = clock;
+        _telemetry = telemetry;
         _logger = logger;
     }
 
@@ -336,6 +340,13 @@ public class TradingWorker : BackgroundService
         var result = await useCase.ExecuteAsync(portfolio, selected, correlationId, cancellationToken);
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
+
+        // After the commit, like the line below: the counter counts rows, not intentions. The mode
+        // is the one OrderGate decided under and the row records, missing-means-Shadow included.
+        _telemetry.DecisionStored(
+            result.Outcome,
+            _options.Mode ?? TradingMode.Shadow,
+            (result as TradeDecisionResult.RejectedByRisk)?.Side);
 
         LogOutcome(result, portfolio);
 

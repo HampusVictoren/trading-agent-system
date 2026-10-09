@@ -2,6 +2,7 @@ namespace Engine.Hosting;
 
 using Engine.Application.Interfaces;
 using Engine.Hosting.Options;
+using Engine.Hosting.Telemetry;
 using Engine.Infrastructure.Clients.Agents;
 using Microsoft.Extensions.Http.Resilience;
 using Microsoft.Extensions.Options;
@@ -17,6 +18,8 @@ public static class AgentClientExtensions
     /// </summary>
     public static IServiceCollection AddAgentClient(this IServiceCollection services)
     {
+        services.AddEngineTelemetry();
+
         services
             .AddHttpClient<IAgentClient, PythonAgentClient>((sp, client) =>
             {
@@ -32,6 +35,9 @@ public static class AgentClientExtensions
                 // would cut across the whole pipeline and report a less useful cancellation.
                 client.Timeout = Timeout.InfiniteTimeSpan;
             })
+            // Before the resilience handler, which makes it the outer of the two: it times the
+            // call the engine waited for, retry included, rather than each attempt.
+            .AddHttpMessageHandler<AgentLatencyHandler>()
             .AddStandardResilienceHandler()
             .Configure((options, sp) =>
             {

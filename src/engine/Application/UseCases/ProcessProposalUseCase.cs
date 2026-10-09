@@ -198,7 +198,8 @@ public class ProcessProposalUseCase
         if (decision is RiskDecision.Rejected rejected)
         {
             return new Cycle(
-                new TradeDecisionResult.RejectedByRisk(requested, rejected.Reason),
+                new TradeDecisionResult.RejectedByRisk(
+                    requested, rejected.Reason, intent is OrderIntent.Buy ? OrderSide.Buy : OrderSide.Sell),
                 signal);
         }
 

@@ -3,6 +3,7 @@ using Engine.Domain.Outcomes;
 using Engine.Domain.Risk;
 using Engine.Hosting;
 using Engine.Hosting.Options;
+using Engine.Hosting.Telemetry;
 using Engine.Hosting.Workers;
 using Microsoft.Extensions.Options;
 using Polly.Telemetry;
@@ -33,6 +34,10 @@ builder.Services.AddSingleton<OutcomeCalculator>();
 // Injected rather than read from DateTimeOffset.UtcNow, so the quote-age rule is testable
 // without waiting for time to pass.
 builder.Services.AddSingleton(TimeProvider.System);
+
+// The engine's own metrics and the cycle's ActivitySource. Always registered and always
+// recorded, because both cost next to nothing when nobody listens.
+builder.Services.AddEngineTelemetry();
 
 builder.Services.AddAgentClient();
 builder.Services.AddTradingDatabase();

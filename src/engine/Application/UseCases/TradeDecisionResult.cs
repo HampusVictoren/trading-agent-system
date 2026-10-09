@@ -76,7 +76,13 @@ public abstract record TradeDecisionResult
     }
 
     /// <summary>The order broke a risk rule. An expected outcome, not an error.</summary>
-    public sealed record RejectedByRisk(Ticker Ticker, string Reason) : TradeDecisionResult
+    /// <remarks>
+    /// The side is carried for <c>risk_rejections_total</c>, which counts the two apart: a sale
+    /// refused by the holding period and a buy refused by the daily limit are different stories.
+    /// It is not stored, for the same reason <see cref="Executed"/>'s is not - the row's stance
+    /// already says which way the agents wanted to go.
+    /// </remarks>
+    public sealed record RejectedByRisk(Ticker Ticker, string Reason, OrderSide Side) : TradeDecisionResult
     {
         public override DecisionOutcome Outcome => DecisionOutcome.RejectedByRisk;
         public override string? OutcomeReason => Reason;

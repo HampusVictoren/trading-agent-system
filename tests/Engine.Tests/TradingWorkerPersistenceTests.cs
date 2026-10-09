@@ -9,10 +9,12 @@ using Engine.Domain.Trading;
 using Engine.Domain.ValueObjects;
 using Engine.Hosting;
 using Engine.Hosting.Options;
+using Engine.Hosting.Telemetry;
 using Engine.Hosting.Workers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Diagnostics.Metrics.Testing;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NSubstitute;
@@ -167,6 +169,7 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
         services.AddSingleton<RiskEngine>();
         services.AddSingleton(sp => sp.GetRequiredService<IOptions<RiskPolicyOptions>>().Value.ToRiskPolicy());
         services.AddSingleton<PositionSizer>();
+        services.AddEngineTelemetry();
         services.AddSingleton<TimeProvider>(new FixedClock(clock ?? Now));
         services.AddSingleton(agents);
         services.AddTradingDatabase();
@@ -188,6 +191,7 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
             engine.GetRequiredService<IServiceScopeFactory>(),
             engine.GetRequiredService<IOptions<TradingOptions>>(),
             engine.GetRequiredService<TimeProvider>(),
+            engine.GetRequiredService<EngineTelemetry>(),
             engine.GetRequiredService<ILogger<TradingWorker>>());
 
         await worker.StartAsync(TestContext.Current.CancellationToken);
@@ -209,6 +213,7 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
             engine.GetRequiredService<IServiceScopeFactory>(),
             engine.GetRequiredService<IOptions<TradingOptions>>(),
             engine.GetRequiredService<TimeProvider>(),
+            engine.GetRequiredService<EngineTelemetry>(),
             engine.GetRequiredService<ILogger<TradingWorker>>());
 
         await worker.StartAsync(TestContext.Current.CancellationToken);
@@ -387,6 +392,29 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
 
         portfolio.CashBalance.Amount.ShouldBe(10_000m);
         portfolio.Positions.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task A_stored_decision_is_counted_by_its_outcome_and_the_engines_mode()
+    {
+        // decisions_total, read the way an exporter reads it, from the real worker against a real
+        // database. Shadow rather than Paper so that both labels are something a default would not
+        // produce by accident.
+        await using var engine = AnEngine(AnAgentServiceThatAnswers(ABuy(conviction: 0.9)), mode: TradingMode.Shadow);
+        using var decisions = new MetricCollector<long>(
+            engine.GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>(),
+            EngineTelemetry.Name,
+            EngineTelemetry.DecisionsName);
+
+        await RunOneCycleAsync(engine, expectedDecisionsAfterwards: 1);
+
+        // Recorded just after the commit the test waited for, so it is waited for in turn.
+        await decisions.WaitForMeasurementsAsync(1, TimeSpan.FromSeconds(10));
+
+        var measured = decisions.GetMeasurementSnapshot().ShouldHaveSingleItem();
+        measured.Value.ShouldBe(1);
+        measured.Tags["outcome"].ShouldBe(nameof(DecisionOutcome.Shadowed));
+        measured.Tags["mode"].ShouldBe(nameof(TradingMode.Shadow));
     }
 
     [Fact]

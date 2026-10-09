@@ -9,6 +9,7 @@ using Engine.Application.Contracts;
 using Engine.Application.Interfaces;
 using Engine.Hosting;
 using Engine.Hosting.Options;
+using Engine.Hosting.Telemetry;
 using Microsoft.Extensions.Options;
 using Polly.Timeout;
 
@@ -67,6 +68,7 @@ public class PythonAgentClient : IAgentClient
             // body with one id and a header with another - or forget the header entirely.
             message.Headers.Add(CorrelationIdHeader, request.CorrelationId);
             AddApiKey(message, AgentServiceOptions.ScopeSignalsWrite);
+            AgentOperation.Name(message, AgentOperation.Signal);
 
             var response = await _httpClient.SendAsync(message, cancellationToken);
 
@@ -120,6 +122,7 @@ public class PythonAgentClient : IAgentClient
             // be found next to the line about the decision it priced.
             message.Headers.Add(CorrelationIdHeader, correlationId);
             AddApiKey(message, AgentServiceOptions.ScopeMarketRead);
+            AgentOperation.Name(message, AgentOperation.Quote);
 
             var response = await _httpClient.SendAsync(message, cancellationToken);
 
@@ -164,6 +167,7 @@ public class PythonAgentClient : IAgentClient
             using var message = new HttpRequestMessage(HttpMethod.Get, path);
             message.Headers.Add(CorrelationIdHeader, correlationId);
             AddApiKey(message, AgentServiceOptions.ScopeMarketRead);
+            AgentOperation.Name(message, AgentOperation.History);
 
             var response = await _httpClient.SendAsync(message, cancellationToken);
 
@@ -215,6 +219,7 @@ public class PythonAgentClient : IAgentClient
 
             message.Headers.Add(CorrelationIdHeader, correlationId);
             AddApiKey(message, AgentServiceOptions.ScopeOutcomesWrite);
+            AgentOperation.Name(message, AgentOperation.Outcomes);
             message.Headers.Add(OutcomesSignatureHeader, SignOutcomes(body));
 
             var response = await _httpClient.SendAsync(message, cancellationToken);
@@ -256,6 +261,7 @@ public class PythonAgentClient : IAgentClient
             // screen belongs to - the same rule as the signal request.
             message.Headers.Add(CorrelationIdHeader, request.CorrelationId);
             AddApiKey(message, AgentServiceOptions.ScopeScreenWrite);
+            AgentOperation.Name(message, AgentOperation.Screen);
 
             var response = await _httpClient.SendAsync(message, cancellationToken);
 
