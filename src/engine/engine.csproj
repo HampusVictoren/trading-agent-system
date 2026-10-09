@@ -12,6 +12,15 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The SDK and its OTLP exporter, and nothing else: the engine's own instruments are
+         System.Diagnostics, and HttpClient's spans are native since .NET 9, so no
+         instrumentation package is needed for either. Registered only when an endpoint is
+         configured; see Hosting/Telemetry/TelemetryExportExtensions.cs. -->
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.19.1" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.19.1" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
     <!-- Named explicitly only to settle a version: Npgsql 10.0.3 asks for EF Core 10.0.4 and
          the design-time package for 10.0.12, which left the test project resolving one

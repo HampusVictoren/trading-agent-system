@@ -39,6 +39,9 @@ builder.Services.AddSingleton(TimeProvider.System);
 // recorded, because both cost next to nothing when nobody listens.
 builder.Services.AddEngineTelemetry();
 
+// And whether anything leaves the process: only when OTEL_EXPORTER_OTLP_ENDPOINT is set.
+builder.Services.AddTelemetryExport(builder.Configuration);
+
 builder.Services.AddAgentClient();
 builder.Services.AddTradingDatabase();
 
@@ -62,6 +65,11 @@ builder.Services.AddHostedService<TradingWorker>();
 builder.Services.AddHostedService<MeasurementWorker>();
 
 var host = builder.Build();
+
+// Once, at startup, in the same place the mode is said: whether this engine's metrics and
+// traces go anywhere is the first thing to check when a dashboard is empty.
+host.Services.GetRequiredService<ILogger<Program>>().LogInformation(
+    "Telemetry is {Export}.", host.Services.GetRequiredService<TelemetryExport>().Description);
 
 // Before anything runs a cycle: the engine never migrates itself, but it will not start
 // against a database that is behind this build.
