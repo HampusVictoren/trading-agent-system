@@ -258,6 +258,18 @@ jobs:
   compose:
     name: Compose
     runs-on: ubuntu-24.04
+    # Four image builds and a cold database take a few minutes; a stack that hangs waiting on
+    # a healthcheck should not hold a runner for the default six hours.
+    timeout-minutes: 30
+    # A project and a container name of the job's own. The default project is the one a
+    # developer's real stack runs under, and its volume holds real decisions - so these steps,
+    # pasted into a terminal, must not be able to reach it. `down -v` below names the project
+    # literally as well, because that is the one line where a missing variable would destroy
+    # something.
+    env:
+      COMPOSE_PROJECT_NAME: tas-ci
+      DB_CONTAINER: tas-ci-db
+      AGENTS_PORT: "8000"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -340,24 +352,29 @@ jobs:
         if: github.event_name != 'pull_request'
         run: |
           set -euo pipefail
-          test "$(curl -sS -o /dev/null -w "%{http_code}" http://127.0.0.1:8000/health)" = "200"
-          test "$(curl -sS -o /dev/null -w "%{http_code}" -X POST http://127.0.0.1:8000/v1/signals)" = "401"
+          base="http://127.0.0.1:${AGENTS_PORT}"
+          test "$(curl -sS -o /dev/null -w "%{http_code}" "$base/health")" = "200"
+          test "$(curl -sS -o /dev/null -w "%{http_code}" -X POST "$base/v1/signals")" = "401"
 
       # The engine's first act is to read trading.__ef_migrations_history and refuse to start
       # if it is behind the build, and "Application started" is logged after that check passes.
       # So one line in this log is the whole chain: the bundle ran, the schema is current, and
       # the engine accepted it. It then fails every cycle for want of an LLM, which is not
       # what is being tested and is why it only has to still be running.
+      # The log is captured before it is searched: `logs | grep -q` under pipefail fails when
+      # grep finds the line, exits, and leaves `logs` writing into a closed pipe - a match
+      # reported as a miss, more likely the longer the log.
       - name: The engine starts behind its profile, and its schema check passes
         if: github.event_name != 'pull_request'
         run: |
           set -euo pipefail
           docker compose --profile trade up -d
+          started() { local log; log=$(docker compose logs engine 2>&1); grep -q "Application started" <<<"$log"; }
           for _ in $(seq 1 30); do
-            docker compose logs engine 2>&1 | grep -q "Application started" && break
+            started && break
             sleep 2
           done
-          docker compose logs engine 2>&1 | grep -q "Application started"
+          started || { echo "the engine never logged 'Application started'"; exit 1; }
           test "$(docker inspect -f "{{.State.Status}}" "$(docker compose ps -aq engine)")" = "running"
 
       - name: What the system said, for whoever reads a failed run
@@ -366,7 +383,7 @@ jobs:
 
       - name: Tear the system down, volume included
         if: always() && github.event_name != 'pull_request'
-        run: docker compose --profile trade down -v || true
+        run: docker compose -p tas-ci --profile trade down -v || true
 
   secrets:
     name: Secret scan
