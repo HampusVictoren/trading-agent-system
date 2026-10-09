@@ -167,15 +167,19 @@ public class OpenApiContractTests
         // The options validator is what stops a universe or a shortlist the service would
         // answer 422 to, and it holds its limits as attributes. A cap lowered on one side only
         // would surface as a cycle that screens nothing.
-        var request = Schema(Snapshot(), "ScreenRequest")["properties"]!;
+        // Through the same unwrapping as the caps above, so a field that became optional is
+        // reported as a cap that moved rather than read as a missing one.
+        var document = Snapshot();
+        var request = Schema(document, "ScreenRequest")["properties"]!;
+        JsonNode Field(string name) => OpenApiAgreement.Constraints(document, request[name]!);
 
         var universe = typeof(TradingOptions).GetProperty(nameof(TradingOptions.Universe))!
             .GetCustomAttribute<MaxLengthAttribute>()!;
         var shortlist = typeof(TradingOptions).GetProperty(nameof(TradingOptions.ShortlistSize))!
             .GetCustomAttribute<RangeAttribute>()!;
 
-        Number("a universe cap", request["universe"]!["maxItems"]).ShouldBe(universe.Length);
-        Number("a shortlist maximum", request["limit"]!["maximum"])
+        Number("a universe cap", Field("universe")["maxItems"]).ShouldBe(universe.Length);
+        Number("a shortlist maximum", Field("limit")["maximum"])
             .ShouldBe(Convert.ToInt32(shortlist.Maximum));
     }
 
@@ -308,7 +312,7 @@ public class OpenApiContractTests
     // NullReferenceException and a stack trace, in a file whose other failures are sentences.
     private static int Number(string what, JsonNode? node)
     {
-        node.ShouldNotBeNull($"the agent service's document declares no {what}");
+        node.ShouldNotBeNull($"the agent service's document does not declare {what}");
         return (int)node.GetValue<double>();
     }
 }
