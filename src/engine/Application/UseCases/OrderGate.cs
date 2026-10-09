@@ -1,6 +1,7 @@
 namespace Engine.Application.UseCases;
 
 using Engine.Application.Persistence;
+using Engine.Domain.Aggregates.Portfolio;
 using Engine.Domain.Trading;
 using Engine.Hosting.Options;
 using Microsoft.Extensions.Options;
@@ -22,7 +23,7 @@ public abstract record OrderPermission
     /// <summary>The engine is in Shadow mode: record what would have been done, and do none of it.</summary>
     public sealed record ShadowOnly : OrderPermission;
 
-    /// <summary>The kill switch is engaged, or could not be read. Place nothing.</summary>
+    /// <summary>The kill switch is engaged, or could not be read, and this is a buy. Place nothing.</summary>
     public sealed record Halted(string Reason) : OrderPermission;
 }
 
@@ -39,10 +40,18 @@ public abstract record OrderPermission
 /// have been.
 /// </para>
 /// <para>
-/// The kill switch is read here, on every ask, rather than trusted from the start of the cycle. A
-/// cycle is minutes of LLM calls, and an operator who pulls the switch during one means the next
-/// order, not the next cycle. Shadow does not read it, because Shadow places nothing to stop -
-/// the worker reads it separately, to stop spending on analyses.
+/// <b>The kill switch stops new buys, and only those.</b> A sale reduces exposure, which is what
+/// someone pulling the switch wants more of, not less: a stop-loss that waited for the release
+/// would be a stop-loss that did not fire. So a sale is granted without the switch being read at
+/// all, and that holds for the agents' SELLs as much as for the exits. Decided by the owner on
+/// 2026-10-09.
+/// </para>
+/// <para>
+/// For a buy the switch is read here, on every ask, rather than trusted from the start of the
+/// cycle. A cycle is minutes of LLM calls, and an operator who pulls the switch during one means
+/// the next buy, not the next cycle. It fails closed: a switch that cannot be read reads as
+/// engaged, so a buy is never placed on "I could not tell". Shadow does not read it, because
+/// Shadow places nothing to stop.
 /// </para>
 /// <para>
 /// A mode that is missing reads as Shadow. Validation at startup makes that unreachable in a
@@ -64,12 +73,18 @@ public sealed class OrderGate
     public TradingMode Mode { get; }
 
     /// <summary>Asked immediately before an order would be placed, and never earlier.</summary>
-    public async Task<OrderPermission> AskAsync(CancellationToken cancellationToken = default)
+    /// <param name="side">
+    /// Which way the order goes. Only a buy can be halted, so only a buy reads the switch.
+    /// </param>
+    public async Task<OrderPermission> AskAsync(OrderSide side, CancellationToken cancellationToken = default)
     {
         switch (Mode)
         {
             case TradingMode.Shadow:
                 return new OrderPermission.ShadowOnly();
+
+            case TradingMode.Paper when side == OrderSide.Sell:
+                return new OrderPermission.Granted();
 
             case TradingMode.Paper:
                 var state = await _killSwitch.ReadAsync(cancellationToken);

@@ -52,16 +52,13 @@ public class TradingWorker : BackgroundService
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            // First, before anything is asked of anyone. A halted engine does not run the exits,
-            // screen or spend LLM time - it reads the switch, says so, and waits for the next cycle,
-            // which is also how long a release takes to be noticed.
-            if (await IsHaltedAsync(stoppingToken))
-            {
-                if (!await WaitForTheNextCycleAsync(stoppingToken))
-                    return;
-
-                continue;
-            }
+            // First, before anything is asked of anyone. The switch stops new buys only, so an
+            // engaged one does not stop the cycle: the exits still run, and the holdings are still
+            // analysed, because the agents' SELL on a holding is a sale the switch lets through.
+            // What it skips is the screen and every candidate, since the only order a candidate
+            // can lead to is a buy, and an analysis of one would be LLM time spent on an order
+            // that could not be placed.
+            var buyingHalted = await IsBuyingHaltedAsync(stoppingToken);
 
             // Before the analyses, not after. A cycle's buying should see the cash and the
             // position headroom the exits have just released, and a position the rules say to
@@ -69,19 +66,26 @@ public class TradingWorker : BackgroundService
             await RunExitsAsync(stoppingToken);
 
             var today = DateOnly.FromDateTime(_clock.GetUtcNow().UtcDateTime);
-            var selection = await SelectAsync(today, stoppingToken);
+            var selection = buyingHalted
+                ? await HoldingsOnlyAsync(stoppingToken)
+                : await SelectAsync(today, stoppingToken);
             var verdicts = new Dictionary<AnalysisVerdict, int>();
+            var candidatesNotAnalysed = 0;
 
             foreach (var selected in selection)
             {
                 if (stoppingToken.IsCancellationRequested)
                     return;
 
-                // Read again before every analysis, so a switch pulled mid-cycle costs at most the
-                // analysis already under way - and that one's order is stopped by the gate, which
-                // reads it again after the agents have answered.
-                if (await IsHaltedAsync(stoppingToken))
-                    break;
+                // Read again before every candidate, so a switch pulled mid-cycle costs at most the
+                // analysis already under way - and that one's buy is stopped by the gate, which
+                // reads it again after the agents have answered. A holding is analysed whatever
+                // the switch says; holdings come first in the selection anyway.
+                if (selected.Source != SelectionSource.Holding && await KillSwitchStateAsync(stoppingToken) is { Engaged: true })
+                {
+                    candidatesNotAnalysed++;
+                    continue;
+                }
 
                 // One scope per analysis, so one change tracker and one transaction per decision.
                 using var scope = _scopeFactory.CreateScope();
@@ -122,6 +126,14 @@ public class TradingWorker : BackgroundService
             }
 
             LogWhatTheCycleDid(selection.Count, verdicts);
+
+            if (candidatesNotAnalysed > 0)
+            {
+                _logger.LogWarning(
+                    "The kill switch was engaged during the cycle: {Count} candidate(s) were not analysed, "
+                    + "because the only order they could lead to is a buy.",
+                    candidatesNotAnalysed);
+            }
 
             if (!await WaitForTheNextCycleAsync(stoppingToken))
                 return;
@@ -185,29 +197,35 @@ public class TradingWorker : BackgroundService
     }
 
     /// <summary>
-    /// Reads the kill switch in a scope of its own, and says so when it is engaged.
+    /// Reads the kill switch at the start of a cycle, and says so when it is engaged.
     /// </summary>
     /// <remarks>
     /// A warning every time it is found engaged, rather than once: at a fifteen-minute cadence that
-    /// is a line per cycle, and an engine that has been stopped should keep saying why for as long
-    /// as it is stopped. The read itself fails closed, so "could not read it" arrives here as
-    /// engaged with that as the reason.
+    /// is a line per cycle, and an engine whose buying has been stopped should keep saying why for
+    /// as long as it is stopped. The read itself fails closed, so "could not read it" arrives here
+    /// as engaged with that as the reason.
     /// </remarks>
-    private async Task<bool> IsHaltedAsync(CancellationToken cancellationToken)
+    private async Task<bool> IsBuyingHaltedAsync(CancellationToken cancellationToken)
     {
-        using var scope = _scopeFactory.CreateScope();
-        var state = await scope.ServiceProvider.GetRequiredService<IKillSwitch>().ReadAsync(cancellationToken);
+        var state = await KillSwitchStateAsync(cancellationToken);
 
         if (!state.Engaged)
             return false;
 
         _logger.LogWarning(
-            "Trading is halted by the kill switch (since {Since}): {Reason}. Nothing is analysed or placed "
-            + "until it is released.",
+            "The kill switch is engaged (since {Since}): {Reason}. No new buys until it is released. The exits "
+            + "and sales still run and the holdings are still analysed; the screen and its candidates wait.",
             state.Since?.ToString("u") ?? "unknown",
             state.Reason);
 
         return true;
+    }
+
+    /// <summary>The kill switch, read in a scope of its own.</summary>
+    private async Task<KillSwitchState> KillSwitchStateAsync(CancellationToken cancellationToken)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        return await scope.ServiceProvider.GetRequiredService<IKillSwitch>().ReadAsync(cancellationToken);
     }
 
     /// <summary>

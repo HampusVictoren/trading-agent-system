@@ -272,19 +272,21 @@ public class ApplyExitsUseCaseTests
     }
 
     [Fact]
-    public async Task With_the_kill_switch_engaged_a_stop_loss_sells_nothing_and_says_so()
+    public async Task With_the_kill_switch_engaged_a_stop_loss_still_sells()
     {
-        // The exits are the engine acting without being asked, which makes them the orders a
-        // stopped engine most needs to not place.
-        var (sut, log) = Build(
-            AGate(TradingMode.Paper, FixedKillSwitch.Engaged("prices look wrong")), Bought.AddDays(1), (Eric, 85m));
+        // The switch stops new buys, and only those. A stop-loss that waited for the release would
+        // be a stop-loss that did not fire, so the exits run whatever the switch says.
+        var killSwitch = FixedKillSwitch.Engaged("prices look wrong");
+        var (sut, _) = Build(AGate(TradingMode.Paper, killSwitch), Bought.AddDays(1), (Eric, 85m));
         var portfolio = Holding(Eric);
 
-        (await Run(sut, portfolio)).ShouldBeEmpty();
+        var sale = (await Run(sut, portfolio)).ShouldHaveSingleItem();
 
-        portfolio.Positions.ShouldHaveSingleItem().Quantity.ShouldBe(10m);
-        log.Lines.ShouldContain(
-            $"The StopLoss exit for {Eric.Value} was not placed. Kill switch engaged: prices look wrong.");
+        sale.Side.ShouldBe(OrderSide.Sell);
+        sale.Trigger.ShouldBe(OrderTrigger.StopLoss);
+        sale.Quantity.ShouldBe(10m);
+        portfolio.Positions.ShouldBeEmpty();
+        killSwitch.Reads.ShouldBe(0);
     }
 
     [Fact]

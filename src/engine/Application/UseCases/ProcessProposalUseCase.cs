@@ -205,9 +205,11 @@ public class ProcessProposalUseCase
         // Asked here and nowhere earlier: after the agents, the sizer and the risk gate have all
         // had their say, and immediately before the portfolio is touched. Shadow mode is then the
         // whole decision with only the last step removed, so what it records is what Paper would
-        // have done - and the kill switch is read after the LLM call rather than before it, so a
-        // switch pulled while the agents were thinking still stops this order.
-        var permission = await _gate.AskAsync(cancellationToken);
+        // have done - and for a buy the kill switch is read after the LLM call rather than before
+        // it, so a switch pulled while the agents were thinking still stops this buy. A sale is
+        // never stopped by the switch: it reduces exposure, which is what the switch is for.
+        var permission = await _gate.AskAsync(
+            intent is OrderIntent.Buy ? OrderSide.Buy : OrderSide.Sell, cancellationToken);
 
         if (permission is not OrderPermission.Granted)
         {

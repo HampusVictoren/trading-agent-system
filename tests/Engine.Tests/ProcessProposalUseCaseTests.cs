@@ -326,14 +326,21 @@ public class ProcessProposalUseCaseTests
         }
 
         [Fact]
-        public async Task An_approved_sale_is_not_placed_either()
+        public async Task An_approved_sale_still_goes_through()
         {
+            // The agents arguing to leave a position is a reduction in risk, which is what the
+            // switch is for. Only new buys are stopped, so the sale is placed and the switch is
+            // not even read.
             var portfolio = Holding(quantity: 10m);
-            var (sut, _, _) = Build(Signal(stance: "SELL"), killSwitch: FixedKillSwitch.Engaged());
+            var killSwitch = FixedKillSwitch.Engaged();
+            var (sut, _, decisions) = Build(Signal(stance: "SELL"), killSwitch: killSwitch);
 
-            (await Run(sut, portfolio)).ShouldBeOfType<TradeDecisionResult.Halted>();
+            (await Run(sut, portfolio)).ShouldBeOfType<TradeDecisionResult.Executed>()
+                .Side.ShouldBe(OrderSide.Sell);
 
-            portfolio.Positions.ShouldHaveSingleItem().Quantity.ShouldBe(10m);
+            portfolio.Positions.ShouldBeEmpty();
+            decisions.OfTheCycle.Outcome.ShouldBe(DecisionOutcome.Executed);
+            killSwitch.Reads.ShouldBe(0);
         }
 
         [Fact]

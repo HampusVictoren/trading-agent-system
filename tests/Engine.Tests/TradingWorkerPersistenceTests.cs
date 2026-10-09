@@ -3,6 +3,8 @@ using Engine.Application.Interfaces;
 using Engine.Application.UseCases;
 using Engine.Domain.Aggregates.Portfolio;
 using Engine.Domain.Risk;
+using Engine.Domain.Screening;
+using Engine.Domain.Signals;
 using Engine.Domain.Trading;
 using Engine.Domain.ValueObjects;
 using Engine.Hosting;
@@ -419,12 +421,13 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
     }
 
     /// <summary>
-    /// The kill switch's proof. A Paper engine holding a position that has fallen through its stop
-    /// and an instrument the agents would buy: everything a cycle could act on. The switch is
-    /// engaged the way an operator engages it, and the cycle places nothing and asks nobody.
+    /// The kill switch's first proof. A Paper engine holding a position that has fallen through its
+    /// stop, with an instrument on the screen the agents would buy. The switch is engaged the way an
+    /// operator engages it. The stop-loss still sells, because the switch stops new buys only, and
+    /// nothing is bought: the screen is not asked and no candidate is analysed.
     /// </summary>
     [Fact]
-    public async Task With_the_kill_switch_engaged_a_cycle_places_nothing_and_asks_nobody()
+    public async Task With_the_kill_switch_engaged_the_stop_loss_still_sells_and_nothing_is_bought()
     {
         await using (var first = AnEngine(AnAgentServiceThatAnswers(ABuy(conviction: 0.6))))
         {
@@ -433,35 +436,82 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
 
         await _database.EngageTheKillSwitchAsync("prices look wrong");
 
-        // A day later at 80: the stop-loss floor is 90, so the exits would sell, and the price has
-        // moved, so an analysis would be due and the agents would be asked to buy again.
+        // A day later at 80: the stop-loss floor is 90, so the exits sell. AAPL is on the screen
+        // again and the agents would buy it again, which is the buy the switch has to stop.
         var later = Now.AddDays(1);
         var agents = AnAgentServiceThatAnswers(ABuy(conviction: 0.6, quoteAsOf: later), AQuote(price: 80m, asOf: later));
         agents.ClearReceivedCalls();
 
         await using (var second = AnEngine(agents, clock: later))
         {
-            await RunUntilItLogsAsync(second, "Trading is halted by the kill switch");
+            await RunUntilItLogsAsync(second, "Nothing to analyse this cycle");
         }
 
-        // Nothing was asked of the agent service at all - no quote for the exits, no screen, no
-        // analysis - so nothing was spent.
-        agents.ReceivedCalls().ShouldBeEmpty();
+        // Asked for the exit's price and nothing else: no screen, no analysis.
+        await agents.DidNotReceive().GetScreenAsync(Arg.Any<ScreenRequestDto>(), Arg.Any<CancellationToken>());
+        await agents.DidNotReceive().GetSignalAsync(Arg.Any<TradeSignalRequestDto>(), Arg.Any<CancellationToken>());
 
         await using var context = _database.NewContext();
 
-        // The one order and the one decision are the first cycle's; the second left nothing.
-        (await context.Orders.CountAsync(TestContext.Current.CancellationToken)).ShouldBe(1);
+        var orders = await context.Orders.ToListAsync(TestContext.Current.CancellationToken);
+        orders.Count(order => order.Side == OrderSide.Buy).ShouldBe(1);
+
+        var sale = orders.Where(order => order.Side == OrderSide.Sell).ShouldHaveSingleItem();
+        sale.Trigger.ShouldBe(OrderTrigger.StopLoss);
+        sale.Quantity.ShouldBe(2m);
+
         (await context.Decisions.CountAsync(TestContext.Current.CancellationToken)).ShouldBe(1);
 
         var portfolio = await context.Portfolios
             .Include(held => held.Positions)
             .SingleAsync(TestContext.Current.CancellationToken);
 
-        portfolio.Positions.ShouldHaveSingleItem().Quantity.ShouldBe(2m);
-        portfolio.CashBalance.Amount.ShouldBe(9_800m);
+        portfolio.Positions.ShouldBeEmpty();
 
-        _lines.Lines.ShouldContain(line => line.Contains("prices look wrong", StringComparison.Ordinal));
+        // 10 000 less the 200 bought, plus the 160 the stop-loss raised at 80.
+        portfolio.CashBalance.Amount.ShouldBe(9_960m);
+
+        _lines.Lines.ShouldContain(line =>
+            line.Contains("The kill switch is engaged", StringComparison.Ordinal)
+            && line.Contains("prices look wrong", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task With_the_kill_switch_engaged_a_holding_is_still_analysed_and_the_agents_sale_goes_through()
+    {
+        // Four days on, past the minimum holding period and inside the five-day thesis, at 101:
+        // no exit fires, but the price has moved, so the holding is due an analysis. The agents
+        // argue to sell, and a sale is what the switch lets through.
+        await using (var first = AnEngine(AnAgentServiceThatAnswers(ABuy(conviction: 0.6))))
+        {
+            await RunOneCycleAsync(first, expectedDecisionsAfterwards: 1);
+        }
+
+        await _database.EngageTheKillSwitchAsync("prices look wrong");
+
+        var later = Now.AddDays(4);
+        var sell = ABuy(conviction: 0.9, quoteAsOf: later) with { Stance = "SELL", ReferencePrice = 101m };
+        var agents = AnAgentServiceThatAnswers(sell, AQuote(price: 101m, asOf: later));
+        agents.ClearReceivedCalls();
+
+        await using (var second = AnEngine(agents, clock: later))
+        {
+            await RunOneCycleAsync(second, expectedDecisionsAfterwards: 2);
+        }
+
+        await agents.DidNotReceive().GetScreenAsync(Arg.Any<ScreenRequestDto>(), Arg.Any<CancellationToken>());
+        await agents.Received(1).GetSignalAsync(Arg.Any<TradeSignalRequestDto>(), Arg.Any<CancellationToken>());
+
+        await using var context = _database.NewContext();
+
+        var decision = await context.Decisions.OrderBy(row => row.Id).LastAsync(TestContext.Current.CancellationToken);
+        decision.Selection.ShouldBe(SelectionSource.Holding);
+        decision.Stance.ShouldBe(Stance.Sell);
+        decision.Outcome.ShouldBe(DecisionOutcome.Executed);
+
+        var sale = (await context.Orders.ToListAsync(TestContext.Current.CancellationToken))
+            .Where(order => order.Side == OrderSide.Sell).ShouldHaveSingleItem();
+        sale.Trigger.ShouldBe(OrderTrigger.Signal);
     }
 
     [Fact]
@@ -487,7 +537,9 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
             await RunUntilItLogsAsync(engine, "Cycle over 2 instrument(s)");
         }
 
+        // MSFT was a candidate, and the only order a candidate can lead to is a buy.
         await agents.Received(1).GetSignalAsync(Arg.Any<TradeSignalRequestDto>(), Arg.Any<CancellationToken>());
+        _lines.Lines.ShouldContain(line => line.Contains("1 candidate(s) were not analysed", StringComparison.Ordinal));
 
         await using var context = _database.NewContext();
 

@@ -138,10 +138,10 @@ public sealed class ApplyExitsUseCase
             return null;
         }
 
-        // The same gate an analysis's order passes, asked per sale and immediately before it. An
-        // exit is the engine acting without being asked, which makes it the order a stopped engine
-        // most needs to not place.
-        var permission = await _gate.AskAsync(cancellationToken);
+        // The same gate an analysis's order passes, asked per sale and immediately before it. In
+        // Paper it grants every sale whatever the kill switch says: the switch stops new buys, and
+        // an exit is exactly the order that should still go out while it is engaged.
+        var permission = await _gate.AskAsync(OrderSide.Sell, cancellationToken);
 
         if (permission is OrderPermission.ShadowOnly)
         {
@@ -165,21 +165,10 @@ public sealed class ApplyExitsUseCase
             return null;
         }
 
-        if (permission is OrderPermission.Halted halted)
-        {
-            // A warning: the rules wanted out of a position and somebody has stopped trading. That
-            // is the switch working, and it is also a position nobody is now managing.
-            _logger.LogWarning(
-                "The {Trigger} exit for {Ticker} was not placed. {Reason}.",
-                trigger, position.Ticker.Value, halted.Reason);
-
-            return null;
-        }
-
         if (permission is not OrderPermission.Granted)
         {
             throw new InvalidOperationException(
-                $"The order gate answered {permission.GetType().Name}, which the exits do not handle.");
+                $"The order gate answered {permission.GetType().Name} to a sale, which it never halts.");
         }
 
         var order = portfolio.ExecuteSell(position.Ticker, intent.Quantity, quote.Price, trigger);
