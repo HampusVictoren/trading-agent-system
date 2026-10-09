@@ -101,8 +101,11 @@ public class OpenApiContractTests
         // The engine formats it with "O", which for a DateOnly is yyyy-MM-dd. A service that
         // started expecting a timestamp would answer 422 to every sweep.
         var from = Snapshot()["paths"]![HistoryPath]!["get"]!["parameters"]!.AsArray()
-            .Single(p => (string?)p!["name"] == PythonAgentClient.HistoryFromParameter)!;
+            .FirstOrDefault(p => (string?)p!["name"] == PythonAgentClient.HistoryFromParameter);
 
+        // A renamed parameter is the drift test's job; this one should say so rather than
+        // throw "sequence contains no matching element" at whoever reads the run.
+        from.ShouldNotBeNull($"the history takes no '{PythonAgentClient.HistoryFromParameter}'");
         ((string?)from["schema"]!["format"]).ShouldBe("date");
         DateOnly.FromDateTime(new DateTime(2026, 10, 8)).ToString("O").ShouldBe("2026-10-08");
     }
@@ -133,18 +136,28 @@ public class OpenApiContractTests
         // Each of these lives in pydantic and in an engine constant, and the hand-written
         // schemas already hold them pairwise. This holds the engine's against what the service
         // actually generates, which is the number a live answer is validated against.
+        // Read through the walker's own unwrapping, so a field that became optional - its
+        // constraints then sitting under anyOf - is reported as a cap that moved rather than
+        // as a missing one. The walker already has to understand that shape; this uses the
+        // same understanding instead of a second one.
         var document = Snapshot();
-        var signal = Schema(document, "TradeSignal")["properties"]!;
 
-        Number(signal["thesis"]!["maxLength"]).ShouldBe(TradeSignalMapper.MaxThesisLength);
-        Number(signal["key_risks"]!["maxItems"]).ShouldBe(TradeSignalMapper.MaxRisks);
-        Number(signal["key_risks"]!["items"]!["maxLength"]).ShouldBe(TradeSignalMapper.MaxRiskLength);
-        Number(signal["horizon_days"]!["maximum"]).ShouldBe(TradeSignalMapper.MaxHorizonDays);
+        JsonNode Field(string schema, string name) =>
+            OpenApiAgreement.Constraints(document, Schema(document, schema)["properties"]![name]!);
 
-        Number(Schema(document, "Rejection")["properties"]!["reason"]!["maxLength"])
+        var thesis = Field("TradeSignal", "thesis");
+        var risks = Field("TradeSignal", "key_risks");
+
+        Number("a thesis cap", thesis["maxLength"]).ShouldBe(TradeSignalMapper.MaxThesisLength);
+        Number("a risk count", risks["maxItems"]).ShouldBe(TradeSignalMapper.MaxRisks);
+        Number("a risk length", risks["items"]!["maxLength"]).ShouldBe(TradeSignalMapper.MaxRiskLength);
+        Number("a horizon maximum", Field("TradeSignal", "horizon_days")["maximum"])
+            .ShouldBe(TradeSignalMapper.MaxHorizonDays);
+
+        Number("a rejection reason cap", Field("Rejection", "reason")["maxLength"])
             .ShouldBe(ScreenMapper.MaxReasonLength);
 
-        Number(Schema(document, "OutcomeReport")["properties"]!["outcomes"]!["maxItems"])
+        Number("an outcome batch cap", Field("OutcomeReport", "outcomes")["maxItems"])
             .ShouldBe(ReportOutcomesUseCase.MaxPerRequest);
     }
 
@@ -154,15 +167,20 @@ public class OpenApiContractTests
         // The options validator is what stops a universe or a shortlist the service would
         // answer 422 to, and it holds its limits as attributes. A cap lowered on one side only
         // would surface as a cycle that screens nothing.
-        var request = Schema(Snapshot(), "ScreenRequest")["properties"]!;
+        // Through the same unwrapping as the caps above, so a field that became optional is
+        // reported as a cap that moved rather than read as a missing one.
+        var document = Snapshot();
+        var request = Schema(document, "ScreenRequest")["properties"]!;
+        JsonNode Field(string name) => OpenApiAgreement.Constraints(document, request[name]!);
 
         var universe = typeof(TradingOptions).GetProperty(nameof(TradingOptions.Universe))!
             .GetCustomAttribute<MaxLengthAttribute>()!;
         var shortlist = typeof(TradingOptions).GetProperty(nameof(TradingOptions.ShortlistSize))!
             .GetCustomAttribute<RangeAttribute>()!;
 
-        Number(request["universe"]!["maxItems"]).ShouldBe(universe.Length);
-        Number(request["limit"]!["maximum"]).ShouldBe(Convert.ToInt32(shortlist.Maximum));
+        Number("a universe cap", Field("universe")["maxItems"]).ShouldBe(universe.Length);
+        Number("a shortlist maximum", Field("limit")["maximum"])
+            .ShouldBe(Convert.ToInt32(shortlist.Maximum));
     }
 
     /// <summary>
@@ -288,8 +306,15 @@ public class OpenApiContractTests
         Schema(document, name)["enum"]!.AsArray().Select(value => (string)value!);
 
     // OpenAPI writes 30 as 30.0 when pydantic's bound was declared on a float-typed path, so
-    // a cap is read as a double and compared as an integer.
-    private static int Number(JsonNode? node) => (int)node!.GetValue<double>();
+    // a cap is read as a double and compared as an integer. Named rather than dereferenced:
+    // a cap that moved - which is what happens to one when its field becomes optional, since
+    // pydantic then nests the constraints under anyOf - used to arrive here as a
+    // NullReferenceException and a stack trace, in a file whose other failures are sentences.
+    private static int Number(string what, JsonNode? node)
+    {
+        node.ShouldNotBeNull($"the agent service's document does not declare {what}");
+        return (int)node.GetValue<double>();
+    }
 }
 
 internal enum Direction
@@ -316,6 +341,14 @@ internal sealed class OpenApiAgreement
         checks(agreement);
         return agreement._failures;
     }
+
+    /// <summary>
+    /// The schema a field really has: a $ref followed, and pydantic's "X or null" read as X.
+    /// Exposed so the cap checks read a constraint the same way the walker reads a type -
+    /// one understanding of the shape rather than two that can disagree.
+    /// </summary>
+    public static JsonNode Constraints(JsonNode document, JsonNode schema) =>
+        new OpenApiAgreement(document).Unwrap(schema).Node;
 
     public void Endpoint(
         string method, string path, Type? body, Type? answer, params (string In, string Name)[] sent)

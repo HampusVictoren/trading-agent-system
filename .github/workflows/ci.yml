@@ -5,6 +5,16 @@ on:
     branches: [master]
   pull_request:
     branches: [master]
+  # Nightly, which the roadmap asks for and the compose job below is the reason for: the
+  # only check here that brings the whole system up, and the only one that would notice the
+  # outside world rotting - a base image moving, a published port taken, yfinance changing
+  # its mind - on a repository where nothing was pushed that day.
+  schedule:
+    - cron: "17 3 * * *"
+  # By hand, on any branch: the compose job's bring-up only runs outside pull requests, so
+  # without this a change to it is first exercised on master. `gh workflow run ci.yml --ref
+  # <branch>` runs it - and everything else - before the merge rather than after.
+  workflow_dispatch:
 
 # Least privilege: nothing here needs to write to the repository.
 permissions:
@@ -248,6 +258,137 @@ jobs:
         run: |
           docker rm -f ci-db || true
           docker network rm ci-migrate || true
+
+  compose:
+    name: Compose
+    runs-on: ubuntu-24.04
+    # Four image builds and a cold database take a few minutes; a stack that hangs waiting on
+    # a healthcheck should not hold a runner for the default six hours.
+    timeout-minutes: 30
+    # A project and a container name of the job's own. The default project is the one a
+    # developer's real stack runs under, and its volume holds real decisions - so these steps,
+    # pasted into a terminal, must not be able to reach it. `down -v` below names the project
+    # literally as well, because that is the one line where a missing variable would destroy
+    # something.
+    env:
+      COMPOSE_PROJECT_NAME: tas-ci
+      DB_CONTAINER: tas-ci-db
+      AGENTS_PORT: "8000"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Throwaway values for a stack that lives for one job, and only when there is not one
+      # already - on a runner there never is, on a developer's machine this file holds their
+      # real secrets, and a step that overwrote it would be worse than the bug it guards.
+      - name: Write a throwaway .env
+        run: |
+          test -f .env || cat > .env <<'ENV'
+          POSTGRES_PASSWORD=throwaway-superuser
+          ENGINE_DB_PASSWORD=throwaway-engine
+          AGENT_DB_PASSWORD=throwaway-agent
+          AGENT_API_KEY=throwaway-api-key-for-one-ci-job
+          OUTCOMES_HMAC_SECRET=throwaway-outcomes-hmac-for-one-ci-job
+          ENV
+
+      # Cheap, so it runs on every pull request: the file parses, every variable it requires
+      # has a value, and the engine is where the profile puts it. That last line is stage 6's
+      # decision D2 as an assertion - the engine is the only service that spends money, and
+      # `up` must not be what starts it.
+      # Spelled as an `if` rather than `! ... | grep`, which is what it used to be and which
+      # could never fail: bash -e ignores the status of a command negated with `!`, so the
+      # line ran, reported, and was discarded. Each assertion here names what it found.
+      - name: The compose file is valid, and the engine is behind its profile
+        run: |
+          set -euo pipefail
+          docker compose config --quiet
+          default=$(docker compose config --services)
+          if grep -qx engine <<<"$default"; then
+            echo "engine is not behind its profile: a plain 'up' would start it"
+            exit 1
+          fi
+          traded=$(docker compose --profile trade config --services)
+          if ! grep -qx engine <<<"$traded"; then
+            echo "engine is missing from the trade profile"
+            exit 1
+          fi
+
+      # Everything below is the stage's own success criterion, and it is slow: four images
+      # and a database from nothing. On master, nightly and by hand (workflow_dispatch) rather
+      # than on every pull request, where the two image jobs already prove what each half
+      # builds into.
+      # `docker compose up -d`, as a person types it, and then waiting by hand - because
+      # `--wait` reports failure when a container exits, even with code 0, so a compose file
+      # that provisions through short-lived containers cannot be waited on as a whole.
+      # Naming only the long-running service would work and would also skip engine-migrate,
+      # since nothing but the engine depends on it; that would quietly stop testing half of
+      # what a plain `up` is supposed to provision.
+      - name: The system comes up from nothing
+        if: github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          docker compose up -d
+          healthy() { docker inspect -f "{{.State.Health.Status}}" "$(docker compose ps -aq agents)"; }
+          for _ in $(seq 1 60); do
+            [ "$(healthy)" = "healthy" ] && break
+            sleep 3
+          done
+          test "$(healthy)" = "healthy" || { echo "the agent service is $(healthy)"; exit 1; }
+
+      - name: Both schemas are current, each applied by its own container
+        if: github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          for service in agent-migrate engine-migrate; do
+            code=$(docker inspect -f "{{.State.ExitCode}}" "$(docker compose ps -aq $service)")
+            test "$code" = "0" || { echo "$service exited $code"; exit 1; }
+          done
+          ask() { docker compose exec -T db psql -U postgres -d tradingdb -tAc "$1" | tr -d " "; }
+          expected=$(ls src/engine/Infrastructure/Persistence/Migrations/*.cs \
+            | grep -v "\.Designer\.cs$" | grep -v "ModelSnapshot" | wc -l | tr -d " ")
+          test "$(ask "select count(*) from trading.__ef_migrations_history")" = "$expected"
+          test "$(ask "select count(*) from agent.alembic_version")" = "1"
+          echo "$expected engine migrations applied, alembic stamped"
+
+      # No Ollama on a runner, and the agent service is healthy anyway. That is the PR 1
+      # decision being load-bearing rather than tidy: the healthcheck asks /health, so a
+      # missing LLM backend does not make the container unhealthy - and if it did, nothing
+      # gated on this service could start here at all.
+      - name: The agent service answers, and refuses an unauthenticated call
+        if: github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          base="http://127.0.0.1:${AGENTS_PORT}"
+          test "$(curl -sS -o /dev/null -w "%{http_code}" "$base/health")" = "200"
+          test "$(curl -sS -o /dev/null -w "%{http_code}" -X POST "$base/v1/signals")" = "401"
+
+      # The engine's first act is to read trading.__ef_migrations_history and refuse to start
+      # if it is behind the build, and "Application started" is logged after that check passes.
+      # So one line in this log is the whole chain: the bundle ran, the schema is current, and
+      # the engine accepted it. It then fails every cycle for want of an LLM, which is not
+      # what is being tested and is why it only has to still be running.
+      # The log is captured before it is searched: `logs | grep -q` under pipefail fails when
+      # grep finds the line, exits, and leaves `logs` writing into a closed pipe - a match
+      # reported as a miss, more likely the longer the log.
+      - name: The engine starts behind its profile, and its schema check passes
+        if: github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          docker compose --profile trade up -d
+          started() { local log; log=$(docker compose logs engine 2>&1); grep -q "Application started" <<<"$log"; }
+          for _ in $(seq 1 30); do
+            started && break
+            sleep 2
+          done
+          started || { echo "the engine never logged 'Application started'"; exit 1; }
+          test "$(docker inspect -f "{{.State.Status}}" "$(docker compose ps -aq engine)")" = "running"
+
+      - name: What the system said, for whoever reads a failed run
+        if: always() && github.event_name != 'pull_request'
+        run: docker compose --profile trade logs --tail 40 || true
+
+      - name: Tear the system down, volume included
+        if: always() && github.event_name != 'pull_request'
+        run: docker compose -p tas-ci --profile trade down -v || true
 
   secrets:
     name: Secret scan

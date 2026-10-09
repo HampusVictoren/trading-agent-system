@@ -43,6 +43,11 @@ dev = [
     # The test suite runs the real migrations, so it needs exactly what the operator has.
     { include-group = "migrate" },
     "mypy>=1.14",
+    # Imported by tests/test_compose_team_version.py to read docker-compose.yml. Declared
+    # rather than relied on through alembic and testcontainers, which both happen to pull it
+    # in today: a test that depends on somebody else's transitive dependency breaks on a
+    # bump that had nothing to do with it.
+    "pyyaml>=6.0",
     "pytest>=8.3",
     "pytest-asyncio>=0.25",
     "ruff>=0.16.10",

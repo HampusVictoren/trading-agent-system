@@ -90,10 +90,10 @@ Two things that are easy to misread as broken:
 ## Current state
 
 - **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21, **stage 3 done** 2026-09-23. **Stage 4 started** 2026-09-23. PR 5 and PR 6 were each split in two, so the stage is eight pull requests, and **all eight are merged** as of 2026-09-25. **Stage 5 is merged in full** - #42 to #51, the shortlist edge as #54 and the daily deployment cap as #56. **Stage 6 is in progress**: PRs 1-3 merged (#58, #59, #60), PR 4 is `stage-6-contract-drift`, PR 5 is next. Stages 7-8 exist only as plan.
-- **`master` is at PR #60** (one compose file for the whole system, merged 2026-10-08). Stage 6's first three pull requests are on it, plus Dependabot's seven Python bumps as #57 - which merged *after* #58. Stage 4's eight pull requests and all five of stage 5's are on it, plus the live-run record as #53, the security hardening as #52 and the `CLAUDE.md` levelling as #55. Nothing reaches it without the three required checks passing, so what is there is green by construction - and from stage 6 there is a fourth, `Agents (image)`.
+- **`master` is at PR #61** (the contract drift check, merged 2026-10-08). Stage 6's first four pull requests are on it, plus Dependabot's seven Python bumps as #57 - which merged *after* #58. Stage 4's eight pull requests and all five of stage 5's are on it, plus the live-run record as #53, the security hardening as #52 and the `CLAUDE.md` levelling as #55. **Which CI jobs block a merge is branch protection**, and three were added during stage 6 - `Agents (image)`, `Engine (image)` and `Compose`. This file has twice assumed the required list keeps up with the workflow; it does not, and nobody here can read that setting. Check it under *Settings - Branches*.
 - **Dependabot's bumps are in.** #46 (setup-uv) and #47 (six Python packages) merged to `master` on 2026-09-26 and were merged *into* `stage-5-selling` rather than rebased onto, because the branch was already pushed and a rebase would need a force-push. Two of the six matter behaviourally - **ag2 1.0.5 to 1.0.6** and **openai 3.16.1 to 3.19.1** - and the lock also *downgraded* SQLAlchemy from 2.1.1 to 2.0.54, which the Alembic fixture exercises on every database test. 476 Python tests green on all of it.
 - **Stage 5's merge history:** `stage-5-model-and-horizon` as #42, `stage-5-screening` as #43, `stage-5-sek` as #44, `stage-5-symbol-columns` as #45 - the last of those repairing #44, which merged four of its six commits and left `master` with the widened pattern and the old columns for a few minutes - `stage-5-selling` as #48 and `stage-5-cycle` as #51.
-- **Two pull requests are open as of 2026-10-08:** this stage's PR 4 (`stage-6-contract-drift`) and #50, `plan/jev-placement` - a docs-only branch adding `docs/arkitektur-jev-roadmap.md`, **not reviewed here, and left to the owner** - nothing in this repository's work merges, rebases or pushes to it. Five remote branches are stale and can go, all merged or superseded: `security/hardening-f01-f14` (the superseded first attempt at #52), `security/hardening-master-bdf5bf1` (#52), `docs/pr4-live-run` (#53), `stage-5-shortlist-edge` (#54) and `stage-5-cycle` (#51).
+- **Two pull requests are open as of 2026-10-08:** this stage's PR 5 (`stage-6-compose-smoke`) and #50, `plan/jev-placement` - a docs-only branch adding `docs/arkitektur-jev-roadmap.md`, **not reviewed here, and left to the owner** - nothing in this repository's work merges, rebases or pushes to it. **Four** remote branches are stale and can go, all merged or superseded: `security/hardening-f01-f14` (the superseded first attempt at #52), `docs/pr4-live-run` (#53), `stage-5-shortlist-edge` (#54) and `stage-5-cycle` (#51). The previous version of this sentence said five and named `security/hardening-master-bdf5bf1`, which was deleted long ago - checked against `git ls-remote` this time, because the one thing the list promises is that deleting them is a reading exercise rather than a search.
 - **The security hardening is merged as #52 and verified live** on 2026-10-01: `POST /v1/outcomes` accepted its HMAC signature end to end (`Delivery 8097ab0f: sent 1 outcomes`), 25 market-scope calls answered 200, `/openapi.json` and `/docs` both answer 404, `/ready` returns `{"status":"ready"}` with no dependency detail, and an unauthenticated signal is refused with 401. Nothing was rate-limited. **Both of its required secrets had to be created first** - neither existed after the merge, so neither service would start.
 - **Two of its paths are not verified live:** `POST /v1/signals` and `POST /v1/screen` with their scope keys, because the verification ran on the same trading day as the live run, so no analysis was due and the shortlist was read from the database. All five call sites go through the same `AddApiKey`/`ApiKeyFor` code and no scoped keys are configured, so all five resolve to the legacy key that the 25 successful calls used - but the first new trading day is what proves it, and that is where the blocker found in review would have shown.
 - **The portfolio holds five instruments as of 2026-10-01**, up from one: ERIC-B.ST (26 at 94.96, from 2026-09-26) plus HEXA-B.ST (25 at 99.02), SEB-A.ST (10 at 229.20), EVO.ST (3 at 791.80) and KINV-B.ST (40 at 61.70), all four bought by the engine's own first screened cycle. Cash is 87 920.14 kr. Every one of the four is a *measurable* decision with `selection = Shortlist`, which is what stage 5 existed to produce.
@@ -120,7 +120,7 @@ Two things that are easy to misread as broken:
 
 ## Next steps
 
-### Resume here — stage 6, PR 4 of 5 (2026-10-08)
+### Resume here — stage 6, PR 5 of 5, the last (2026-10-08)
 
 Stage 5 is merged in full, follow-ups included: `CLAUDE.md` level as #55 and the trading day's
 deployment limit as #56. **Stage 6 has started** - read that stage in the roadmap and the stage 6
@@ -137,14 +137,18 @@ the plan.
    `docker compose up -d` from nothing is 31.8 s to a provisioned healthy system, 6 s more for
    the engine, four minutes for a first cycle. See the PR 3 section of the stage 6 log.
 
-4. **`stage-6-contract-drift` is the branch in hand.** The drift check of decision D3: the agent
-   service's OpenAPI document committed as `contracts/openapi.json`, Python failing when it stops
-   generating that file, and the engine failing when its DTOs stop agreeing with it. It also
-   fixes the `TAS_ENABLE_DOCS` defect. See the PR 4 section of the stage 6 log.
+4. **PR 4 merged as #61**, built by another session and reviewed here - see *The review of #61*
+   in the stage 6 log for what was verified and the two findings it left. The drift check of
+   decision D3: the agent service's OpenAPI document committed as `contracts/openapi.json`,
+   Python failing when it stops generating that file, and the engine failing when its DTOs stop
+   agreeing with it. It also closes the `TAS_ENABLE_DOCS` defect.
 
-5. **Then PR 5:** `docker compose up` mechanised in CI. It should also compare the
-   `team_version` compose configures against the one `src/agents/.env` configures - the two hold
-   four hash-bearing values each, and PR 3 only checked that they agree *today*.
+5. **`stage-6-compose-smoke` is the branch in hand, and it is the stage's last.** `docker
+   compose up` mechanised in CI, the `team_version` comparison PR 3 asked for, and #61's two
+   findings. **After it merges, stage 6 is done** - next is stage 7, observability and drift,
+   which the roadmap opens with OpenTelemetry and `TradingMode: Shadow | Paper | Live`. Read that
+   stage before starting; the kill switch it brings is what lets the engine out from behind
+   `--profile trade`.
 
 **One claim in the previous version of this block was wrong, and it is worth saying which.** It
 said the drift check was blocked on the `TAS_ENABLE_DOCS` defect, because `openapi_url` defaults
@@ -622,6 +626,7 @@ open until then.
 - **A quote for a symbol that is not a symbol answers 404, not 422.** FastAPI rejects it at routing, before validation, so it never reaches the error vocabulary. Honest but inconsistent with every other refusal in the contract; worth a `Path` converter or a catch-all route if the difference ever matters to a caller.
 - **How much one trading day may deploy is now capped** - built 2026-10-01 as `RiskPolicy:MaxDailyDeploymentPercentage`, 20 % of net asset value. **Counted per day, not per cycle, which is a change from how this item was first written.** The two are nearly the same thing since #51 - an instrument is analysed once a day, so a day has one buying cycle and the rest buy nothing - but the day is both the truer unit for the risk being controlled and the robust one: a cycle that failed halfway would otherwise be handed a fresh budget fifteen minutes later. What remains open is only the number, which wants measurements rather than argument.
 - **`Trading:MinDollarVolume` filters nothing, and that is settled as correct** - decided 2026-10-01: **keep 10 000 000 SEK, unchanged.** The live screen put all 31 OMXS30 names through it and rejected none, which is the evidence this item was waiting for. **A guard that does not fire on healthy data is a guard working.** Its job is to catch a symbol whose listing has gone inactive or whose data has gone stale, not to filter live large caps; raising it until it bites would be optimising a number against the wrong objective, and removing it would let a delisted name with a stale thirty-day volume rank. The condition to revisit it is the account size rather than the market: at 100 000 kr a 5 % position is about 5 000 kr against a 10 MSEK floor - 0.05 % of a day's turnover - so liquidity starts to matter somewhere above a ten-million-krona account, and the floor should move with it rather than on its own.
+- **A fastapi or pydantic bump now fails CI until `contracts/openapi.json` is regenerated.** Added by #61 and correct: those two packages decide what the service's OpenAPI document looks like, so a bump that changes it has changed the served contract. What it means in practice is that those Dependabot pull requests need a regeneration commit - `uv run python -m app.openapi_snapshot > ../../contracts/openapi.json` from `src/agents` - and that whoever makes it should **read the diff**, because the engine's `OpenApiContractTests` then judge the new document against the DTOs. Prose is stripped from the file precisely so that the diff is worth reading; a document that moved with every docstring would train regenerating without looking.
 - **Nothing translates a duplicate `correlation_id`.** `UnitOfWork` turns EF's concurrency exception into `ConcurrentChangeException`, but a unique-index violation still surfaces as `DbUpdateException` and lands in the worker's general handler with a stack trace. That is arguably right - the ids are fresh Guids, so a duplicate is a bug - but it has never been seen, so it has never been read.
 
 ---
@@ -2273,6 +2278,122 @@ not be built on this box: BuildKit fails to prepare the snapshot for the `migrat
 (`failed to prepare ... invalid argument`) before the command runs, twice, once with the builder
 cache disabled - an environment fault, in a Dockerfile this pull request does not touch.
 
+### The review of #61 (2026-10-08)
+
+PR 4 was built by another session. Reviewed here, **approved**, and merged. What follows is
+what the review actually established, because re-running somebody's own tests establishes
+very little.
+
+**The chain was tested rather than the checker.** The author mutation-tested their walker with
+eight drifts applied to an in-memory *copy* of the document - good, and it cannot show that
+the two halves compose. So the review made `thesis` optional in the pydantic model instead:
+Python's snapshot test went red; regenerating the document made it green again; and then the
+**engine's** suite went red with two sentences -
+
+```
+POST /v1/signals answer: TradeSignalDto requires 'thesis', which the agent service may leave out
+POST /v1/signals answer.thesis: the agent service may send null, and the engine's type cannot hold it
+```
+
+The other direction too: a field added to `TradeSignalRequestDto` produced *"sends
+'operator_hint', which the agent service does not declare"*. That is the design working.
+
+**Three things the review checked because they could have been hollow.**
+
+- `IsRequired` reads `RequiredMemberAttribute`, so two of the rules depend on the DTOs using
+  C#'s `required`. They do, throughout - the rules are live, not decoration.
+- `contracts/openapi.json` reaches the test's output directory through the csproj's existing
+  `contracts/**/*.json` wildcard, so no project change was needed. Correct, not an omission.
+- The committed document carries no `servers` block, no hostname and zero prose keys.
+
+**The engine image builds here.** The PR 4 section above records that BuildKit refused the
+`migrations bundle` layer on the machine that wrote it. Both engine targets have been built
+repeatedly in this session, so "an environment fault" is confirmed rather than assumed.
+
+**Two findings, neither blocking, both now fixed in PR 5.** The caps test indexed straight
+into `properties.thesis.maxLength` and arrived as a `NullReferenceException`; and this file's
+list of stale remote branches named five where four exist.
+
+**And one consequence nobody has to fix, but somebody has to know:** a fastapi or pydantic bump
+now fails CI until the document is regenerated. That is correct - the served contract did
+change - but it means those Dependabot pull requests need a regeneration commit, and whoever
+makes it should read the diff rather than regenerate blindly. Carried into *Open decisions*.
+
+### PR 5 - the criterion in CI, and #61's findings (`stage-6-compose-smoke`)
+
+The stage's last pull request.
+
+- **A `compose` job.** Cheap on every pull request - the file parses, every required variable
+  has a value, and `engine` is absent from the default service list and present with
+  `--profile trade`, which is **decision D2 as an assertion rather than a paragraph**. The rest
+  runs on master and nightly: both migration containers exited 0, eleven engine migrations
+  applied (counted off the files), Alembic stamped, `/health` 200, an unauthenticated signal
+  401, and then behind the profile the engine logging `Application started` - which is logged
+  only after `EnsureTheSchemaIsCurrentAsync` has passed, so one line is the whole chain.
+- **A nightly trigger**, which the roadmap asks for and this job is the reason for: it is the
+  only check that starts the system, and so the only one that would notice a base image moving
+  or a port being taken on a day when nothing was pushed.
+- **`docker compose up --wait` cannot be used, and finding that out was the work.** It reports
+  failure when a container exits, **even with code 0** - `container engine-migrate-1 exited
+  (0)`, exit status 1 - so a compose file that provisions through short-lived containers cannot
+  be waited on as a whole. Waiting on the long-running service instead does work, and silently
+  skips `engine-migrate`, since nothing but the engine depends on it: the step would have
+  stopped testing half of what a plain `up` provisions while still passing. So it runs the
+  command a person types and waits by hand.
+- **No Ollama on a runner, and the agent service is healthy anyway.** PR 1's healthcheck
+  decision turning out to be load-bearing rather than tidy: `/health` is liveness, so a missing
+  LLM backend does not make the container unhealthy - and if it did, nothing gated on this
+  service could start in CI at all. Verified with the backend pointed at a closed port, which
+  is the condition CI actually has; the engine then logs `llm_unreachable`, answers no decision
+  that cycle, and keeps running, exactly as designed.
+- **`team_version` is compared every run now.** PR 3 read the hash out of a container's logs
+  once and found the two configurations agreed *that day*. A test now builds a `ModelSpec` from
+  the compose file's four hash-bearing values and another from `.env.example`'s, computes
+  `compute_team_version` for every team, and compares the hashes - so it keeps asking the right
+  question if the hash starts covering a fifth thing - then names which of the four differs,
+  because a hash that differs says nothing about why. Only those four are resolved out of the
+  compose file; the rest of that environment is secrets written `${VAR:?...}` with no default,
+  which is right for a secret and would have nothing to compare against.
+  *Mutation-tested:* a different model gives `Differing: {'MODEL': ('qwen3:14b', 'qwen2.5:14b')}`
+  with both hash sets; a dropped seed fails both tests, one naming the missing key.
+- **`pyyaml` is declared** rather than relied on through alembic and testcontainers, which both
+  pull it in today. A test leaning on somebody else's transitive dependency breaks on a bump
+  that had nothing to do with it.
+- **#61's caps finding was more than a message.** With the constraints read through the walker's
+  own `Unwrap`, a field that became optional no longer fails the caps test at all - the cap did
+  not move, the nullability did, and that is the other test's business. Measured on the drift
+  that found it: **two failures before, one after**, and the one that remains is the one that
+  matters.
+
+**Verified by running all nine steps of the new job**, in a git worktree - which compose names
+a project of its own, so its volume was `ci-verify-pr5_trading-db-data` and `down -v` could not
+reach the one holding 54 real decisions. The real container had to be removed for the run,
+because `container_name` cannot be held by two projects; the volume was untouched and the
+database came back with its 54 decisions, 5 positions and 87 920.14 kr.
+
+**Review Bot on #62 (2026-10-09): accept-with-nits, one must-fix, all fixed on the branch.**
+- **The D2 assertion could never fail.** `! docker compose config --services | grep -qx engine`
+  was not the step's last line, and `bash -e` ignores a command negated with `!`. Shown in a
+  scratch copy with the engine's `profiles:` line removed: the old step exited 0, the new
+  `if ...; then exit 1; fi` form exits 1 with "engine is not behind its profile". **The check
+  meant to be the stage's decision as an assertion had been a paragraph after all.**
+- **The job has a project of its own** - `COMPOSE_PROJECT_NAME=tas-ci`, `DB_CONTAINER=tas-ci-db`,
+  and `down -v` names `-p tas-ci` literally - so its steps pasted into a terminal cannot reach
+  `trading-db-data`, and no longer need the real container removed first.
+- `timeout-minutes: 30`; the engine-log check captures the log before grepping (`logs | grep -q`
+  under pipefail reports an early match as a miss via SIGPIPE); `workflow_dispatch:` so the
+  bring-up can run on a branch before merge. **It has not run on this branch yet:** dispatching
+  needs the token's *Actions: write*, which it lacks (`HTTP 403`), so the first heavy run is
+  still the owner's to trigger.
+- Minor: the screen caps go through `Constraints`/`Unwrap` like the others, the cap message no
+  longer reads "declares no a thesis cap", and the `.env.example` reader strips matching quotes.
+- **Verified locally** short of the bring-up: D2 both ways, the SIGPIPE miss reproduced (status
+  `141 0` on a match) and gone with the captured form, actionlint clean on the changed steps,
+  .NET 528/528, Python 515/515. The job's steps ran under `tas-ci` beside the live stack and
+  tore down only their own volume; the bring-up itself stopped at the migrations, because
+  containers on this dev box cannot reach each other over a compose network (a plain TCP
+  connect between two containers times out) - an environment limit, not the file's.
+
 ---
 
 ## Lessons and gotchas
@@ -2285,6 +2406,10 @@ Things that cost time or were not obvious. Most are also recorded where they app
 - **A hash over file contents is a containerisation invariant, whether or not anyone meant it to be.** `team_version` is a sha256 over the prompt files' contents, so a build that changed a line ending would not fail - it would answer as a different team, and two populations that cannot be pooled would start accumulating under one name. Nothing in the build would look wrong. It is checked in CI by diffing the image's hashes against the repository's, which costs one step and closes a failure with no symptom.
 - **A container's `127.0.0.1` is the container.** Mirrored networking puts WSL's localhost on Windows, which is why everything on this machine reaches Ollama at `127.0.0.1:11434` - and that stops being true one layer in. `--add-host=host.docker.internal:host-gateway` reaches the WSL host, which mirrored networking has already put on Windows, so the two mechanisms compose. Worth measuring before planning around: it was the stage's largest unknown and it took one `docker run`.
 - **A CI step that writes a file can destroy the thing it guards.** To prove that a `.env` in the build context does not reach the image, the step first has to put one there - and `echo ... > src/agents/.env` is harmless on a runner and destroys a developer's real secrets the first time anyone runs the job by hand. `test -f ... ||` is the whole fix. The guard was worth keeping; the way it was written was worse than what it guarded against.
+- **`docker compose up --wait` reports failure when a container exits, even with code 0.** A compose file that provisions through short-lived containers therefore cannot be waited on as a whole, which is most of the point of `--wait`. Waiting on the long-running service instead works and is the trap: its `depends_on` pulls in only *its* dependencies, so `engine-migrate` was silently skipped and the step would have kept passing while testing half of what a plain `up` provisions. **The version of a check that still passes while measuring less is the dangerous one.**
+- **Reviewing somebody else's tests by running them establishes almost nothing.** #61 mutation-tested its checker against an in-memory copy of the document - correct, and unable to show that the two halves composed. Changing the pydantic model instead showed the whole chain: Python red, regenerate, engine red with two sentences. **The question to ask a test suite is not "does it pass" but "what would have to be true for it to be wrong", and then do that thing.**
+- **A check that reports a stack trace in a file whose other failures are sentences is a defect, not a style complaint.** And following it paid: resolving the caps through the walker's own `Unwrap` did not merely reword the failure, it stopped the test failing for something that was not its business. Two failures became one, and the one left was the one that mattered.
+- **A required-checks list does not follow the workflow file.** Three CI jobs were added during stage 6 and nothing in the repository can say whether branch protection requires them - that setting is only visible in GitHub's UI. This file asserted twice that the required set had kept up. A job that runs and is not required is a job whose red cross somebody can merge past.
 - **A separation enforced by two files stops being a separation the moment one tool reads both.** The agent service never saw the engine's database password because they lived in different files - true, and it stopped being the mechanism the day compose needed to hand one shared secret to both services. What enforces it now is each service's explicit `environment:` list, which is a thing you can read rather than a thing you have to remember. The lesson is not "don't use files"; it is that **a safety property should be stated where it is enforced**, and CLAUDE.md was still describing the old enforcement.
 - **A comment that is true in one branch and silent about the other is an incomplete comment.** The engine Dockerfile said a bundle run without `--connection` fails to resolve a hostname. It does - unless `ENGINE_DATABASE_URL` is set, which the design-time factory reads and the bundle invokes at run time. Testing the claim found the second route, and the second route is the better one for compose, because it keeps the password out of the container's rendered command. **The comment did not just need fixing; following it is what chose the design.**
 - **A fixed `container_name` is what stops a second stack existing.** That matters because the only honest way to test "`up` from a clean state" is a second stack: a compose project of its own gets its own volume, so a clean start does not mean deleting the volume holding real decisions. The name and the published ports became variables with today's values as defaults - not a feature looking for a use, but the thing that made the test possible.
