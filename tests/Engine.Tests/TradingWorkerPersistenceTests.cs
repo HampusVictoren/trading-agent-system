@@ -418,6 +418,64 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_cycle_is_one_trace_with_the_exits_the_selection_and_each_analysis_inside_it()
+    {
+        // Listened to the way an OpenTelemetry exporter listens: by source name, sampling
+        // everything. Other tests may emit activities on the same source at the same time, so
+        // everything below is filtered down to the one trace this cycle started.
+        var stopped = new System.Collections.Concurrent.ConcurrentQueue<System.Diagnostics.Activity>();
+        using var listener = new System.Diagnostics.ActivityListener
+        {
+            ShouldListenTo = source => source.Name == EngineTelemetry.Name,
+            Sample = (ref System.Diagnostics.ActivityCreationOptions<System.Diagnostics.ActivityContext> _) =>
+                System.Diagnostics.ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = stopped.Enqueue,
+        };
+        System.Diagnostics.ActivitySource.AddActivityListener(listener);
+
+        // An empty account and a buy for the screen's one pick. The exits still get a span: they
+        // ran, and found nothing to look at, which is worth seeing in a trace too.
+        await using (var engine = AnEngine(AnAgentServiceThatAnswers(ABuy(conviction: 0.9), AQuote(100m, Now))))
+        {
+            await RunOneCycleAsync(engine, expectedDecisionsAfterwards: 1);
+        }
+
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
+        while (!stopped.Any(span => span.OperationName == TradingWorker.CycleSpan) && DateTimeOffset.UtcNow < deadline)
+            await Task.Delay(25, TestContext.Current.CancellationToken);
+
+        var cycle = stopped.Single(span => span.OperationName == TradingWorker.CycleSpan);
+        cycle.Parent.ShouldBeNull();
+        cycle.ParentSpanId.ShouldBe(default);
+        cycle.GetTagItem("trading.mode").ShouldBe(nameof(TradingMode.Paper));
+        cycle.GetTagItem("trading.kill_switch.engaged").ShouldBe(false);
+        cycle.GetTagItem("trading.analysed").ShouldBe(1);
+
+        var inside = stopped.Where(span => span.TraceId == cycle.TraceId && span != cycle).ToList();
+        inside.Select(span => span.OperationName).Order().ShouldBe(
+            [TradingWorker.AnalysisSpan, TradingWorker.ExitsSpan, TradingWorker.SelectSpan]);
+        inside.ShouldAllBe(span => span.ParentSpanId == cycle.SpanId);
+
+        var analysis = inside.Single(span => span.OperationName == TradingWorker.AnalysisSpan);
+        analysis.GetTagItem("trading.ticker").ShouldBe(Symbol);
+        analysis.GetTagItem("trading.outcome").ShouldBe(nameof(DecisionOutcome.Executed));
+
+        // The correlation id on the span is the one on the row, which is what joins a trace to
+        // the database and to both services' logs.
+        await using var context = _database.NewContext();
+        var decision = await context.Decisions.SingleAsync(TestContext.Current.CancellationToken);
+        analysis.GetTagItem("trading.correlation_id").ShouldBe(decision.CorrelationId);
+
+        // Nothing the agents wrote reaches a span: not the thesis, not a risk, not a reason.
+        var everyValue = stopped.Where(span => span.TraceId == cycle.TraceId)
+            .SelectMany(span => span.TagObjects)
+            .Select(tag => Convert.ToString(tag.Value, System.Globalization.CultureInfo.InvariantCulture) ?? "")
+            .ToList();
+        everyValue.ShouldNotContain(value => value.Contains("Momentum", StringComparison.Ordinal));
+        everyValue.ShouldNotContain(value => value.Contains("Multipel", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task A_shadow_engine_warns_at_startup_that_it_will_not_close_what_the_account_holds()
     {
         // A paper account with a holding, restarted in Shadow, which is what the shipped default
