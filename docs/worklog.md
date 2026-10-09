@@ -2371,6 +2371,29 @@ reach the one holding 54 real decisions. The real container had to be removed fo
 because `container_name` cannot be held by two projects; the volume was untouched and the
 database came back with its 54 decisions, 5 positions and 87 920.14 kr.
 
+**Review Bot on #62 (2026-10-09): accept-with-nits, one must-fix, all fixed on the branch.**
+- **The D2 assertion could never fail.** `! docker compose config --services | grep -qx engine`
+  was not the step's last line, and `bash -e` ignores a command negated with `!`. Shown in a
+  scratch copy with the engine's `profiles:` line removed: the old step exited 0, the new
+  `if ...; then exit 1; fi` form exits 1 with "engine is not behind its profile". **The check
+  meant to be the stage's decision as an assertion had been a paragraph after all.**
+- **The job has a project of its own** - `COMPOSE_PROJECT_NAME=tas-ci`, `DB_CONTAINER=tas-ci-db`,
+  and `down -v` names `-p tas-ci` literally - so its steps pasted into a terminal cannot reach
+  `trading-db-data`, and no longer need the real container removed first.
+- `timeout-minutes: 30`; the engine-log check captures the log before grepping (`logs | grep -q`
+  under pipefail reports an early match as a miss via SIGPIPE); `workflow_dispatch:` so the
+  bring-up can run on a branch before merge. **It has not run on this branch yet:** dispatching
+  needs the token's *Actions: write*, which it lacks (`HTTP 403`), so the first heavy run is
+  still the owner's to trigger.
+- Minor: the screen caps go through `Constraints`/`Unwrap` like the others, the cap message no
+  longer reads "declares no a thesis cap", and the `.env.example` reader strips matching quotes.
+- **Verified locally** short of the bring-up: D2 both ways, the SIGPIPE miss reproduced (status
+  `141 0` on a match) and gone with the captured form, actionlint clean on the changed steps,
+  .NET 528/528, Python 515/515. The job's steps ran under `tas-ci` beside the live stack and
+  tore down only their own volume; the bring-up itself stopped at the migrations, because
+  containers on this dev box cannot reach each other over a compose network (a plain TCP
+  connect between two containers times out) - an environment limit, not the file's.
+
 ---
 
 ## Lessons and gotchas
