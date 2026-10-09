@@ -21,7 +21,11 @@ public sealed class DecisionRecordConfiguration : IEntityTypeConfiguration<Decis
 
     public void Configure(EntityTypeBuilder<DecisionRecord> builder)
     {
-        builder.ToTable("decisions");
+        // Only a shadowed decision has a cost it did not spend, and it is a purchase, so it is
+        // more than nothing. A row that broke either would be counted against a day's budget.
+        builder.ToTable("decisions", table => table.HasCheckConstraint(
+            "ck_decisions_shadow_cost_only_when_shadowed",
+            "shadow_cost IS NULL OR (outcome = 'Shadowed' AND shadow_cost > 0)"));
 
         builder.HasKey(decision => decision.Id);
         builder.Property(decision => decision.Id).UseIdentityAlwaysColumn();
@@ -48,6 +52,8 @@ public sealed class DecisionRecordConfiguration : IEntityTypeConfiguration<Decis
         builder.Property(decision => decision.ExistingAveragePrice)
             .HasPrecision(MoneyPrecision.Digits, MoneyPrecision.Decimals);
         builder.Property(decision => decision.ReferencePrice)
+            .HasPrecision(MoneyPrecision.Digits, MoneyPrecision.Decimals);
+        builder.Property(decision => decision.ShadowCost)
             .HasPrecision(MoneyPrecision.Digits, MoneyPrecision.Decimals);
         builder.Property(decision => decision.ReferenceCurrency).HasMaxLength(3).IsFixedLength();
 

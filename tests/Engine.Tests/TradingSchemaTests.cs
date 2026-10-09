@@ -378,6 +378,72 @@ public class TradingSchemaTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_shadow_cost_belongs_only_to_a_shadowed_decision_and_goes_away_on_the_way_down()
+    {
+        var portfolioId = await AnAccountThatHasBought();
+        await using var context = _database.NewContext();
+        var migrator = context.GetService<IMigrator>();
+        var cancellation = TestContext.Current.CancellationToken;
+
+        Task<int> Insert(string id, string outcome, decimal cost) => context.Database.ExecuteSqlAsync(
+            $"""
+            INSERT INTO trading.decisions (correlation_id, portfolio_id, symbol, team_id, selection,
+                requested_at, available_risk_budget, max_position_pct, key_risks, outcome, trading_mode, shadow_cost)
+            VALUES ({id}, {portfolioId}, 'AAPL', 'default', 'Shortlist',
+                now(), 10000, 0.05, ARRAY[]::varchar(300)[], {outcome}, 'Shadow', {cost})
+            """, cancellation);
+
+        Task<int> Count(string sql) => context.Database.SqlQueryRaw<int>(sql).SingleAsync(cancellation);
+
+        try
+        {
+            await migrator.MigrateAsync("KillSwitch", cancellation);
+
+            await context.Database.ExecuteSqlAsync(
+                $"""
+                INSERT INTO trading.decisions (correlation_id, portfolio_id, symbol, team_id, selection,
+                    requested_at, available_risk_budget, max_position_pct, key_risks, outcome, trading_mode)
+                VALUES ('before-shadow-cost', {portfolioId}, 'AAPL', 'default', 'Shortlist',
+                    now(), 10000, 0.05, ARRAY[]::varchar(300)[], 'Shadowed', 'Shadow')
+                """, cancellation);
+
+            await migrator.MigrateAsync(cancellationToken: cancellation);
+
+            // Nothing is backfilled. The row that was there keeps no cost rather than an invented one.
+            (await Count(
+                """
+                SELECT count(*)::int AS "Value" FROM trading.decisions
+                WHERE correlation_id = 'before-shadow-cost' AND shadow_cost IS NULL
+                """)).ShouldBe(1);
+
+            (await Insert("shadow-buy", "Shadowed", 500m)).ShouldBe(1);
+
+            (await Should.ThrowAsync<Exception>(() => Insert("not-shadowed", "Executed", 500m)))
+                .Message.ShouldContain("ck_decisions_shadow_cost_only_when_shadowed");
+            (await Should.ThrowAsync<Exception>(() => Insert("free", "Shadowed", 0m)))
+                .Message.ShouldContain("ck_decisions_shadow_cost_only_when_shadowed");
+
+            await migrator.MigrateAsync("KillSwitch", cancellation);
+
+            (await Count(
+                """
+                SELECT count(*)::int AS "Value" FROM information_schema.columns
+                WHERE table_schema = 'trading' AND table_name = 'decisions' AND column_name = 'shadow_cost'
+                """)).ShouldBe(0);
+
+            (await Count(
+                """
+                SELECT count(*)::int AS "Value" FROM trading.decisions
+                WHERE correlation_id IN ('before-shadow-cost', 'shadow-buy')
+                """)).ShouldBe(2);
+        }
+        finally
+        {
+            await migrator.MigrateAsync(cancellationToken: cancellation);
+        }
+    }
+
+    [Fact]
     public async Task The_engine_refuses_to_start_against_a_database_that_is_behind()
     {
         // The alternative - migrating at startup - would move the schema before anyone could

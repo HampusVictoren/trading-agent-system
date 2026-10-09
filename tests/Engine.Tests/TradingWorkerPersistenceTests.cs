@@ -374,6 +374,7 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
         decision.TradingMode.ShouldBe(TradingMode.Shadow);
         decision.OutcomeReason.ShouldBe("Shadow mode: would have bought 5 AAPL at 100 SEK");
         decision.OrderId.ShouldBeNull();
+        decision.ShadowCost.ShouldBe(500m);
 
         (await context.Orders.CountAsync(TestContext.Current.CancellationToken)).ShouldBe(0);
 

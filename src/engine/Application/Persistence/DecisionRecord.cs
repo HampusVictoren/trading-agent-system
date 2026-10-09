@@ -100,6 +100,20 @@ public sealed class DecisionRecord
     /// <summary>The ledger line, when the decision produced one. Only an executed buy does.</summary>
     public Guid? OrderId { get; init; }
 
+    /// <summary>
+    /// What a buy Shadow mode did not place would have cost, in the account's currency. Null on
+    /// every other row.
+    /// </summary>
+    /// <remarks>
+    /// The daily deployment limit is a sum over the ledger, and Shadow writes no ledger. Without
+    /// this, every shadow buy of a day was sized against the whole day's budget, so ten of them
+    /// "would have bought" up to ten times what the limit lets Paper buy. Shadow adds these to
+    /// what the ledger says the day spent, and the limit binds as it would have. Cash and position
+    /// headroom are still not consumed. A shadow engine holds nothing, so that would take a
+    /// second portfolio, and at today's balances the daily limit binds long before cash does.
+    /// </remarks>
+    public decimal? ShadowCost { get; init; }
+
     /// <summary>Set by the database, so the row's own clock is the one that ordered it.</summary>
     public DateTimeOffset RecordedAt { get; private set; }
 }

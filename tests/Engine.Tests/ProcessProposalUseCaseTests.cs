@@ -138,7 +138,8 @@ public class ProcessProposalUseCaseTests
         RiskPolicy? policy = null,
         decimal deployedToday = 0m,
         TradingMode mode = TradingMode.Paper,
-        FixedKillSwitch? killSwitch = null)
+        FixedKillSwitch? killSwitch = null,
+        decimal shadowDeployedToday = 0m)
     {
         var inForce = policy ?? Policy;
         var client = Substitute.For<IAgentClient>();
@@ -147,6 +148,8 @@ public class ProcessProposalUseCaseTests
         var portfolios = Substitute.For<IPortfolioRepository>();
         portfolios.DeployedOnAsync(Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
             .Returns(new Money(deployedToday, Money.DefaultCurrency));
+        portfolios.ShadowDeployedOnAsync(Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(new Money(shadowDeployedToday, Money.DefaultCurrency));
 
         // Null unless a test says otherwise, which is what "the engine could not get a price
         // for that holding" looks like from here.
@@ -216,6 +219,20 @@ public class ProcessProposalUseCaseTests
             row.TradingMode.ShouldBe(TradingMode.Shadow);
             row.OrderId.ShouldBeNull();
             row.Stance.ShouldBe(Stance.Buy);
+
+            // Five at 100: what the next shadow buy of the day is sized against.
+            row.ShadowCost.ShouldBe(500m);
+        }
+
+        [Fact]
+        public async Task A_shadowed_sale_has_no_cost_to_count()
+        {
+            // Selling frees capital, so a shadow sale takes nothing from the day's budget.
+            var (sut, _, decisions) = Build(Signal(stance: "SELL"), mode: TradingMode.Shadow);
+
+            (await Run(sut, Holding(quantity: 10m, daysAgo: 10))).ShouldBeOfType<TradeDecisionResult.Shadowed>();
+
+            decisions.OfTheCycle.ShadowCost.ShouldBeNull();
         }
 
         [Fact]
@@ -465,6 +482,43 @@ public class ProcessProposalUseCaseTests
 
             await portfolios.Received(1).DeployedOnAsync(
                 DateOnly.FromDateTime(Now.UtcDateTime), Arg.Any<CancellationToken>());
+        }
+
+        [Fact]
+        public async Task In_shadow_the_days_shadow_buys_count_against_it()
+        {
+            // The ledger is empty in Shadow, so without the shadow buys every one of them would be
+            // sized against the whole day. 1 900 of shadow buys and 100 left: one share, exactly
+            // as Paper would have bought after spending the same 1 900.
+            var (sut, _, decisions, _) = BuildWithLedger(
+                Signal(), policy: Capped, mode: TradingMode.Shadow, shadowDeployedToday: 1_900m);
+
+            (await Run(sut, NewPortfolio())).ShouldBeOfType<TradeDecisionResult.Shadowed>()
+                .Reason.ShouldBe("Shadow mode: would have bought 1 AAPL at 100 SEK");
+
+            decisions.OfTheCycle.ShadowCost.ShouldBe(100m);
+        }
+
+        [Fact]
+        public async Task In_shadow_a_day_spent_in_shadow_buys_nothing_more()
+        {
+            var (sut, _, _, _) = BuildWithLedger(
+                Signal(), policy: Capped, mode: TradingMode.Shadow, shadowDeployedToday: 2_000m);
+
+            (await Run(sut, NewPortfolio())).ShouldBeOfType<TradeDecisionResult.NotSized>();
+        }
+
+        [Fact]
+        public async Task In_paper_shadow_buys_are_not_spending()
+        {
+            // A Paper engine on a day that started in Shadow: what Shadow did not buy is not money
+            // Paper has spent, so it is not even asked.
+            var (sut, _, _, portfolios) = BuildWithLedger(
+                Signal(), policy: Capped, shadowDeployedToday: 2_000m);
+
+            (await Run(sut, NewPortfolio())).ShouldBeOfType<TradeDecisionResult.Executed>().Quantity.ShouldBe(5m);
+
+            await portfolios.DidNotReceive().ShadowDeployedOnAsync(Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
         }
 
         [Fact]

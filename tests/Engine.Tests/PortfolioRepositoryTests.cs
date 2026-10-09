@@ -399,6 +399,53 @@ public class PortfolioRepositoryTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task The_days_shadow_buys_are_summed_from_the_decisions()
+    {
+        // Shadow's half of the daily budget: what its buys would have cost, by the day they were
+        // requested. Other days, and rows with no cost, are not this day's spending.
+        var day = new DateTimeOffset(2026, 10, 1, 0, 0, 0, TimeSpan.Zero);
+
+        await InAScope(async (portfolios, decisions, commit) =>
+        {
+            var portfolio = new Portfolio(new Money(100_000m, Money.DefaultCurrency));
+            portfolios.Add(portfolio);
+
+            DecisionRecord Shadowed(string id, DateTimeOffset at, decimal? cost) => new()
+            {
+                CorrelationId = id,
+                PortfolioId = portfolio.Id,
+                Symbol = Msft,
+                TeamId = "default",
+                Selection = SelectionSource.Shortlist,
+                TradingMode = TradingMode.Shadow,
+                RequestedAt = at,
+                AvailableRiskBudget = 10_000m,
+                MaxPositionPct = 0.05m,
+                KeyRisks = [],
+                Outcome = cost is null ? DecisionOutcome.NoAction : DecisionOutcome.Shadowed,
+                ShadowCost = cost,
+            };
+
+            decisions.Record(Shadowed("first", day.AddHours(9), 300m));
+            decisions.Record(Shadowed("last-minute", day.AddDays(1).AddTicks(-10), 500m));
+            decisions.Record(Shadowed("a-hold", day.AddHours(10), null));
+            decisions.Record(Shadowed("yesterday", day.AddMinutes(-1), 1_000m));
+            decisions.Record(Shadowed("tomorrow", day.AddDays(1), 2_000m));
+
+            await commit.SaveChangesAsync(TestContext.Current.CancellationToken);
+            return portfolio.Id;
+        });
+
+        await using var context = _database.NewContext();
+
+        var deployed = await new PortfolioRepository(context).ShadowDeployedOnAsync(
+            new DateOnly(2026, 10, 1), TestContext.Current.CancellationToken);
+
+        deployed.Amount.ShouldBe(800m);
+        deployed.Currency.ShouldBe(Money.DefaultCurrency);
+    }
+
+    [Fact]
     public async Task A_day_with_no_purchases_deployed_nothing()
     {
         // Zero rather than null, so nothing upstream has an empty case to handle. Every later

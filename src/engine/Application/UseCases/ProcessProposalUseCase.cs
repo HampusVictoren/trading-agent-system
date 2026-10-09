@@ -7,6 +7,7 @@ using Engine.Domain.Aggregates.Portfolio;
 using Engine.Domain.Risk;
 using Engine.Domain.Screening;
 using Engine.Domain.Signals;
+using Engine.Domain.Trading;
 using Engine.Domain.ValueObjects;
 using Engine.Hosting.Options;
 using Microsoft.Extensions.Options;
@@ -79,7 +80,22 @@ public class ProcessProposalUseCase
     /// What one cycle produced. The signal and the order are separate from the result because
     /// most outcomes have neither, and the record has to say which.
     /// </summary>
-    private sealed record Cycle(TradeDecisionResult Result, TradeSignal? Signal = null, Order? Order = null);
+    private sealed record Cycle(
+        TradeDecisionResult Result, TradeSignal? Signal = null, Order? Order = null, decimal? ShadowCost = null);
+
+    /// <summary>
+    /// What the trading day has already committed to purchases: the ledger's sum, and in Shadow
+    /// what the day's shadow buys would have cost, since none of those reached the ledger.
+    /// </summary>
+    private async Task<Money> DeployedTodayAsync(DateOnly day, CancellationToken cancellationToken)
+    {
+        var placed = await _portfolios.DeployedOnAsync(day, cancellationToken);
+
+        if (_gate.Mode != TradingMode.Shadow)
+            return placed;
+
+        return placed.Add(await _portfolios.ShadowDeployedOnAsync(day, cancellationToken));
+    }
 
     /// <remarks>
     /// The order is deliberate. The agents give a view; the sizer turns it into a quantity;
@@ -156,8 +172,7 @@ public class ProcessProposalUseCase
         // much of the day is left. A sale needs none of it - selling frees capital rather than
         // committing it - so the query is only made when there is a purchase to bound.
         var deployedToday = signal.Stance == Stance.Buy
-            ? await _portfolios.DeployedOnAsync(
-                DateOnly.FromDateTime(request.AsOf.UtcDateTime), cancellationToken)
+            ? await DeployedTodayAsync(DateOnly.FromDateTime(request.AsOf.UtcDateTime), cancellationToken)
             : Money.Zero();
 
         var intent = _sizer.Size(signal, portfolio, prices, _policy, deployedToday);
@@ -195,7 +210,16 @@ public class ProcessProposalUseCase
         var permission = await _gate.AskAsync(cancellationToken);
 
         if (permission is not OrderPermission.Granted)
-            return new Cycle(NotPlaced(requested, intent, permission), signal);
+        {
+            // A shadow buy keeps what it would have cost, so the next one is sized against what is
+            // left of the day. A halted one does not: the switch stopped trading, and the day's
+            // budget is Paper's ledger again when it is released.
+            var shadowCost = permission is OrderPermission.ShadowOnly && intent is OrderIntent.Buy buy
+                ? buy.Price.Amount * buy.Quantity
+                : (decimal?)null;
+
+            return new Cycle(NotPlaced(requested, intent, permission), signal, ShadowCost: shadowCost);
+        }
 
         // request.AsOf rather than the clock read again, so the trade is stamped with the same
         // instant the risk gate judged the quote against. A holding period is counted in days;
@@ -320,6 +344,7 @@ public class ProcessProposalUseCase
             Outcome = cycle.Result.Outcome,
             OutcomeReason = cycle.Result.OutcomeReason,
             OrderId = cycle.Order?.Id,
+            ShadowCost = cycle.ShadowCost,
         };
 
     /// <summary>
