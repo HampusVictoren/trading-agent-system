@@ -444,6 +444,41 @@ public class TradingSchemaTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task The_shortlist_edge_counts_shadow_buys_and_stops_on_the_way_down()
+    {
+        await using var context = _database.NewContext();
+        var migrator = context.GetService<IMigrator>();
+        var cancellation = TestContext.Current.CancellationToken;
+
+        // The definition as Postgres stores it, which is what a reader of the view gets. What the
+        // count means is tested against data in ShortlistEdgeTests; this is the migration's half.
+        Task<string> Definition() => context.Database.SqlQueryRaw<string>(
+                """SELECT pg_get_viewdef('trading.shortlist_edge'::regclass) AS "Value" """)
+            .SingleAsync(cancellation);
+
+        try
+        {
+            (await Definition()).ShouldContain("'Shadowed'");
+
+            await migrator.MigrateAsync("ShortlistEdgeByMode", cancellation);
+
+            var before = await Definition();
+            before.ShouldNotContain("'Shadowed'");
+            before.ShouldContain("trading_mode");
+            (await ViewsInTradingSchema(context)).ShouldBe(2);
+
+            await migrator.MigrateAsync(cancellationToken: cancellation);
+
+            (await Definition()).ShouldContain("'Shadowed'");
+            (await ViewsInTradingSchema(context)).ShouldBe(2);
+        }
+        finally
+        {
+            await migrator.MigrateAsync(cancellationToken: cancellation);
+        }
+    }
+
+    [Fact]
     public async Task The_shortlist_edge_gains_the_mode_and_loses_it_on_the_way_down()
     {
         await using var context = _database.NewContext();

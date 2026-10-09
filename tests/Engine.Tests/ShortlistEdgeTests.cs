@@ -187,8 +187,9 @@ public class ShortlistEdgeTests : IAsyncLifetime
     public async Task Shadow_and_paper_are_two_rows_rather_than_one_average()
     {
         // The engine switched mode during the day: two instruments analysed in Paper, two in
-        // Shadow. Each mode gets its own control and its own buys, and the shadowed buy is not an
-        // execution, so the Shadow row reports none. Whether it should count is an open decision.
+        // Shadow. Each mode gets its own control and its own buys. A shadowed buy is the agents'
+        // pick as much as an executed one is (decided 2026-10-09), so the Shadow row has an edge
+        // of its own: 10 % against a shortlist average of 3 %.
         var account = await AnAccountAsync();
 
         await AShortlistedInstrumentAsync(account, "AAA.ST", 1, Stance.Buy, DecisionOutcome.Executed, 0.08m, 0.0797m);
@@ -210,8 +211,10 @@ public class ShortlistEdgeTests : IAsyncLifetime
         var shadow = rows.Single(row => row.TradingMode == "Shadow");
         shadow.Shortlisted.ShouldBe(2);
         shadow.ShortlistExcessGross.ShouldBe(0.03m);
-        shadow.Bought.ShouldBe(0);
-        shadow.AgentsEdgeGross.ShouldBeNull();
+        shadow.Bought.ShouldBe(1);
+        shadow.BoughtExcessGross.ShouldBe(0.10m);
+        shadow.AgentsEdgeGross.ShouldBe(0.07m);
+        shadow.BoughtEdgeNet.ShouldBe(0.0997m);
     }
 
     [Fact]
@@ -331,6 +334,24 @@ public class ShortlistEdgeTests : IAsyncLifetime
         // Had the sale counted as a buy, this would read -0.06 - (-0.06) = 0.00, which is the
         // shape of a number that means nothing while looking like agreement.
         row.AgentsEdgeGross.ShouldBe(0.14m);
+    }
+
+    [Fact]
+    public async Task A_buy_the_kill_switch_stopped_is_in_the_control_and_not_in_the_buys()
+    {
+        // A shadowed buy counts as the agents' pick; a halted one does not. The switch stopped
+        // it in Paper, where "bought" has always meant bought, and the switch only ever stops buys,
+        // so this is the one shape a halted decision takes.
+        var account = await AnAccountAsync();
+
+        await AShortlistedInstrumentAsync(account, "AAA.ST", 1, Stance.Buy, DecisionOutcome.Executed, 0.10m, 0.0997m);
+        await AShortlistedInstrumentAsync(account, "BBB.ST", 2, Stance.Buy, DecisionOutcome.Halted, 0.02m, 0.0197m);
+
+        var row = (await ReadTheViewAsync()).ShouldHaveSingleItem();
+
+        row.Shortlisted.ShouldBe(2);
+        row.Bought.ShouldBe(1);
+        row.BoughtExcessGross.ShouldBe(0.10m);
     }
 
     [Theory]
