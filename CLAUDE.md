@@ -107,8 +107,11 @@ docker compose logs -f engine             # what a cycle did
 docker compose down                       # stop; the volume and its decisions stay
 docker exec -it trading-db psql -U postgres -d tradingdb   # superuser, via the container's local socket
 
-# The kill switch. Stops every order, exits included, with no restart: the engine reads it at
-# cycle start, before each analysis and immediately before each order. The latest row wins.
+# The kill switch. Stops NEW BUYS, with no restart. Sales are never stopped: the stop-loss and
+# time-limit exits still sell, and so does the agents' SELL on a holding. While it is engaged
+# the holdings are still analysed, but the screen and its candidates are skipped. The engine
+# reads it at cycle start, before each candidate, and immediately before each buy. It fails
+# closed (an unreadable switch blocks buys). The latest row wins.
 docker exec -it trading-db psql -U postgres -d tradingdb -c "INSERT INTO trading.kill_switch (engaged, reason) VALUES (true, '<why>')"
 docker exec -it trading-db psql -U postgres -d tradingdb -c "INSERT INTO trading.kill_switch (engaged, reason) VALUES (false, '<why>')"
 docker exec -it trading-db psql -U postgres -d tradingdb -c "SELECT * FROM trading.kill_switch ORDER BY id DESC LIMIT 5"
@@ -212,7 +215,7 @@ docker run --rm tas-engine-migrate --version
 - **There is no HEALTHCHECK**, on purpose. Nothing is gated on this container, and a useful
   check would have to ask "did a cycle finish in the last fifteen minutes" rather than "is the
   process alive" - which needs the engine to publish that somewhere. Stage 7.
-- **The `trading` schema has fifteen migrations** and `agent` has five. CI reads the first number
+- **The `trading` schema has sixteen migrations** and `agent` has five. CI reads the first number
   off the migration files rather than holding it, because this file and the worklog have both
   had it wrong.
 
@@ -224,8 +227,8 @@ configuration.
   service here that spends money. When this was decided (D2), "not starting it" was the only way
   to stop it, and that should cost a word on the command line rather than being what `up`
   happens to do. **Stage 7 has added the other ways**: `Trading:Mode` defaults to Shadow, which
-  places nothing, and `trading.kill_switch` stops a running engine. The profile is kept anyway,
-  until the owner decides to lift D2. Both migration steps run **by default**,
+  places nothing, and `trading.kill_switch` stops a running engine's buying. The profile is kept anyway,
+  until #63 has merged: lifting D2 is decided (Hampus, 2026-10-09) and is its own follow-up PR. Both migration steps run **by default**,
   because a provisioned database is not trading: after a plain `up` the schemas are current and
   a host-run engine can point at the same database.
 - **Each schema is applied by a container of its own**, and whatever needs it waits on
@@ -340,7 +343,7 @@ idempotent on the other side.
 
 `shortlists` is one row per instrument a trading day's screen had something to say about: a rank with the figures the score came from, or the reason it was left out, with either half's columns null. Append-only, and **unique on `(screened_on, symbol)`** - which is what makes the engine's "have I screened today?" safe against itself, because two cycles that both decided to screen cannot both store a day. The rejections are stored rather than only logged, because a universe that is quietly rotting is otherwise invisible. What it cannot say is what the screen thought of an instrument that ranked *below* the shortlist's cut: the agent service truncates to the requested limit, so the ranking can never be validated against the names it passed over.
 
-`trading.shortlist_edge` is the stage's own question as a view: per screened day, horizon and team version, the average `excess_return` of the whole shortlist beside the average of the subset that was bought, and the difference. It averages `excess_return` rather than `net_edge` because `net_edge` is **null for every HOLD** - a HOLD has no edge to compute, only a band it stays inside - so averaging it over a shortlist would silently average the buys alone. `bought` requires `stance = 'Buy'` and not merely an execution: a sale's excess return is still the instrument's forward return, so a well-timed exit would arrive as a negative contribution to a column it was never part of. Gross against gross, with the net figure beside it, because the shortlist average is a paper portfolio that paid no commission.
+`trading.shortlist_edge` is the stage's own question as a view: per screened day, horizon and team version, the average `excess_return` of the whole shortlist beside the average of the subset that was bought, and the difference. It averages `excess_return` rather than `net_edge` because `net_edge` is **null for every HOLD** - a HOLD has no edge to compute, only a band it stays inside - so averaging it over a shortlist would silently average the buys alone. It is grouped by `trading_mode` as well. `bought` is an executed buy, or in Shadow a shadowed one: an approved buy the gate held back is still the agents' pick, and the mode column keeps the two populations apart. A buy the kill switch `Halted` is not a pick. `bought` requires `stance = 'Buy'` and not merely an execution: a sale's excess return is still the instrument's forward return, so a well-timed exit would arrive as a negative contribution to a column it was never part of. Gross against gross, with the net figure beside it, because the shortlist average is a paper portfolio that paid no commission.
 
 `agent` is Alembic's, migrated from `src/agents/migrations/versions`, with its version table inside the same schema. `agent_svc`'s `search_path` already resolves there, so naming it is not what makes it work — it is what stops the location depending on a role attribute set once, by a script that runs once. A database that predates the migrations holds the table but no version row, and is `alembic stamp <revision>`-ed rather than migrated.
 
@@ -356,7 +359,7 @@ idempotent on the other side.
 
 ### Request flow
 
-1. `TradingWorker` (`src/engine/Hosting/Workers`) is a `BackgroundService` that holds **no** portfolio. Every `Trading:CycleIntervalMinutes` (15) it first reads the kill switch. If the switch is engaged it does nothing that cycle: no exits, no screen, and no agent is asked. Otherwise it does three things in order, each in its own scope and transaction:
+1. `TradingWorker` (`src/engine/Hosting/Workers`) is a `BackgroundService` that holds **no** portfolio. Every `Trading:CycleIntervalMinutes` (15) it first reads the kill switch, which stops new buys only. If it is engaged the cycle still runs the exits and analyses the holdings (the agents' SELL is a sale, and goes through), but skips the screen and every candidate, since a candidate can only lead to a buy. It is read again before each candidate, so one pulled mid-cycle skips the rest. Otherwise the cycle does three things in order, each in its own scope and transaction:
 
    - **The deterministic exits**, through `ApplyExitsUseCase`. One pass over the whole portfolio, taking no signal and asking no agent: `ExitRules` sells a position that has fallen `RiskPolicy:StopLossPercentage` below its average purchase price, or whose `horizon_days` have passed since the last purchase. They run **before** the analyses so a cycle's buying sees the cash and the position headroom they have just released. An empty database is left alone - an account that exists because a sweep for sales ran is an odd thing to explain.
    - **The selection**, through `SelectShortlistUseCase`. `POST /v1/screen` ranks `Trading:Universe` (31 OMXS30 names) with no LLM call and returns the best `Trading:ShortlistSize` (10); the result is stored in `trading.shortlists` and **read back on every later cycle that day**, because the factors come from daily bars so two screens on one day rank identically. `CycleSelection` then makes the cycle **everything the portfolio holds, plus that shortlist** - holdings first, by symbol, so a sale frees cash before a buy is sized, and a held instrument that was also ranked appears once, as a holding.
@@ -399,7 +402,7 @@ idempotent on the other side.
    - a **buy** is `budget = min(position headroom, cash above the buffer, what is left of the trading day) × conviction tier`, then `floor(budget / the signal's own price)` - the headroom is `RiskPolicy:MaxPositionPercentage` (0.05) of the portfolio's value, the buffer is `RiskPolicy:CashBufferPct` (0.10) of it, and what is left of `RiskPolicy:MaxDailyDeploymentPercentage` (0.20) is a third term in the same `min` - so an order shrinks against the trading day's own budget the way it shrinks against the buffer. That last limit is about **correlation in time** rather than position size: a day's buying is up to ten decisions from one model on one screen within a few minutes, and a momentum ranking in a rising market hands it ten names that move together. The accumulator is the ledger - `orders.placed_at` makes "how much was bought today" a query - because the engine deliberately keeps no cycle-level state. A sale ignores it: selling frees capital rather than committing it;
    - a **sale** is `floor(held quantity × conviction tier)` and its gate takes **no prices and no signal** - a sale has no budget to breach and nothing to value, which is also what lets a deterministic exit reach the same gate and stops a market-data outage from trapping the portfolio. SELL on something not held is no order at all, because there is no shorting.
 
-   **An approved order still has to pass `OrderGate`** before anything is placed, and it asks two questions. The first is `Trading:Mode`: `Shadow` (the default) records the decision as `Shadowed`, with what it would have done, and places nothing; `Paper` places it in the simulated portfolio; `Live` is refused at startup, because there is no broker. The second is the kill switch, read on every ask in Paper: if it is engaged, the decision is `Halted` with the reason. Exits ask the same gate, sale by sale. Both outcomes keep their signal, so they are still measured.
+   **An approved order still has to pass `OrderGate`** before anything is placed, and it asks two questions. The first is `Trading:Mode`: `Shadow` (the default) records the decision as `Shadowed`, with what it would have done, and places nothing; `Paper` places it in the simulated portfolio; `Live` is refused at startup, because there is no broker. The second is the kill switch, read on every **buy** in Paper: if it is engaged, or cannot be read, the decision is `Halted` with the reason and the price. **A sale is never halted**, and the switch is not even read for one: the exits and the agents' SELLs reduce exposure, which is what the switch is for. Exits ask the same gate, sale by sale. Shadowed and Halted outcomes keep their signal, so they are still measured.
 
    **Shadow does not manage positions the account already holds.** An engine that was paper-trading and is restarted in Shadow keeps its positions, and from then on their stop-loss and time-limit exits are only logged, once when they start firing, never placed. It says so at startup with a Warning naming the holdings. Set `Trading:Mode` to `Paper` (user secrets, or `TRADING_MODE=Paper` under compose) to keep managing them.
 
