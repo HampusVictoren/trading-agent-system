@@ -444,6 +444,41 @@ public class TradingSchemaTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task The_shortlist_edge_gains_the_mode_and_loses_it_on_the_way_down()
+    {
+        await using var context = _database.NewContext();
+        var migrator = context.GetService<IMigrator>();
+        var cancellation = TestContext.Current.CancellationToken;
+
+        Task<int> ModeColumns() => context.Database.SqlQueryRaw<int>(
+                """
+                SELECT count(*)::int AS "Value" FROM information_schema.columns
+                WHERE table_schema = 'trading' AND table_name = 'shortlist_edge' AND column_name = 'trading_mode'
+                """)
+            .SingleAsync(cancellation);
+
+        try
+        {
+            (await ModeColumns()).ShouldBe(1);
+
+            await migrator.MigrateAsync("DecisionShadowCost", cancellation);
+
+            // Back to the definition before it: the view is still there, without the mode.
+            (await ModeColumns()).ShouldBe(0);
+            (await ViewsInTradingSchema(context)).ShouldBe(2);
+
+            await migrator.MigrateAsync(cancellationToken: cancellation);
+
+            (await ModeColumns()).ShouldBe(1);
+            (await ViewsInTradingSchema(context)).ShouldBe(2);
+        }
+        finally
+        {
+            await migrator.MigrateAsync(cancellationToken: cancellation);
+        }
+    }
+
+    [Fact]
     public async Task The_engine_refuses_to_start_against_a_database_that_is_behind()
     {
         // The alternative - migrating at startup - would move the schema before anyone could
