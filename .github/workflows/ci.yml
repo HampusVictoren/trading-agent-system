@@ -278,11 +278,23 @@ jobs:
       # has a value, and the engine is where the profile puts it. That last line is stage 6's
       # decision D2 as an assertion - the engine is the only service that spends money, and
       # `up` must not be what starts it.
+      # Spelled as an `if` rather than `! ... | grep`, which is what it used to be and which
+      # could never fail: bash -e ignores the status of a command negated with `!`, so the
+      # line ran, reported, and was discarded. Each assertion here names what it found.
       - name: The compose file is valid, and the engine is behind its profile
         run: |
+          set -euo pipefail
           docker compose config --quiet
-          ! docker compose config --services | grep -qx engine
-          docker compose --profile trade config --services | grep -qx engine
+          default=$(docker compose config --services)
+          if grep -qx engine <<<"$default"; then
+            echo "engine is not behind its profile: a plain 'up' would start it"
+            exit 1
+          fi
+          traded=$(docker compose --profile trade config --services)
+          if ! grep -qx engine <<<"$traded"; then
+            echo "engine is missing from the trade profile"
+            exit 1
+          fi
 
       # Everything below is the stage's own success criterion, and it is slow: four images
       # and a database from nothing. On master and nightly rather than on every pull request,
