@@ -101,6 +101,17 @@ public class EngineOptionsTests
         Resolve<TradingOptions>(("Trading:Mode", "Shadow")).Mode.ShouldBe(TradingMode.Shadow);
     }
 
+    [Theory]
+    [InlineData(null, TradingMode.Shadow)]
+    [InlineData(TradingMode.Shadow, TradingMode.Shadow)]
+    [InlineData(TradingMode.Paper, TradingMode.Paper)]
+    public void The_effective_mode_is_the_configured_one_and_shadow_when_there_is_none(
+        TradingMode? configured, TradingMode effective)
+    {
+        // The one fallback the gate, the logs, the trace and the decision counter all read.
+        new TradingOptions { Mode = configured }.EffectiveMode.ShouldBe(effective);
+    }
+
     [Fact]
     public void The_shipped_configuration_is_shadow()
     {

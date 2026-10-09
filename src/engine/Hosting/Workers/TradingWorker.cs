@@ -56,12 +56,12 @@ public class TradingWorker : BackgroundService
         // all on a day when nothing was due.
         _logger.LogInformation(
             "Trading mode is {Mode}: {Meaning}",
-            _options.Mode,
-            _options.Mode == TradingMode.Paper
+            _options.EffectiveMode,
+            _options.EffectiveMode == TradingMode.Paper
                 ? "approved orders are executed against the simulated portfolio."
                 : "every decision is recorded and no order is placed.");
 
-        if (_options.Mode != TradingMode.Paper)
+        if (_options.EffectiveMode != TradingMode.Paper)
             await WarnAboutHoldingsNobodyIsManagingAsync(stoppingToken);
 
         while (!stoppingToken.IsCancellationRequested)
@@ -108,7 +108,7 @@ public class TradingWorker : BackgroundService
 
         Activity.Current = null;
         using var cycle = EngineTelemetry.ActivitySource.StartActivity(CycleSpan);
-        cycle?.SetTag("trading.mode", (_options.Mode ?? TradingMode.Shadow).ToString());
+        cycle?.SetTag("trading.mode", _options.EffectiveMode.ToString());
 
         // First, before anything is asked of anyone. The switch stops new buys only, so an
         // engaged one does not stop the cycle: the exits still run, and the holdings are still
@@ -255,7 +255,7 @@ public class TradingWorker : BackgroundService
                 "Trading mode is {Mode} and the portfolio holds {Count} position(s): {Tickers}. Their "
                 + "stop-loss and time-limit exits will be logged but NOT placed, so nothing will close "
                 + "them. Set Trading:Mode to Paper (TRADING_MODE=Paper under compose) to keep managing them.",
-                _options.Mode,
+                _options.EffectiveMode,
                 portfolio.Positions.Count,
                 string.Join(", ", portfolio.Positions.Select(held => held.Ticker.Value).Order(StringComparer.Ordinal)));
         }
@@ -431,10 +431,10 @@ public class TradingWorker : BackgroundService
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         // After the commit, like the line below: the counter counts rows, not intentions. The mode
-        // is the one OrderGate decided under and the row records, missing-means-Shadow included.
+        // is the one OrderGate decided under and the row records - both read EffectiveMode.
         _telemetry.DecisionStored(
             result.Outcome,
-            _options.Mode ?? TradingMode.Shadow,
+            _options.EffectiveMode,
             (result as TradeDecisionResult.RejectedByRisk)?.Side);
 
         LogOutcome(result, portfolio);
