@@ -295,7 +295,7 @@ public class ProcessProposalUseCaseTests
             var result = await Run(sut, portfolio);
 
             result.ShouldBeOfType<TradeDecisionResult.Halted>()
-                .Reason.ShouldBe("Kill switch engaged: prices look wrong; would have bought 5 AAPL");
+                .Reason.ShouldBe("Kill switch engaged: prices look wrong; would have bought 5 AAPL at 100 SEK");
 
             portfolio.CashBalance.Amount.ShouldBe(10_000m);
             portfolio.Positions.ShouldBeEmpty();

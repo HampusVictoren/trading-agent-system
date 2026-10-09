@@ -241,7 +241,7 @@ public class ProcessProposalUseCase
                 $"Shadow mode: would have {verb} {quantity} {requested.Value} at {price.Amount} {price.Currency}"),
 
             OrderPermission.Halted halted => new TradeDecisionResult.Halted(
-                requested, $"{halted.Reason}; would have {verb} {quantity} {requested.Value}"),
+                requested, $"{halted.Reason}; would have {verb} {quantity} {requested.Value} at {price.Amount} {price.Currency}"),
 
             _ => throw new InvalidOperationException(
                 $"The order gate answered {permission.GetType().Name}, which is not a reason to hold an order back.")

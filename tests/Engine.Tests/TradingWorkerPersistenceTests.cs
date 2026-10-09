@@ -493,7 +493,7 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
         var decision = await context.Decisions.SingleAsync(TestContext.Current.CancellationToken);
         decision.Symbol.Value.ShouldBe(Symbol);
         decision.Outcome.ShouldBe(DecisionOutcome.Halted);
-        decision.OutcomeReason.ShouldBe("Kill switch engaged: pulled mid-cycle; would have bought 5 AAPL");
+        decision.OutcomeReason.ShouldBe("Kill switch engaged: pulled mid-cycle; would have bought 5 AAPL at 100 SEK");
         decision.OrderId.ShouldBeNull();
 
         (await context.Orders.CountAsync(TestContext.Current.CancellationToken)).ShouldBe(0);
