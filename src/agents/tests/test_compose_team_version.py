@@ -60,15 +60,30 @@ def _resolve(key: str, raw: str) -> str:
     return match.group(2)
 
 
-def _env_file_values(path: Path) -> dict[str, str]:
+def _unquote(value: str) -> str:
+    """`KEY="0.0"` and `KEY='0.0'` mean 0.0 to pydantic-settings, so they do here too.
+
+    Only a matching pair is stripped: a lone quote is part of the value, which is how the
+    file's own reader treats it.
+    """
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        return value[1:-1]
+    return value
+
+
+def _env_text_values(text: str) -> dict[str, str]:
     values: dict[str, str] = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in text.splitlines():
         stripped = line.strip()
         if stripped.startswith("#") or "=" not in stripped:
             continue
         key, _, value = stripped.partition("=")
-        values[key.strip()] = value.strip()
+        values[key.strip()] = _unquote(value.strip())
     return values
+
+
+def _env_file_values(path: Path) -> dict[str, str]:
+    return _env_text_values(path.read_text(encoding="utf-8"))
 
 
 def _spec(values: dict[str, str], where: str) -> ModelSpec:
@@ -137,3 +152,21 @@ def test_every_hashed_value_is_in_the_compose_file():
 
     for name in HASHED:
         assert f"TAS_LLM__DEFAULT__{name}" in environment
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        ("TAS_LLM__DEFAULT__TEMPERATURE=0.0", "0.0"),
+        ('TAS_LLM__DEFAULT__TEMPERATURE="0.0"', "0.0"),
+        ("TAS_LLM__DEFAULT__TEMPERATURE='0.0'", "0.0"),
+        ('TAS_LLM__DEFAULT__TEMPERATURE = "0.0" ', "0.0"),
+        # Not a pair, so not quoting - left as written rather than guessed at.
+        ("TAS_LLM__DEFAULT__TEMPERATURE=\"0.0'", "\"0.0'"),
+        ('TAS_LLM__DEFAULT__TEMPERATURE="', '"'),
+    ],
+)
+def test_the_env_example_reader_strips_quotes_as_the_service_would(line: str, expected: str):
+    # A quoted value in .env.example is the same setting to the service, and must not read
+    # as a different team here - or as a ModelSpec that refuses "0.0" with its quotes on.
+    assert _env_text_values(f"# a comment\n{line}\n")["TAS_LLM__DEFAULT__TEMPERATURE"] == expected
