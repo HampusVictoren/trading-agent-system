@@ -114,7 +114,7 @@ Two things that are easy to misread as broken:
 - **The model is `qwen2.5:14b`**, at temperature 0 with seed 42, replacing `llama3.2` (3B). A cycle is about 20 s warm and 28 s cold, against 7-10 s before. `TAS_LLM__DEFAULT__TIMEOUT_S` is 60 and `AgentService:RequestTimeoutSeconds` is 120; the old 30 was below a single step on any 14B model.
 - **Two team_versions are in the data; two more are only in the code.** `default` ran 28 decisions as `6c6da0e6edad` and `default-memory` 8 as `79dfb7307b57`. The model change makes them `5926c629dcbe` and `b856e3edf611`, but the engine has not run since, so neither has a row yet. The stored rows keep their old values, which is the point of putting the version on the row - and the distinction between a version that exists and one that has been *used* is what this file got wrong about `b1234878670a` above.
 - **The engine trades a screened shortlist, not a list.** `Trading:Tickers` was deleted in #51: a cycle is now the portfolio's holdings plus the ten best of 31 OMXS30 names, each analysed at most once a trading day. The quote endpoint is used for the exits every cycle and for the fact-sheet rule when a day is new.
-- **The `trading` schema is live and has real rows in it.** The account was opened at 10 000 USD on 2026-09-24, moved to SEK in #44, and holds 100 000 kr of opening balance with five Swedish positions as of 2026-10-01. As of 2026-10-08 the local database had **all eleven** engine migrations and all **five** Alembic revisions applied, so it was level with `master` then. **Stage 7's PR 1 adds four more** (`DecisionTradingMode`, `KillSwitch`, `DecisionShadowCost`, `ShortlistEdgeByMode`), so there are fifteen after it merges, and they apply with `dotnet dotnet-ef database update` as usual. Both numbers in the previous version of this sentence were wrong - twelve and three - which is the hazard this file keeps rediscovering: a count written into prose is a count nobody updates. Stage 6's CI now reads the engine's off the migration files. The USD rows from before the move are kept and self-describing - `decisions.reference_currency` and `signal_outcomes.benchmark_symbol` say which world each belongs to. Clear everything with `TRUNCATE trading.shortlists, trading.signal_outcomes, trading.decisions, trading.orders, trading.positions, trading.portfolios RESTART IDENTITY CASCADE` if a clean baseline ever matters; the append-only triggers deliberately do not block that.
+- **The `trading` schema is live and has real rows in it.** The account was opened at 10 000 USD on 2026-09-24, moved to SEK in #44, and holds 100 000 kr of opening balance with five Swedish positions as of 2026-10-01. As of 2026-10-08 the local database had **all eleven** engine migrations and all **five** Alembic revisions applied, so it was level with `master` then. **Stage 7's PR 1 adds five more** (`DecisionTradingMode`, `KillSwitch`, `DecisionShadowCost`, `ShortlistEdgeByMode`, `ShortlistEdgeShadowPicks`), so there are sixteen after it merges, and they apply with `dotnet dotnet-ef database update` as usual. Both numbers in the previous version of this sentence were wrong - twelve and three - which is the hazard this file keeps rediscovering: a count written into prose is a count nobody updates. Stage 6's CI now reads the engine's off the migration files. The USD rows from before the move are kept and self-describing - `decisions.reference_currency` and `signal_outcomes.benchmark_symbol` say which world each belongs to. Clear everything with `TRUNCATE trading.shortlists, trading.signal_outcomes, trading.decisions, trading.orders, trading.positions, trading.portfolios RESTART IDENTITY CASCADE` if a clean baseline ever matters; the append-only triggers deliberately do not block that.
 - **The engine now needs `Database:ConnectionString`** or it refuses to start. It is in the user secrets store on this machine, set 2026-09-23. `dotnet user-secrets list --project src/engine` prints it, so do not run that where anyone can see the screen.
 - **Migrations are applied by hand, and the engine refuses to start without them.** Decided 2026-09-24: `dotnet dotnet-ef database update` stays a deploy step, but startup names the pending migrations and the command instead of failing on a missing column mid-cycle.
 - **What is now impossible** rather than merely unlikely: the agents cannot name an amount (the contract has no `amount_usd`, and a test refuses one that reappears); an answer that is not the contract cannot deserialise into nulls; a position cannot be sized against cash instead of net asset value; an order cannot be placed on a quote that is stale or dated in the future; nothing can sell shares it does not hold, or sell a holding the agents bought less than three days ago on a new opinion; and a HOLD cannot extend the clock the exits read, because only a purchase moves it.
@@ -130,8 +130,8 @@ healthcheck belongs with the metrics.
 
 1. **`stage-7-trading-mode` is the branch in hand.** It adds `Trading:Mode` (Shadow, Paper, or
    Live refused at startup), records the mode on every decision, and adds a kill switch: the
-   append-only table `trading.kill_switch`, read at cycle start, before each analysis and
-   immediately before each order, failing closed. It brings four migrations.
+   append-only table `trading.kill_switch`, which **stops new buys only** (Hampus, 2026-10-09):
+   the exits and every sale still run, and it fails closed for buys. It brings five migrations.
    **Before it merges, set `Trading:Mode` to `Paper` on the machine that runs the engine**
    (`dotnet user-secrets set Trading:Mode Paper --project src/engine`, or `TRADING_MODE=Paper`
    in the root `.env`). Otherwise the engine restarts in Shadow, and Shadow places nothing,
@@ -139,16 +139,17 @@ healthcheck belongs with the metrics.
    about that at startup, but a warning does not close a position.
    Review Bot accepted it with nits on 2026-10-09, and they are fixed on the branch (see the
    review section in the stage 7 log).
-2. **Next: the engine's metrics and the cycle trace** (PR 2), then Python tracing (PR 3), which
-   is the PR the stage's check reads.
-3. **Six decisions were the owner's**, and they are listed in PR 1's description:
-   - whether Live should ever exist;
-   - lifting D2 (the engine behind `--profile trade`);
-   - the deploy target;
-   - the running engine goes to Paper before the merge (decided: Hampus sets it himself);
-   - whether the kill switch should stop exits;
-   - whether `shortlist_edge` should count a shadowed buy as the agents' pick (it is now
-     grouped by mode, so the question is only what a Shadow row's `bought` means).
+2. **Next, after #63 merges: the engine leaves `--profile trade`** (PR 4, decided). Then the
+   engine's metrics and the cycle trace (PR 2), then Python tracing (PR 3), which is the PR the
+   stage's check reads.
+3. **Hampus has decided all six open questions** (2026-10-09). See *Hampus's decisions* in the
+   stage 7 log:
+   - Live: **wait**, still refused at startup;
+   - D2: **lifted**, in its own PR after #63;
+   - deploy: **postponed**, the engine runs on Hampus's machine;
+   - the running engine: **Paper**, set by Hampus before the merge;
+   - the kill switch: **new buys only**;
+   - `shortlist_edge`: **shadowed buys count** as the agents' picks, by mode.
 
 **Stage 6's closing note, kept for the record:** the compose job's bring-up had not run on
 `stage-6-compose-smoke` before merge, because dispatching it needed *Actions: write*. The token
@@ -663,7 +664,7 @@ open until then.
 - **How much one trading day may deploy is now capped** - built 2026-10-01 as `RiskPolicy:MaxDailyDeploymentPercentage`, 20 % of net asset value. **Counted per day, not per cycle, which is a change from how this item was first written.** The two are nearly the same thing since #51 - an instrument is analysed once a day, so a day has one buying cycle and the rest buy nothing - but the day is both the truer unit for the risk being controlled and the robust one: a cycle that failed halfway would otherwise be handed a fresh budget fifteen minutes later. What remains open is only the number, which wants measurements rather than argument.
 - **`Trading:MinDollarVolume` filters nothing, and that is settled as correct** - decided 2026-10-01: **keep 10 000 000 SEK, unchanged.** The live screen put all 31 OMXS30 names through it and rejected none, which is the evidence this item was waiting for. **A guard that does not fire on healthy data is a guard working.** Its job is to catch a symbol whose listing has gone inactive or whose data has gone stale, not to filter live large caps; raising it until it bites would be optimising a number against the wrong objective, and removing it would let a delisted name with a stale thirty-day volume rank. The condition to revisit it is the account size rather than the market: at 100 000 kr a 5 % position is about 5 000 kr against a 10 MSEK floor - 0.05 % of a day's turnover - so liquidity starts to matter somewhere above a ten-million-krona account, and the floor should move with it rather than on its own.
 - **A fastapi or pydantic bump now fails CI until `contracts/openapi.json` is regenerated.** Added by #61 and correct: those two packages decide what the service's OpenAPI document looks like, so a bump that changes it has changed the served contract. What it means in practice is that those Dependabot pull requests need a regeneration commit - `uv run python -m app.openapi_snapshot > ../../contracts/openapi.json` from `src/agents` - and that whoever makes it should **read the diff**, because the engine's `OpenApiContractTests` then judge the new document against the DTOs. Prose is stripped from the file precisely so that the diff is worth reading; a document that moved with every docstring would train regenerating without looking.
-- **Stage 7's open decisions belong to the owner** and are listed in the stage 7 log (E1, E5, E7) and in PR 1's description: whether Live should ever exist; lifting D2; the deploy target; whether the kill switch should stop exits; and whether `shortlist_edge` should count a shadowed buy as the agents' pick (the view is grouped by mode since the review of #63, and its "agents' picks" are the `Executed` buys only, so a Shadow row reports no buys, though its signals are still scored). The running engine going to Paper is settled: Hampus sets it before the merge.
+- **Stage 7's open decisions were answered by Hampus on 2026-10-09**, and are recorded under *Hampus's decisions* in the stage 7 log: Live waits; the engine leaves `--profile trade` in its own PR after #63; the deploy is postponed with no target; his engine goes to Paper before the merge; the kill switch stops new buys only; and `shortlist_edge` counts shadowed buys as the agents' picks, by mode. None is open.
 - **Nothing translates a duplicate `correlation_id`.** `UnitOfWork` turns EF's concurrency exception into `ConcurrentChangeException`, but a unique-index violation still surfaces as `DbUpdateException` and lands in the worker's general handler with a stack trace. That is arguably right - the ids are fresh Guids, so a duplicate is a bug - but it has never been seen, so it has never been read.
 
 ---
@@ -2471,13 +2472,13 @@ through the agent chain").
 
 | # | Question | Taken |
 |---|---|---|
-| E1 | What do the three modes mean when there is no broker? | **Shadow** analyses, sizes, risk-gates and records the decision, and places nothing. **Paper** is the simulated portfolio the engine has always run. **Live** exists in the enum so the word means one thing, but **startup refuses it** ("this system has no broker to send an order to"). Whether Live should ever exist is left to the owner. |
+| E1 | What do the three modes mean when there is no broker? | **Shadow** analyses, sizes, risk-gates and records the decision, and places nothing. **Paper** is the simulated portfolio the engine has always run. **Live** exists in the enum so the word means one thing, but **startup refuses it** ("this system has no broker to send an order to"). **Hampus: wait** - it stays refused. |
 | E2 | What is the default? | **Shadow**, in `appsettings.json` and in compose (`${TRADING_MODE:-Shadow}`). The setting is required, so a configuration without it fails at startup. `OrderGate` still treats a missing value as Shadow, in case options validation is bypassed in a test host. The mode is read at startup; changing it means a restart, and that is deliberate. |
 | E3 | Where does the kill switch live? | **The append-only table `trading.kill_switch`, where the latest row wins.** An operator INSERTs a row with psql, and the history records who pulled the switch, when and why. Rejected: a file or an environment variable (both need a container exec or a restart) and an HTTP endpoint (it would be the engine's first inbound surface). |
 | E4 | What happens when the switch can't be read? | **It fails closed.** A read error or an empty table counts as engaged. The migration seeds one released row, so a fresh database trades as before. |
-| E5 | Where is it checked? | **In three places:** at cycle start (exits, screening and analyses are all skipped and no agent is asked); before each analysis; and in `OrderGate`, immediately before each order. **It stops exits too**, because "stop trading" should mean no orders, sales included. Left open for review. |
-| E6 | Are shadowed and halted decisions measured? | **Yes.** They keep their signal, so the outcome sweep scores them like any other. The mode is recorded on every decision (`decisions.trading_mode`), history is backfilled as `Paper`, and `trading.hit_rate` groups by it, so the two populations never pool. |
-| E7 | Does the engine leave `--profile trade` now that the switch exists? | **Not in this PR.** D2 kept the engine behind the profile because not starting it was the only way to stop it. That reason is now gone, but lifting D2 changes what `docker compose up` does for the owner, so it is the owner's call and its own PR. |
+| E5 | What does it stop, and where is it checked? | **New buys only** (Hampus; the first version stopped every order, sales included). It is checked at cycle start (the screen and every candidate are skipped, while the exits and the holdings' analyses still run); before each candidate; and in `OrderGate`, immediately before each buy. A sale is never halted, and the switch is not even read for one. |
+| E6 | Are shadowed and halted decisions measured? | **Yes.** They keep their signal, so the outcome sweep scores them like any other. The mode is recorded on every decision (`decisions.trading_mode`), history is backfilled as `Paper`, and `trading.hit_rate` and `trading.shortlist_edge` group by it, so the two populations never pool. **Hampus:** a shadowed buy counts as the agents' pick in `shortlist_edge`; a halted one does not. |
+| E7 | Does the engine leave `--profile trade` now that the switch exists? | **Yes, but not in this PR** (Hampus). D2 kept the engine behind the profile because not starting it was the only way to stop it, and that reason is gone. It leaves the profile in its own pull request after #63 merges (PR 4). |
 
 ### The pull requests
 
@@ -2488,10 +2489,13 @@ Six, in this order:
    `traceparent`, plus the cycle heartbeat and the engine's healthcheck.
 3. Python tracing: `ag2[tracing]`, `TelemetryMiddleware`, `traceparent` extraction,
    `capture_content=False`, and a collector in compose. This is the PR the stage's check reads.
-4. The engine leaves the profile (D2 revisited), if the owner says so.
+4. The engine leaves the profile (D2 lifted). **Decided by Hampus**, as its own PR after #63
+   merges.
 5. `docs/runbook.md`: restarting, where the logs are, and how to stop trading (the kill switch),
    with rate limiting described rather than built.
-6. The deploy, once a target is chosen: a VPS with compose, Azure Container Apps, or Fly.io.
+6. The deploy. **Deferred, no target chosen** (Hampus, 2026-10-09): the engine runs on his
+   machine until he decides to move it to the cloud. The candidates remain a VPS with compose,
+   Azure Container Apps, or Fly.io.
 
 ### PR 1 - Trading:Mode and the kill switch (`stage-7-trading-mode`)
 
@@ -2515,10 +2519,10 @@ Six, in this order:
   not-blank-reason constraint, `changed_by` defaulting to `current_user`, and the seeded released
   row. `KillSwitch` reads the latest row with no tracking, and any exception reads as engaged
   with the exception's type in the reason.
-- **The proof**, as two worker tests against a real database:
-  - *Engaged before the cycle:* the engine is in Paper with a holding below its stop at 80 and an
-    analysis due. It makes **no agent call at all**, places no order and no sale, and the
-    portfolio is unchanged (still 1 order, 1 decision, position 2, cash 9 800).
+- **The proof**, as two worker tests against a real database. *As first written*: the switch
+  stopped every order, so an engaged cycle made no agent call and left a holding below its stop
+  unsold. Both proofs were rewritten when Hampus decided the switch stops new buys only; see
+  *Hampus's decisions* below for what they assert now.
   - *Pulled while the agents are thinking:* the switch is engaged from inside the fake agent's
     `GetSignalAsync`. The one decision in flight is recorded as `Halted`, no order exists, and
     the second instrument in the cycle is **never analysed**.
@@ -2582,6 +2586,59 @@ branch.
     forever.
 - **Local runs after the fixes:**
   - .NET: 573/573, including Testcontainers. The `-warnaserror` build, `dotnet format` and
+    `has-pending-model-changes` are clean.
+  - Python: 515/515, with ruff and mypy clean.
+
+### Hampus's decisions (2026-10-09)
+
+All six of the open questions are answered. Each change is its own commit on the branch.
+
+1. **Live: wait.** It stays in the enum and stays refused at startup. Nothing changes in code.
+2. **The engine leaves `--profile trade`**, but in its own PR after #63 merges (plan PR 4),
+   not in #63. The compose job's assertion that the engine is behind its profile stays until
+   then.
+3. **The kill switch stops new buys only.** Protective exits and every other sale still run.
+   - *Do analyses still run while it is engaged?* **The holdings' do; the candidates' don't.**
+     A holding's analysis can end in a sale, which is allowed (an add to it is `Halted`). A
+     candidate can only lead to a buy, so analysing one would spend LLM time on an order that
+     cannot be placed. So an engaged cycle runs the exits, analyses the holdings, and skips the
+     screen and every candidate. Mid-cycle, the switch is read before each candidate.
+   - *The agents' SELL on a holding goes through.* It reduces exposure, which is what the
+     switch is for, and the stance alone cannot tell a de-risking sale from any other. In Paper
+     the gate grants every sale without reading the switch.
+   - *Fails closed for buys.* An unreadable switch reads as engaged, so a buy is `Halted`, never
+     placed.
+   - *Halted is recorded for blocked buys*, with the reason and price, and its signal is
+     measured.
+   - *Logs:* a Warning at cycle start ("No new buys until it is released. The exits and sales
+     still run and the holdings are still analysed; the screen and its candidates wait."), and
+     a Warning after a cycle in which candidates were skipped mid-cycle, with their count.
+   - **The proof now** (worker tests against a real database):
+     - *Engaged before the cycle:* a Paper holding below its stop at 80. The stop-loss
+       **sells 2 at 80** (cash 9 960), the screen is not asked, and nothing is analysed or
+       bought.
+     - *Engaged, holding due an analysis:* the agents' SELL is **executed**.
+     - *Pulled mid-cycle:* the buy in flight is **`Halted`**, and the next candidate is skipped
+       and counted.
+   - *Deliberate breaks* (each restored):
+     - the gate halting sales: 5 tests fail;
+     - the gate granting buys despite the switch: 4 fail;
+     - the worker ignoring the switch at cycle start: 2 fail;
+     - an engaged cycle analysing no holdings: 1 fails;
+     - no per-candidate check: the mid-cycle test fails;
+     - the switch failing open: the unreachable-database test fails.
+4. **Shadowed buys count as the agents' picks in `shortlist_edge`**, separated by
+   `trading_mode`. It is a new migration, `ShortlistEdgeShadowPicks`, rather than an edit of
+   `ShortlistEdgeByMode`, which CI's bring-up had already applied. A halted buy is not a pick.
+   - *Tested both ways* on the stored view definition, and against data: the Shadow row of a
+     split day has 1 pick and an edge of 7 points.
+   - *Deliberate breaks* (each restored): counting only `Executed` (2 tests fail), counting
+     `Halted` (1 fails), Down keeping the shadow picks (1 fails).
+5. **Deploy: postponed.** The engine runs on Hampus's machine until he decides on the cloud.
+   Plan PR 6 is deferred with no target chosen.
+
+- **Local runs after the decisions:**
+  - .NET: 579/579, including Testcontainers. The `-warnaserror` build, `dotnet format` and
     `has-pending-model-changes` are clean.
   - Python: 515/515, with ruff and mypy clean.
 
