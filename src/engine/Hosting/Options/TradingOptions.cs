@@ -1,6 +1,7 @@
 namespace Engine.Hosting.Options;
 
 using System.ComponentModel.DataAnnotations;
+using Engine.Domain.Trading;
 
 /// <summary>What the worker trades, and how often it looks.</summary>
 public sealed class TradingOptions
@@ -90,6 +91,25 @@ public sealed class TradingOptions
     /// </remarks>
     [Range(typeof(decimal), "1", "100000000")]
     public decimal OpeningBalance { get; init; }
+
+    /// <summary>
+    /// Whether an approved decision becomes an order. <see cref="TradingMode.Shadow"/> records it
+    /// and places nothing; <see cref="TradingMode.Paper"/> executes it against the simulated
+    /// portfolio; <see cref="TradingMode.Live"/> is refused, because there is no broker.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Nullable and <c>[Required]</c>, like the other settings whose first value is a legitimate
+    /// one: <c>Shadow</c> is the enum's zero, so a missing key would otherwise bind to it and look
+    /// deliberate. A setting that decides whether the engine trades should be one somebody wrote.
+    /// </para>
+    /// <para>
+    /// Read once, at startup. Changing it is a restart, on purpose - the thing that stops a
+    /// running engine without one is the kill switch, not this.
+    /// </para>
+    /// </remarks>
+    [Required]
+    public TradingMode? Mode { get; init; }
 
     public TimeSpan CycleInterval => TimeSpan.FromMinutes(CycleIntervalMinutes);
 }

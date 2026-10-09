@@ -21,6 +21,7 @@ public class ProcessProposalUseCase
     private readonly RiskEngine _riskEngine;
     private readonly RiskPolicy _policy;
     private readonly TradingOptions _trading;
+    private readonly OrderGate _gate;
     private readonly TimeProvider _clock;
 
     public ProcessProposalUseCase(
@@ -32,6 +33,7 @@ public class ProcessProposalUseCase
         RiskEngine riskEngine,
         RiskPolicy policy,
         IOptions<TradingOptions> trading,
+        OrderGate gate,
         TimeProvider clock)
     {
         _agentClient = agentClient;
@@ -42,6 +44,7 @@ public class ProcessProposalUseCase
         _riskEngine = riskEngine;
         _policy = policy;
         _trading = trading.Value;
+        _gate = gate;
         _clock = clock;
     }
 
@@ -184,6 +187,15 @@ public class ProcessProposalUseCase
                 signal);
         }
 
+        // Asked here and nowhere earlier: after the agents, the sizer and the risk gate have all
+        // had their say, and immediately before the portfolio is touched. Shadow mode is then the
+        // whole decision with only the last step removed, so what it records is what Paper would
+        // have done.
+        var permission = await _gate.AskAsync(cancellationToken);
+
+        if (permission is not OrderPermission.Granted)
+            return new Cycle(NotPlaced(requested, intent, permission), signal);
+
         // request.AsOf rather than the clock read again, so the trade is stamped with the same
         // instant the risk gate judged the quote against. A holding period is counted in days;
         // the seconds between the two would be precision that means nothing.
@@ -207,6 +219,29 @@ public class ProcessProposalUseCase
             new TradeDecisionResult.Executed(requested, placed.Side, placed.Quantity, placed.Price),
             signal,
             placed);
+    }
+
+    /// <summary>
+    /// An approved order the gate would not let through, as the outcome the decision row stores.
+    /// </summary>
+    private static TradeDecisionResult NotPlaced(Ticker requested, OrderIntent intent, OrderPermission permission)
+    {
+        var (verb, quantity, price) = intent switch
+        {
+            OrderIntent.Buy buy => ("bought", buy.Quantity, buy.Price),
+            OrderIntent.Sell sell => ("sold", sell.Quantity, sell.Price),
+            _ => throw new InvalidOperationException($"{intent.GetType().Name} is not an order.")
+        };
+
+        return permission switch
+        {
+            OrderPermission.ShadowOnly => new TradeDecisionResult.Shadowed(
+                requested,
+                $"Shadow mode: would have {verb} {quantity} {requested.Value} at {price.Amount} {price.Currency}"),
+
+            _ => throw new InvalidOperationException(
+                $"The order gate answered {permission.GetType().Name}, which is not a reason to hold an order back.")
+        };
     }
 
     /// <summary>

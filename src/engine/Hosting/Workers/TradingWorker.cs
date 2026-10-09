@@ -5,6 +5,7 @@ using Engine.Application.UseCases;
 using Engine.Domain.Aggregates.Portfolio;
 using Engine.Domain.Screening;
 using Engine.Domain.Signals;
+using Engine.Domain.Trading;
 using Engine.Domain.ValueObjects;
 using Engine.Hosting.Options;
 using Microsoft.Extensions.Options;
@@ -36,6 +37,16 @@ public class TradingWorker : BackgroundService
     /// </remarks>
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // Once, first, and in words. Which mode a process ran in is the first thing to establish
+        // when reading what it did, and a log that only said it per decision would not say it at
+        // all on a day when nothing was due.
+        _logger.LogInformation(
+            "Trading mode is {Mode}: {Meaning}",
+            _options.Mode,
+            _options.Mode == TradingMode.Paper
+                ? "approved orders are executed against the simulated portfolio."
+                : "every decision is recorded and no order is placed.");
+
         while (!stoppingToken.IsCancellationRequested)
         {
             // Before the analyses, not after. A cycle's buying should see the cash and the
@@ -365,6 +376,10 @@ public class TradingWorker : BackgroundService
             case TradeDecisionResult.NoAction noAction:
                 _logger.LogInformation(
                     "No action for {Ticker}: the agents answered {Stance}.", noAction.Ticker.Value, noAction.Action);
+                break;
+
+            case TradeDecisionResult.Shadowed shadowed:
+                _logger.LogInformation("No order for {Ticker}. {Reason}.", shadowed.Ticker.Value, shadowed.Reason);
                 break;
 
             case TradeDecisionResult.InvalidResponse invalid:

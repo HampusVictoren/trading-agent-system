@@ -44,6 +44,7 @@ builder.Services.Configure<TelemetryOptions>(options =>
     options.SeverityProvider = _ => ResilienceEventSeverity.Information);
 
 builder.Services.AddTransient<QuoteReader>();
+builder.Services.AddTransient<OrderGate>();
 builder.Services.AddTransient<ProcessProposalUseCase>();
 builder.Services.AddTransient<ApplyExitsUseCase>();
 builder.Services.AddTransient<SelectShortlistUseCase>();

@@ -5,9 +5,12 @@ using Engine.Application.Interfaces;
 using Engine.Application.UseCases;
 using Engine.Domain.Aggregates.Portfolio;
 using Engine.Domain.Risk;
+using Engine.Domain.Trading;
 using Engine.Domain.ValueObjects;
+using Engine.Hosting.Options;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using NSubstitute;
 using Shouldly;
 
@@ -88,7 +91,14 @@ public class ApplyExitsUseCaseTests
     /// is one the engine could not get a price for, which is what an outage looks like from here.
     /// </summary>
     private static (ApplyExitsUseCase Sut, CapturedLog Log) Build(
-        DateTimeOffset now, params (Ticker Ticker, decimal Price)[] prices)
+        DateTimeOffset now, params (Ticker Ticker, decimal Price)[] prices) =>
+        Build(TradingMode.Paper, now, prices);
+
+    private static OrderGate AGate(TradingMode mode) =>
+        new(Options.Create(new TradingOptions { Mode = mode }));
+
+    private static (ApplyExitsUseCase Sut, CapturedLog Log) Build(
+        TradingMode mode, DateTimeOffset now, params (Ticker Ticker, decimal Price)[] prices)
     {
         var client = Substitute.For<IAgentClient>();
 
@@ -104,7 +114,7 @@ public class ApplyExitsUseCaseTests
         var reader = new QuoteReader(client, Policy, NullLogger<QuoteReader>.Instance);
         var log = new CapturedLog();
 
-        return (new ApplyExitsUseCase(reader, new RiskEngine(), Policy, new FixedClock(now), log), log);
+        return (new ApplyExitsUseCase(reader, new RiskEngine(), Policy, AGate(mode), new FixedClock(now), log), log);
     }
 
     private static Task<IReadOnlyList<Order>> Run(ApplyExitsUseCase sut, Portfolio portfolio) =>
@@ -201,6 +211,25 @@ public class ApplyExitsUseCaseTests
     }
 
     [Fact]
+    public async Task In_shadow_a_stop_loss_says_what_it_would_have_sold_and_sells_nothing()
+    {
+        // The first test of this class, in Shadow. The rule still fires - that is what Shadow is
+        // for - and the portfolio is left exactly as it was.
+        var (sut, log) = Build(TradingMode.Shadow, Bought.AddDays(1), (Eric, 85m));
+        var portfolio = Holding(Eric);
+
+        (await Run(sut, portfolio)).ShouldBeEmpty();
+
+        portfolio.Positions.ShouldHaveSingleItem().Quantity.ShouldBe(10m);
+        portfolio.CashBalance.Amount.ShouldBe(99_000m);
+        portfolio.NewOrders.Where(order => order.Side == OrderSide.Sell).ShouldBeEmpty();
+
+        log.Lines.ShouldContain(
+            $"Shadow mode: the StopLoss exit would have sold 10 {Eric.Value} at 85 SEK.");
+        log.Lines.ShouldContain("The exits judged 1 of 1 holding(s) and sold 0.");
+    }
+
+    [Fact]
     public async Task A_stale_quote_is_no_quote_at_all()
     {
         // The reader drops a price it should not act on, so the exit never sees it. Selling on
@@ -215,6 +244,7 @@ public class ApplyExitsUseCaseTests
             new QuoteReader(client, Policy, NullLogger<QuoteReader>.Instance),
             new RiskEngine(),
             Policy,
+            AGate(TradingMode.Paper),
             new FixedClock(now),
             NullLogger<ApplyExitsUseCase>.Instance);
 

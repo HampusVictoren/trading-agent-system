@@ -3,6 +3,7 @@ using Engine.Application.Interfaces;
 using Engine.Application.UseCases;
 using Engine.Domain.Aggregates.Portfolio;
 using Engine.Domain.Risk;
+using Engine.Domain.Trading;
 using Engine.Domain.ValueObjects;
 using Engine.Hosting;
 using Engine.Hosting.Options;
@@ -81,7 +82,8 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
     /// cycle and then waits, so what the assertions see is one cycle's work rather than
     /// however many fitted into the wait.
     /// </summary>
-    private ServiceProvider AnEngine(IAgentClient agents, DateTimeOffset? clock = null)
+    private ServiceProvider AnEngine(
+        IAgentClient agents, DateTimeOffset? clock = null, TradingMode mode = TradingMode.Paper)
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -102,6 +104,7 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
                 ["Trading:CycleIntervalMinutes"] = "60",
                 ["Trading:TeamId"] = "default",
                 ["Trading:OpeningBalance"] = "10000",
+                ["Trading:Mode"] = mode.ToString(),
                 ["Database:ConnectionString"] = _database.ConnectionString,
             })
             .Build();
@@ -116,6 +119,7 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
         services.AddSingleton(agents);
         services.AddTradingDatabase();
         services.AddTransient<QuoteReader>();
+        services.AddTransient<OrderGate>();
         services.AddTransient<ProcessProposalUseCase>();
         services.AddTransient<ApplyExitsUseCase>();
         services.AddTransient<SelectShortlistUseCase>();
@@ -278,6 +282,35 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
         // The second cycle saw the money the first one spent.
         decisions[1].AvailableRiskBudget.ShouldBe(9_800m);
         decisions[1].ExistingQuantity.ShouldBe(2m);
+    }
+
+    [Fact]
+    public async Task A_shadow_engine_records_its_decisions_and_places_nothing()
+    {
+        // The same cycle as the restart test's first half - a full-tier buy the risk gate
+        // approves - run in Shadow. The row says what would have been bought; the ledger, the
+        // positions and the cash say nothing happened.
+        await using (var engine = AnEngine(AnAgentServiceThatAnswers(ABuy(conviction: 0.9)), mode: TradingMode.Shadow))
+        {
+            await RunOneCycleAsync(engine, expectedDecisionsAfterwards: 1);
+        }
+
+        await using var context = _database.NewContext();
+
+        var decision = await context.Decisions.SingleAsync(TestContext.Current.CancellationToken);
+        decision.Outcome.ShouldBe(DecisionOutcome.Shadowed);
+        decision.OutcomeReason.ShouldBe("Shadow mode: would have bought 5 AAPL at 100 SEK");
+        decision.OrderId.ShouldBeNull();
+
+        (await context.Orders.CountAsync(TestContext.Current.CancellationToken)).ShouldBe(0);
+
+        // The account is opened - sizing needs a balance to be a share of - and left untouched.
+        var portfolio = await context.Portfolios
+            .Include(held => held.Positions)
+            .SingleAsync(TestContext.Current.CancellationToken);
+
+        portfolio.CashBalance.Amount.ShouldBe(10_000m);
+        portfolio.Positions.ShouldBeEmpty();
     }
 
     [Fact]

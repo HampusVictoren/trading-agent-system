@@ -32,6 +32,7 @@ public sealed class ApplyExitsUseCase
     private readonly QuoteReader _quotes;
     private readonly RiskEngine _riskEngine;
     private readonly RiskPolicy _policy;
+    private readonly OrderGate _gate;
     private readonly TimeProvider _clock;
     private readonly ILogger<ApplyExitsUseCase> _logger;
 
@@ -39,12 +40,14 @@ public sealed class ApplyExitsUseCase
         QuoteReader quotes,
         RiskEngine riskEngine,
         RiskPolicy policy,
+        OrderGate gate,
         TimeProvider clock,
         ILogger<ApplyExitsUseCase> logger)
     {
         _quotes = quotes;
         _riskEngine = riskEngine;
         _policy = policy;
+        _gate = gate;
         _clock = clock;
         _logger = logger;
     }
@@ -80,7 +83,7 @@ public sealed class ApplyExitsUseCase
             if (trigger is null)
                 continue;
 
-            var order = Exit(portfolio, position, quote, trigger.Value, now);
+            var order = await ExitAsync(portfolio, position, quote, trigger.Value, now, cancellationToken);
 
             if (order is not null)
                 placed.Add(order);
@@ -103,8 +106,13 @@ public sealed class ApplyExitsUseCase
     /// stop-loss that sold half would leave the position it judged to be wrong, and a thesis
     /// that has expired is not half expired.
     /// </summary>
-    private Order? Exit(
-        Portfolio portfolio, Position position, InstrumentQuote quote, OrderTrigger trigger, DateTimeOffset now)
+    private async Task<Order?> ExitAsync(
+        Portfolio portfolio,
+        Position position,
+        InstrumentQuote quote,
+        OrderTrigger trigger,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
     {
         var intent = new OrderIntent.Sell(
             new Instrument.Equity(position.Ticker), position.Quantity, quote.Price, quote.AsOf, trigger);
@@ -121,6 +129,28 @@ public sealed class ApplyExitsUseCase
                 trigger, position.Ticker.Value, rejected.Reason);
 
             return null;
+        }
+
+        // The same gate an analysis's order passes, asked per sale and immediately before it. An
+        // exit is the engine acting without being asked, which makes it the order a stopped engine
+        // most needs to not place.
+        var permission = await _gate.AskAsync(cancellationToken);
+
+        if (permission is OrderPermission.ShadowOnly)
+        {
+            // Information, not a warning: in Shadow this is the exit working. The line is the only
+            // trace a shadow exit leaves - it writes no decision row in any mode.
+            _logger.LogInformation(
+                "Shadow mode: the {Trigger} exit would have sold {Quantity} {Ticker} at {Price} {Currency}.",
+                trigger, intent.Quantity, position.Ticker.Value, quote.Price.Amount, quote.Price.Currency);
+
+            return null;
+        }
+
+        if (permission is not OrderPermission.Granted)
+        {
+            throw new InvalidOperationException(
+                $"The order gate answered {permission.GetType().Name}, which the exits do not handle.");
         }
 
         var order = portfolio.ExecuteSell(position.Ticker, intent.Quantity, quote.Price, trigger);

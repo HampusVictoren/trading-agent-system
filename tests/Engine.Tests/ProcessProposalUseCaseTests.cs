@@ -6,6 +6,7 @@ using Engine.Domain.Aggregates.Portfolio;
 using Engine.Domain.Risk;
 using Engine.Domain.Screening;
 using Engine.Domain.Signals;
+using Engine.Domain.Trading;
 using Engine.Domain.ValueObjects;
 using Engine.Hosting.Options;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -120,9 +121,10 @@ public class ProcessProposalUseCaseTests
         Exception? throws = null,
         QuoteDto? quote = null,
         RiskPolicy? policy = null,
-        decimal deployedToday = 0m)
+        decimal deployedToday = 0m,
+        TradingMode mode = TradingMode.Paper)
     {
-        var (sut, client, decisions, _) = BuildWithLedger(signal, throws, quote, policy, deployedToday);
+        var (sut, client, decisions, _) = BuildWithLedger(signal, throws, quote, policy, deployedToday, mode);
         return (sut, client, decisions);
     }
 
@@ -132,7 +134,8 @@ public class ProcessProposalUseCaseTests
         Exception? throws = null,
         QuoteDto? quote = null,
         RiskPolicy? policy = null,
-        decimal deployedToday = 0m)
+        decimal deployedToday = 0m,
+        TradingMode mode = TradingMode.Paper)
     {
         var inForce = policy ?? Policy;
         var client = Substitute.For<IAgentClient>();
@@ -163,7 +166,8 @@ public class ProcessProposalUseCaseTests
             ShortlistSize = 10,
             MinDollarVolume = 10_000_000m,
             CycleIntervalMinutes = 15,
-            TeamId = TeamId
+            TeamId = TeamId,
+            Mode = mode
         });
 
         var quotes = new QuoteReader(client, inForce, NullLogger<QuoteReader>.Instance);
@@ -171,7 +175,7 @@ public class ProcessProposalUseCaseTests
         return (
             new ProcessProposalUseCase(
                 client, portfolios, quotes, decisions, new PositionSizer(), new RiskEngine(), inForce, options,
-                new FixedClock(Now)),
+                new OrderGate(options), new FixedClock(Now)),
             client,
             decisions,
             portfolios);
@@ -180,6 +184,73 @@ public class ProcessProposalUseCaseTests
     private static Task<TradeDecisionResult> Run(
         ProcessProposalUseCase sut, Portfolio portfolio, string correlationId = "cycle-1") =>
         sut.ExecuteAsync(portfolio, AShortlistPick, correlationId, TestContext.Current.CancellationToken);
+
+    /// <summary>
+    /// Shadow is the whole decision with the last step removed. Everything up to the risk gate runs
+    /// exactly as in Paper - so a test here passes only if the same cycle would have traded.
+    /// </summary>
+    public class InShadowMode
+    {
+        [Fact]
+        public async Task An_approved_buy_is_recorded_and_not_placed()
+        {
+            // The first test of ABuyThatGoesThrough, in Shadow: five shares at 100 would have been
+            // bought. The portfolio is exactly as it was, and the row says what would have happened.
+            var portfolio = NewPortfolio();
+            var (sut, _, decisions) = Build(Signal(), mode: TradingMode.Shadow);
+
+            var result = await Run(sut, portfolio);
+
+            result.ShouldBeOfType<TradeDecisionResult.Shadowed>()
+                .Reason.ShouldBe("Shadow mode: would have bought 5 AAPL at 100 SEK");
+
+            portfolio.CashBalance.Amount.ShouldBe(10_000m);
+            portfolio.Positions.ShouldBeEmpty();
+            portfolio.NewOrders.ShouldBeEmpty();
+
+            var row = decisions.OfTheCycle;
+            row.Outcome.ShouldBe(DecisionOutcome.Shadowed);
+            row.OrderId.ShouldBeNull();
+            row.Stance.ShouldBe(Stance.Buy);
+        }
+
+        [Fact]
+        public async Task An_approved_sale_is_recorded_and_not_placed()
+        {
+            var portfolio = Holding(quantity: 10m);
+            var (sut, _, decisions) = Build(Signal(stance: "SELL"), mode: TradingMode.Shadow);
+
+            var result = await Run(sut, portfolio);
+
+            result.ShouldBeOfType<TradeDecisionResult.Shadowed>()
+                .Reason.ShouldStartWith("Shadow mode: would have sold 10 AAPL");
+
+            portfolio.Positions.ShouldHaveSingleItem().Quantity.ShouldBe(10m);
+            decisions.OfTheCycle.OrderId.ShouldBeNull();
+        }
+
+        [Fact]
+        public async Task A_hold_is_still_a_hold()
+        {
+            // The mode decides what happens to an order, and a HOLD never had one.
+            var (sut, _, decisions) = Build(Signal(stance: "HOLD"), mode: TradingMode.Shadow);
+
+            (await Run(sut, NewPortfolio())).ShouldBeOfType<TradeDecisionResult.NoAction>();
+            decisions.OfTheCycle.Outcome.ShouldBe(DecisionOutcome.NoAction);
+        }
+
+        [Fact]
+        public async Task A_risk_rejection_is_still_a_risk_rejection()
+        {
+            // A sale inside the minimum holding period is refused by the gate in either mode, and
+            // the row has to say so rather than "would have sold" - Shadow records what Paper
+            // would have done, and Paper would have done nothing.
+            var portfolio = Holding(daysAgo: 1);
+            var (sut, _, _) = Build(Signal(stance: "SELL"), mode: TradingMode.Shadow);
+
+            (await Run(sut, portfolio)).ShouldBeOfType<TradeDecisionResult.RejectedByRisk>();
+        }
+    }
 
     public class ABuyThatGoesThrough
     {

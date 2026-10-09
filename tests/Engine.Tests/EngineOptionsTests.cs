@@ -1,4 +1,5 @@
 using Engine.Domain.Risk;
+using Engine.Domain.Trading;
 using Engine.Hosting;
 using Engine.Hosting.Options;
 using Microsoft.Extensions.Configuration;
@@ -28,6 +29,7 @@ public class EngineOptionsTests
         ["Trading:CycleIntervalMinutes"] = "15",
         ["Trading:TeamId"] = "default",
         ["Trading:OpeningBalance"] = "10000",
+        ["Trading:Mode"] = "Paper",
         ["Database:ConnectionString"] = "Host=127.0.0.1;Database=tradingdb;Username=engine_svc",
         ["Outcome:CommissionBps"] = "1",
         ["Outcome:SpreadBps"] = "2",
@@ -73,6 +75,44 @@ public class EngineOptionsTests
         Resolve<TradingOptions>().CycleInterval.ShouldBe(TimeSpan.FromMinutes(15));
         Resolve<TradingOptions>().TeamId.ShouldBe("default");
         Resolve<TradingOptions>().OpeningBalance.ShouldBe(10_000m);
+        Resolve<TradingOptions>().Mode.ShouldBe(TradingMode.Paper);
+    }
+
+    [Fact]
+    public void A_missing_trading_mode_is_rejected()
+    {
+        // Shadow is the enum's zero, so without [Required] on a nullable an absent key would bind
+        // to it and look like a choice. Whether the engine trades is a value somebody writes.
+        Should.Throw<OptionsValidationException>(() => Resolve<TradingOptions>(("Trading:Mode", null)));
+    }
+
+    [Fact]
+    public void Live_is_refused_because_there_is_no_broker()
+    {
+        var exception = Should.Throw<OptionsValidationException>(
+            () => Resolve<TradingOptions>(("Trading:Mode", "Live")));
+
+        exception.Message.ShouldContain("no broker");
+    }
+
+    [Fact]
+    public void Shadow_is_accepted()
+    {
+        Resolve<TradingOptions>(("Trading:Mode", "Shadow")).Mode.ShouldBe(TradingMode.Shadow);
+    }
+
+    [Fact]
+    public void The_shipped_configuration_is_shadow()
+    {
+        // The default a fresh checkout gets is the one in which a mistake costs nothing. Read from
+        // the file that ships, not from a copy of it - a test that held its own copy would pass
+        // the day somebody changed the real one to Paper.
+        var shipped = new ConfigurationBuilder()
+            .SetBasePath(AppContext.BaseDirectory)
+            .AddJsonFile("appsettings.json", optional: false)
+            .Build();
+
+        shipped["Trading:Mode"].ShouldBe(nameof(TradingMode.Shadow));
     }
 
     [Fact]
