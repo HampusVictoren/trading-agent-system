@@ -123,6 +123,18 @@ Two things that are easy to misread as broken:
 
 ### Resume here — stage 7, PR 1 of 6 (2026-10-09)
 
+> **After pulling master with #63 in it, do these two things on the machine that runs the
+> engine, before starting it again** (#63 was merged before they were done there):
+>
+> 1. **Set the mode to Paper**, or the engine starts in Shadow and places nothing, not even
+>    the stop-loss and time-limit sales on the positions it holds:
+>    `dotnet user-secrets set Trading:Mode Paper --project src/engine`, or under compose
+>    `TRADING_MODE=Paper` in the root `.env`.
+> 2. **Apply the five new migrations**: `dotnet dotnet-ef database update --project src/engine`.
+>    Without them the engine refuses to start, loudly, because the schema is behind it.
+>
+> Remove this note once both are done.
+
 Stage 6 is merged in full: #58-#62. **Stage 7 has started.** Read that stage in the roadmap
 (*Etapp 7*) and the stage 7 log below before continuing. Five measurements changed the plan:
 there is no broker, so Live has nothing to do; rate limiting already exists; and the engine's
