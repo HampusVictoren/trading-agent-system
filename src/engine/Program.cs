@@ -15,6 +15,10 @@ var builder = Host.CreateApplicationBuilder(args);
 // the environment, where this line is simply a no-op because the store is not there.
 builder.Configuration.AddUserSecrets<Program>(optional: true);
 
+// Before anything else that could fail: a heartbeat left by this container's previous run must
+// not report a process healthy that has not yet written one of its own.
+CycleHeartbeat.ClearLeftovers(builder.Configuration);
+
 builder.Services.AddEngineOptions(builder.Configuration);
 
 // RiskEngine holds no state of its own: Evaluate takes the policy, so the limits live in

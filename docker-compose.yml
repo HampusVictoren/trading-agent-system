@@ -173,6 +173,12 @@ services:
       # spelled out here so that the mode a container runs in is readable in this file. Paper
       # executes against the simulated portfolio; Live is refused at startup (there is no broker).
       Trading__Mode: ${TRADING_MODE:-Shadow}
+    # The healthcheck is the image's own (src/engine/Dockerfile): the trading loop writes a
+    # deadline to /tmp/engine.heartbeat at every step of a cycle, and the check
+    # is healthy while that deadline is in the future. It is not repeated here, so `docker run`
+    # and compose cannot disagree about it. Nothing depends on the engine's health - it is the
+    # last link in the chain - so it is a signal for whoever runs `docker compose ps`, and for
+    # the compose job in CI, rather than a gate.
     # on-failure rather than unless-stopped: the engine's own loop already survives a failed
     # cycle, so a process that exits has hit something structural - a configuration it refuses
     # or a schema behind the build. Restarting is a bet that an operator is fixing it, and

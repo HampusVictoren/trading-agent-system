@@ -134,7 +134,8 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
         IAgentClient agents,
         DateTimeOffset? clock = null,
         TradingMode mode = TradingMode.Paper,
-        string? alsoInTheUniverse = null)
+        string? alsoInTheUniverse = null,
+        string? heartbeatFile = null)
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -158,6 +159,9 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
                 ["Trading:Mode"] = mode.ToString(),
                 ["Database:ConnectionString"] = _database.ConnectionString,
             })
+            .AddInMemoryCollection(heartbeatFile is null
+                ? []
+                : new Dictionary<string, string?> { ["Health:HeartbeatFile"] = heartbeatFile })
             .AddInMemoryCollection(alsoInTheUniverse is null
                 ? []
                 : new Dictionary<string, string?> { ["Trading:Universe:1"] = alsoInTheUniverse })
@@ -192,6 +196,7 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
             engine.GetRequiredService<IOptions<TradingOptions>>(),
             engine.GetRequiredService<TimeProvider>(),
             engine.GetRequiredService<EngineTelemetry>(),
+            engine.GetRequiredService<CycleHeartbeat>(),
             engine.GetRequiredService<ILogger<TradingWorker>>());
 
         await worker.StartAsync(TestContext.Current.CancellationToken);
@@ -214,6 +219,7 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
             engine.GetRequiredService<IOptions<TradingOptions>>(),
             engine.GetRequiredService<TimeProvider>(),
             engine.GetRequiredService<EngineTelemetry>(),
+            engine.GetRequiredService<CycleHeartbeat>(),
             engine.GetRequiredService<ILogger<TradingWorker>>());
 
         await worker.StartAsync(TestContext.Current.CancellationToken);
@@ -473,6 +479,43 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
             .ToList();
         everyValue.ShouldNotContain(value => value.Contains("Momentum", StringComparison.Ordinal));
         everyValue.ShouldNotContain(value => value.Contains("Multipel", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task An_engine_whose_first_cycle_has_not_finished_is_already_healthy()
+    {
+        // The healthcheck's grace: the agents never answer, so not one cycle completes, and the
+        // heartbeat still holds a deadline a whole lease beyond the clock. A container is not
+        // unhealthy for having started recently, or for waiting on a slow analysis.
+        var directory = Directory.CreateTempSubdirectory("heartbeat-").FullName;
+        var path = Path.Combine(directory, "engine.heartbeat");
+
+        try
+        {
+            var agents = ThatShortlists(Substitute.For<IAgentClient>(), Symbol);
+            agents.GetSignalAsync(Arg.Any<TradeSignalRequestDto>(), Arg.Any<CancellationToken>())
+                .Returns<Task<TradeSignalDto?>>(async call =>
+                {
+                    await Task.Delay(Timeout.Infinite, call.Arg<CancellationToken>());
+                    return null;
+                });
+
+            await using var engine = AnEngine(agents, heartbeatFile: path);
+            await RunUntilItLogsAsync(engine, "Requesting analysis for");
+
+            var deadline = DateTimeOffset.FromUnixTimeSeconds(long.Parse(
+                await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken),
+                System.Globalization.CultureInfo.InvariantCulture));
+
+            // An hour's interval in this harness, plus 2 × (2 × 30 + 5) s, floored at five minutes.
+            deadline.ShouldBe(Now + TimeSpan.FromMinutes(60) + TimeSpan.FromMinutes(5));
+            await using var db = _database.NewContext();
+            (await db.Decisions.CountAsync(TestContext.Current.CancellationToken)).ShouldBe(0);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
     }
 
     [Fact]

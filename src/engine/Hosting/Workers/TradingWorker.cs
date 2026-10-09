@@ -24,6 +24,7 @@ public class TradingWorker : BackgroundService
     private readonly TradingOptions _options;
     private readonly TimeProvider _clock;
     private readonly EngineTelemetry _telemetry;
+    private readonly CycleHeartbeat _heartbeat;
     private readonly ILogger<TradingWorker> _logger;
 
     public TradingWorker(
@@ -31,12 +32,14 @@ public class TradingWorker : BackgroundService
         IOptions<TradingOptions> options,
         TimeProvider clock,
         EngineTelemetry telemetry,
+        CycleHeartbeat heartbeat,
         ILogger<TradingWorker> logger)
     {
         _scopeFactory = scopeFactory;
         _options = options.Value;
         _clock = clock;
         _telemetry = telemetry;
+        _heartbeat = heartbeat;
         _logger = logger;
     }
 
@@ -98,6 +101,11 @@ public class TradingWorker : BackgroundService
     /// </remarks>
     private async Task<bool> RunOneCycleAsync(CancellationToken stoppingToken)
     {
+        // First of all. The first cycle starts as the worker does, so this is also the engine's
+        // first beat: one that has not finished a cycle yet is starting, not stuck, and it is
+        // healthy for one whole lease from here.
+        _heartbeat.Beat();
+
         Activity.Current = null;
         using var cycle = EngineTelemetry.ActivitySource.StartActivity(CycleSpan);
         cycle?.SetTag("trading.mode", (_options.Mode ?? TradingMode.Shadow).ToString());
@@ -115,11 +123,13 @@ public class TradingWorker : BackgroundService
         // position headroom the exits have just released, and a position the rules say to
         // close should not survive because an analysis of it happened to come first.
         await RunExitsAsync(stoppingToken);
+        _heartbeat.Beat();
 
         var today = DateOnly.FromDateTime(_clock.GetUtcNow().UtcDateTime);
         var selection = buyingHalted
             ? await HoldingsOnlyAsync(stoppingToken)
             : await SelectAsync(today, stoppingToken);
+        _heartbeat.Beat();
         var verdicts = new Dictionary<AnalysisVerdict, int>();
         var candidatesNotAnalysed = 0;
 
@@ -127,6 +137,8 @@ public class TradingWorker : BackgroundService
         {
             if (stoppingToken.IsCancellationRequested)
                 return false;
+
+            _heartbeat.Beat();
 
             // Read again before every candidate, so a switch pulled mid-cycle costs at most the
             // analysis already under way - and that one's buy is stopped by the gate, which
@@ -187,6 +199,9 @@ public class TradingWorker : BackgroundService
         cycle?.SetTag("trading.selected", selection.Count);
         cycle?.SetTag("trading.analysed", verdicts.GetValueOrDefault(AnalysisVerdict.Due));
         cycle?.SetTag("trading.candidates_skipped", candidatesNotAnalysed);
+
+        // The last before the sleep, so the lease covers the whole wait for the next cycle.
+        _heartbeat.Beat();
 
         LogWhatTheCycleDid(selection.Count, verdicts);
 
