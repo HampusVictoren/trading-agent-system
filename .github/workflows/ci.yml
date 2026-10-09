@@ -11,6 +11,10 @@ on:
   # its mind - on a repository where nothing was pushed that day.
   schedule:
     - cron: "17 3 * * *"
+  # By hand, on any branch: the compose job's bring-up only runs outside pull requests, so
+  # without this a change to it is first exercised on master. `gh workflow run ci.yml --ref
+  # <branch>` runs it - and everything else - before the merge rather than after.
+  workflow_dispatch:
 
 # Least privilege: nothing here needs to write to the repository.
 permissions:
@@ -309,8 +313,9 @@ jobs:
           fi
 
       # Everything below is the stage's own success criterion, and it is slow: four images
-      # and a database from nothing. On master and nightly rather than on every pull request,
-      # where the two image jobs already prove what each half builds into.
+      # and a database from nothing. On master, nightly and by hand (workflow_dispatch) rather
+      # than on every pull request, where the two image jobs already prove what each half
+      # builds into.
       # `docker compose up -d`, as a person types it, and then waiting by hand - because
       # `--wait` reports failure when a container exits, even with code 0, so a compose file
       # that provisions through short-lived containers cannot be waited on as a whole.
