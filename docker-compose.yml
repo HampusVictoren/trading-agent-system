@@ -178,11 +178,18 @@ services:
       # at all. The collector that would receive them arrives with stage 7's next pull request.
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     # The healthcheck is the image's own (src/engine/Dockerfile): the trading loop writes a
-    # deadline to /tmp/engine.heartbeat at every step of a cycle, and the check
-    # is healthy while that deadline is in the future. It is not repeated here, so `docker run`
-    # and compose cannot disagree about it. Nothing depends on the engine's health - it is the
-    # last link in the chain - so it is a signal for whoever runs `docker compose ps`, and for
+    # deadline to /tmp/engine.heartbeat at every step of a cycle and after every quote, and the
+    # check is healthy while that deadline is in the future. It is not repeated here, so `docker
+    # run` and compose cannot disagree about it. Nothing depends on the engine's health - it is
+    # the last link in the chain - so it is a signal for whoever runs `docker compose ps`, and for
     # the compose job in CI, rather than a gate.
+    # Docker's default is 10 s between SIGTERM and SIGKILL. The engine's host gives its workers
+    # up to 30 s (.NET's default shutdown timeout) to finish the unit of work in hand, and after
+    # that the trace and metric exporters each get up to 3 s to flush - 36 s at worst, with a
+    # collector configured and gone. 45 s covers that with room, so a stop is a clean shutdown
+    # and not a kill halfway through one. With no endpoint set there is nothing to flush, and a
+    # stop takes as long as the worker's current step takes to notice the cancellation.
+    stop_grace_period: 45s
     # on-failure rather than unless-stopped: the engine's own loop already survives a failed
     # cycle, so a process that exits has hit something structural - a configuration it refuses
     # or a schema behind the build. Restarting is a bet that an operator is fixing it, and
