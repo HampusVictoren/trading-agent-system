@@ -16,7 +16,8 @@ public enum DecisionOutcome
     NoAction,
     InvalidResponse,
     AgentUnavailable,
-    Shadowed
+    Shadowed,
+    Halted
 }
 
 /// <summary>
@@ -103,6 +104,17 @@ public abstract record TradeDecisionResult
     public sealed record Shadowed(Ticker Ticker, string Reason) : TradeDecisionResult
     {
         public override DecisionOutcome Outcome => DecisionOutcome.Shadowed;
+        public override string? OutcomeReason => Reason;
+    }
+
+    /// <summary>
+    /// The risk gate approved an order and the kill switch stopped it, in the moment between the
+    /// two. The agents' answer was paid for, so it is still recorded and still measured - it is a
+    /// signal like any other - but no order exists.
+    /// </summary>
+    public sealed record Halted(Ticker Ticker, string Reason) : TradeDecisionResult
+    {
+        public override DecisionOutcome Outcome => DecisionOutcome.Halted;
         public override string? OutcomeReason => Reason;
     }
 

@@ -49,6 +49,17 @@ public class TradingWorker : BackgroundService
 
         while (!stoppingToken.IsCancellationRequested)
         {
+            // First, before anything is asked of anyone. A halted engine does not run the exits,
+            // screen or spend LLM time - it reads the switch, says so, and waits for the next cycle,
+            // which is also how long a release takes to be noticed.
+            if (await IsHaltedAsync(stoppingToken))
+            {
+                if (!await WaitForTheNextCycleAsync(stoppingToken))
+                    return;
+
+                continue;
+            }
+
             // Before the analyses, not after. A cycle's buying should see the cash and the
             // position headroom the exits have just released, and a position the rules say to
             // close should not survive because an analysis of it happened to come first.
@@ -62,6 +73,12 @@ public class TradingWorker : BackgroundService
             {
                 if (stoppingToken.IsCancellationRequested)
                     return;
+
+                // Read again before every analysis, so a switch pulled mid-cycle costs at most the
+                // analysis already under way - and that one's order is stopped by the gate, which
+                // reads it again after the agents have answered.
+                if (await IsHaltedAsync(stoppingToken))
+                    break;
 
                 // One scope per analysis, so one change tracker and one transaction per decision.
                 using var scope = _scopeFactory.CreateScope();
@@ -103,15 +120,49 @@ public class TradingWorker : BackgroundService
 
             LogWhatTheCycleDid(selection.Count, verdicts);
 
-            try
-            {
-                await Task.Delay(_options.CycleInterval, stoppingToken);
-            }
-            catch (OperationCanceledException)
-            {
+            if (!await WaitForTheNextCycleAsync(stoppingToken))
                 return;
-            }
         }
+    }
+
+    /// <returns>False when the worker is shutting down.</returns>
+    private async Task<bool> WaitForTheNextCycleAsync(CancellationToken stoppingToken)
+    {
+        try
+        {
+            await Task.Delay(_options.CycleInterval, stoppingToken);
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Reads the kill switch in a scope of its own, and says so when it is engaged.
+    /// </summary>
+    /// <remarks>
+    /// A warning every time it is found engaged, rather than once: at a fifteen-minute cadence that
+    /// is a line per cycle, and an engine that has been stopped should keep saying why for as long
+    /// as it is stopped. The read itself fails closed, so "could not read it" arrives here as
+    /// engaged with that as the reason.
+    /// </remarks>
+    private async Task<bool> IsHaltedAsync(CancellationToken cancellationToken)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var state = await scope.ServiceProvider.GetRequiredService<IKillSwitch>().ReadAsync(cancellationToken);
+
+        if (!state.Engaged)
+            return false;
+
+        _logger.LogWarning(
+            "Trading is halted by the kill switch (since {Since}): {Reason}. Nothing is analysed or placed "
+            + "until it is released.",
+            state.Since?.ToString("u") ?? "unknown",
+            state.Reason);
+
+        return true;
     }
 
     /// <summary>
@@ -380,6 +431,10 @@ public class TradingWorker : BackgroundService
 
             case TradeDecisionResult.Shadowed shadowed:
                 _logger.LogInformation("No order for {Ticker}. {Reason}.", shadowed.Ticker.Value, shadowed.Reason);
+                break;
+
+            case TradeDecisionResult.Halted halted:
+                _logger.LogWarning("No order for {Ticker}. {Reason}.", halted.Ticker.Value, halted.Reason);
                 break;
 
             case TradeDecisionResult.InvalidResponse invalid:

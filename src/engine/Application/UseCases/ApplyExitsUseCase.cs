@@ -147,6 +147,17 @@ public sealed class ApplyExitsUseCase
             return null;
         }
 
+        if (permission is OrderPermission.Halted halted)
+        {
+            // A warning: the rules wanted out of a position and somebody has stopped trading. That
+            // is the switch working, and it is also a position nobody is now managing.
+            _logger.LogWarning(
+                "The {Trigger} exit for {Ticker} was not placed. {Reason}.",
+                trigger, position.Ticker.Value, halted.Reason);
+
+            return null;
+        }
+
         if (permission is not OrderPermission.Granted)
         {
             throw new InvalidOperationException(

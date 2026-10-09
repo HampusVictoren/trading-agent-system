@@ -294,7 +294,13 @@ public class TradingSchemaTests : IAsyncLifetime
 
             await migrator.MigrateAsync(cancellationToken: TestContext.Current.CancellationToken);
 
-            (await TablesInTradingSchema(context)).ShouldBe(7);
+            (await TablesInTradingSchema(context)).ShouldBe(8);
+
+            // The kill switch's seed comes back with the table: a database that has just been
+            // migrated up is released, not empty - and empty would read as engaged.
+            (await context.Database.SqlQueryRaw<bool>(
+                    """SELECT engaged AS "Value" FROM trading.kill_switch""")
+                .SingleAsync(TestContext.Current.CancellationToken)).ShouldBeFalse();
             (await FunctionsInTradingSchema(context)).ShouldBe(1);
 
             // Two report views now, and both depend on tables, so they have to be dropped

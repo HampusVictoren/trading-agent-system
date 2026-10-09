@@ -190,7 +190,8 @@ public class ProcessProposalUseCase
         // Asked here and nowhere earlier: after the agents, the sizer and the risk gate have all
         // had their say, and immediately before the portfolio is touched. Shadow mode is then the
         // whole decision with only the last step removed, so what it records is what Paper would
-        // have done.
+        // have done - and the kill switch is read after the LLM call rather than before it, so a
+        // switch pulled while the agents were thinking still stops this order.
         var permission = await _gate.AskAsync(cancellationToken);
 
         if (permission is not OrderPermission.Granted)
@@ -238,6 +239,9 @@ public class ProcessProposalUseCase
             OrderPermission.ShadowOnly => new TradeDecisionResult.Shadowed(
                 requested,
                 $"Shadow mode: would have {verb} {quantity} {requested.Value} at {price.Amount} {price.Currency}"),
+
+            OrderPermission.Halted halted => new TradeDecisionResult.Halted(
+                requested, $"{halted.Reason}; would have {verb} {quantity} {requested.Value}"),
 
             _ => throw new InvalidOperationException(
                 $"The order gate answered {permission.GetType().Name}, which is not a reason to hold an order back.")

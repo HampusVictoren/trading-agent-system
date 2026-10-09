@@ -122,9 +122,11 @@ public class ProcessProposalUseCaseTests
         QuoteDto? quote = null,
         RiskPolicy? policy = null,
         decimal deployedToday = 0m,
-        TradingMode mode = TradingMode.Paper)
+        TradingMode mode = TradingMode.Paper,
+        FixedKillSwitch? killSwitch = null)
     {
-        var (sut, client, decisions, _) = BuildWithLedger(signal, throws, quote, policy, deployedToday, mode);
+        var (sut, client, decisions, _) =
+            BuildWithLedger(signal, throws, quote, policy, deployedToday, mode, killSwitch);
         return (sut, client, decisions);
     }
 
@@ -135,7 +137,8 @@ public class ProcessProposalUseCaseTests
         QuoteDto? quote = null,
         RiskPolicy? policy = null,
         decimal deployedToday = 0m,
-        TradingMode mode = TradingMode.Paper)
+        TradingMode mode = TradingMode.Paper,
+        FixedKillSwitch? killSwitch = null)
     {
         var inForce = policy ?? Policy;
         var client = Substitute.For<IAgentClient>();
@@ -175,7 +178,7 @@ public class ProcessProposalUseCaseTests
         return (
             new ProcessProposalUseCase(
                 client, portfolios, quotes, decisions, new PositionSizer(), new RiskEngine(), inForce, options,
-                new OrderGate(options), new FixedClock(Now)),
+                new OrderGate(options, killSwitch ?? FixedKillSwitch.Released()), new FixedClock(Now)),
             client,
             decisions,
             portfolios);
@@ -274,6 +277,61 @@ public class ProcessProposalUseCaseTests
             var (sut, _, _) = Build(Signal(stance: "SELL"), mode: TradingMode.Shadow);
 
             (await Run(sut, portfolio)).ShouldBeOfType<TradeDecisionResult.RejectedByRisk>();
+        }
+    }
+
+    /// <summary>
+    /// The kill switch, read immediately before an order and after the agents have answered - so a
+    /// switch pulled while they were thinking still stops this order.
+    /// </summary>
+    public class WithTheKillSwitchEngaged
+    {
+        [Fact]
+        public async Task An_approved_buy_is_recorded_as_halted_and_nothing_is_placed()
+        {
+            var portfolio = NewPortfolio();
+            var (sut, _, decisions) = Build(Signal(), killSwitch: FixedKillSwitch.Engaged("prices look wrong"));
+
+            var result = await Run(sut, portfolio);
+
+            result.ShouldBeOfType<TradeDecisionResult.Halted>()
+                .Reason.ShouldBe("Kill switch engaged: prices look wrong; would have bought 5 AAPL");
+
+            portfolio.CashBalance.Amount.ShouldBe(10_000m);
+            portfolio.Positions.ShouldBeEmpty();
+            portfolio.NewOrders.ShouldBeEmpty();
+
+            // The answer was paid for, so it is kept and will be measured like any other signal.
+            var row = decisions.OfTheCycle;
+            row.Outcome.ShouldBe(DecisionOutcome.Halted);
+            row.Stance.ShouldBe(Stance.Buy);
+            row.OrderId.ShouldBeNull();
+        }
+
+        [Fact]
+        public async Task An_approved_sale_is_not_placed_either()
+        {
+            var portfolio = Holding(quantity: 10m);
+            var (sut, _, _) = Build(Signal(stance: "SELL"), killSwitch: FixedKillSwitch.Engaged());
+
+            (await Run(sut, portfolio)).ShouldBeOfType<TradeDecisionResult.Halted>();
+
+            portfolio.Positions.ShouldHaveSingleItem().Quantity.ShouldBe(10m);
+        }
+
+        [Fact]
+        public async Task It_is_not_read_for_a_decision_that_places_nothing()
+        {
+            // A HOLD has no order to stop. Reading the switch for it would not be wrong, but it
+            // would make "the gate is asked immediately before an order" a sentence rather than a
+            // property - and this is what pins the property.
+            var killSwitch = FixedKillSwitch.Engaged();
+            var (sut, _, decisions) = Build(Signal(stance: "HOLD"), killSwitch: killSwitch);
+
+            (await Run(sut, NewPortfolio())).ShouldBeOfType<TradeDecisionResult.NoAction>();
+
+            killSwitch.Reads.ShouldBe(0);
+            decisions.OfTheCycle.Outcome.ShouldBe(DecisionOutcome.NoAction);
         }
     }
 

@@ -1,5 +1,6 @@
 namespace Engine.Application.UseCases;
 
+using Engine.Application.Persistence;
 using Engine.Domain.Trading;
 using Engine.Hosting.Options;
 using Microsoft.Extensions.Options;
@@ -20,6 +21,9 @@ public abstract record OrderPermission
 
     /// <summary>The engine is in Shadow mode: record what would have been done, and do none of it.</summary>
     public sealed record ShadowOnly : OrderPermission;
+
+    /// <summary>The kill switch is engaged, or could not be read. Place nothing.</summary>
+    public sealed record Halted(string Reason) : OrderPermission;
 }
 
 /// <summary>
@@ -35,6 +39,12 @@ public abstract record OrderPermission
 /// have been.
 /// </para>
 /// <para>
+/// The kill switch is read here, on every ask, rather than trusted from the start of the cycle. A
+/// cycle is minutes of LLM calls, and an operator who pulls the switch during one means the next
+/// order, not the next cycle. Shadow does not read it, because Shadow places nothing to stop -
+/// the worker reads it separately, to stop spending on analyses.
+/// </para>
+/// <para>
 /// A mode that is missing reads as Shadow. Validation at startup makes that unreachable in a
 /// running engine; the fallback is for anything that constructs the options by hand, and it goes
 /// the safe way because the other direction places orders.
@@ -42,24 +52,37 @@ public abstract record OrderPermission
 /// </remarks>
 public sealed class OrderGate
 {
-    public OrderGate(IOptions<TradingOptions> trading)
+    private readonly IKillSwitch _killSwitch;
+
+    public OrderGate(IOptions<TradingOptions> trading, IKillSwitch killSwitch)
     {
         Mode = trading.Value.Mode ?? TradingMode.Shadow;
+        _killSwitch = killSwitch;
     }
 
     /// <summary>The mode every decision this engine records was made under.</summary>
     public TradingMode Mode { get; }
 
     /// <summary>Asked immediately before an order would be placed, and never earlier.</summary>
-    public Task<OrderPermission> AskAsync(CancellationToken cancellationToken = default) =>
-        Task.FromResult<OrderPermission>(Mode switch
+    public async Task<OrderPermission> AskAsync(CancellationToken cancellationToken = default)
+    {
+        switch (Mode)
         {
-            TradingMode.Paper => new OrderPermission.Granted(),
-            TradingMode.Shadow => new OrderPermission.ShadowOnly(),
+            case TradingMode.Shadow:
+                return new OrderPermission.ShadowOnly();
+
+            case TradingMode.Paper:
+                var state = await _killSwitch.ReadAsync(cancellationToken);
+
+                return state.Engaged
+                    ? new OrderPermission.Halted($"Kill switch engaged: {state.Reason}")
+                    : new OrderPermission.Granted();
 
             // Unreachable: TradingOptionsValidator refuses Live at startup. Throwing rather than
             // answering Granted, because the wrong answer here sends an order nobody can receive.
-            _ => throw new InvalidOperationException(
-                $"Trading mode {Mode} has no broker behind it, so nothing may be placed.")
-        });
+            default:
+                throw new InvalidOperationException(
+                    $"Trading mode {Mode} has no broker behind it, so nothing may be placed.");
+        }
+    }
 }

@@ -92,13 +92,17 @@ public class ApplyExitsUseCaseTests
     /// </summary>
     private static (ApplyExitsUseCase Sut, CapturedLog Log) Build(
         DateTimeOffset now, params (Ticker Ticker, decimal Price)[] prices) =>
-        Build(TradingMode.Paper, now, prices);
-
-    private static OrderGate AGate(TradingMode mode) =>
-        new(Options.Create(new TradingOptions { Mode = mode }));
+        Build(AGate(TradingMode.Paper), now, prices);
 
     private static (ApplyExitsUseCase Sut, CapturedLog Log) Build(
-        TradingMode mode, DateTimeOffset now, params (Ticker Ticker, decimal Price)[] prices)
+        TradingMode mode, DateTimeOffset now, params (Ticker Ticker, decimal Price)[] prices) =>
+        Build(AGate(mode), now, prices);
+
+    private static OrderGate AGate(TradingMode mode, FixedKillSwitch? killSwitch = null) =>
+        new(Options.Create(new TradingOptions { Mode = mode }), killSwitch ?? FixedKillSwitch.Released());
+
+    private static (ApplyExitsUseCase Sut, CapturedLog Log) Build(
+        OrderGate gate, DateTimeOffset now, params (Ticker Ticker, decimal Price)[] prices)
     {
         var client = Substitute.For<IAgentClient>();
 
@@ -114,7 +118,7 @@ public class ApplyExitsUseCaseTests
         var reader = new QuoteReader(client, Policy, NullLogger<QuoteReader>.Instance);
         var log = new CapturedLog();
 
-        return (new ApplyExitsUseCase(reader, new RiskEngine(), Policy, AGate(mode), new FixedClock(now), log), log);
+        return (new ApplyExitsUseCase(reader, new RiskEngine(), Policy, gate, new FixedClock(now), log), log);
     }
 
     private static Task<IReadOnlyList<Order>> Run(ApplyExitsUseCase sut, Portfolio portfolio) =>
@@ -227,6 +231,22 @@ public class ApplyExitsUseCaseTests
         log.Lines.ShouldContain(
             $"Shadow mode: the StopLoss exit would have sold 10 {Eric.Value} at 85 SEK.");
         log.Lines.ShouldContain("The exits judged 1 of 1 holding(s) and sold 0.");
+    }
+
+    [Fact]
+    public async Task With_the_kill_switch_engaged_a_stop_loss_sells_nothing_and_says_so()
+    {
+        // The exits are the engine acting without being asked, which makes them the orders a
+        // stopped engine most needs to not place.
+        var (sut, log) = Build(
+            AGate(TradingMode.Paper, FixedKillSwitch.Engaged("prices look wrong")), Bought.AddDays(1), (Eric, 85m));
+        var portfolio = Holding(Eric);
+
+        (await Run(sut, portfolio)).ShouldBeEmpty();
+
+        portfolio.Positions.ShouldHaveSingleItem().Quantity.ShouldBe(10m);
+        log.Lines.ShouldContain(
+            $"The StopLoss exit for {Eric.Value} was not placed. Kill switch engaged: prices look wrong.");
     }
 
     [Fact]
