@@ -173,6 +173,10 @@ services:
       # spelled out here so that the mode a container runs in is readable in this file. Paper
       # executes against the simulated portfolio; Live is refused at startup (there is no broker).
       Trading__Mode: ${TRADING_MODE:-Shadow}
+      # Where the engine's metrics and traces go, over OTLP. Empty unless the root .env sets it,
+      # and empty means nothing is exported and nothing retries: the engine registers no exporter
+      # at all. The collector that would receive them arrives with stage 7's next pull request.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     # The healthcheck is the image's own (src/engine/Dockerfile): the trading loop writes a
     # deadline to /tmp/engine.heartbeat at every step of a cycle, and the check
     # is healthy while that deadline is in the future. It is not repeated here, so `docker run`
