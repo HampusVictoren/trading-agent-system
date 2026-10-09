@@ -382,11 +382,11 @@ jobs:
           started || { echo "the engine never logged 'Application started'"; exit 1; }
           test "$(docker inspect -f "{{.State.Status}}" "$(docker compose ps -aq engine)")" = "running"
 
-      # The image's HEALTHCHECK reads the heartbeat the trading loop writes, and this is the
-      # check that it does: healthy with no LLM on the runner, so every cycle's analyses fail,
-      # because healthy means the loop is making progress rather than that its answers are
-      # good. The check runs every 30 s and the first pass ends the start period, so a minute
-      # or so is normal; three is the ceiling. "unhealthy" fails at once rather than waiting.
+      # The image's HEALTHCHECK reads the heartbeat the trading loop writes, and this is the check
+      # that it does: healthy with no LLM on the runner, so every cycle's analyses fail, because
+      # healthy means the loop is making progress rather than that its answers are good. The check
+      # runs every 30 s and the first pass ends the start period, so a minute or so is normal; three
+      # is the ceiling. "unhealthy" fails at once rather than waiting.
       - name: The engine's heartbeat makes it healthy
         if: github.event_name != 'pull_request'
         run: |

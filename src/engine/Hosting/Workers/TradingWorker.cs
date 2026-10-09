@@ -110,18 +110,17 @@ public class TradingWorker : BackgroundService
         using var cycle = EngineTelemetry.ActivitySource.StartActivity(CycleSpan);
         cycle?.SetTag("trading.mode", _options.EffectiveMode.ToString());
 
-        // First, before anything is asked of anyone. The switch stops new buys only, so an
-        // engaged one does not stop the cycle: the exits still run, and the holdings are still
-        // analysed, because the agents' SELL on a holding is a sale the switch lets through.
-        // What it skips is the screen and every candidate, since the only order a candidate
-        // can lead to is a buy, and an analysis of one would be LLM time spent on an order
-        // that could not be placed.
+        // First, before anything is asked of anyone. The switch stops new buys only, so an engaged
+        // one does not stop the cycle: the exits still run, and the holdings are still analysed,
+        // because the agents' SELL on a holding is a sale the switch lets through. What it skips is
+        // the screen and every candidate, since the only order a candidate can lead to is a buy,
+        // and an analysis of one would be LLM time spent on an order that could not be placed.
         var buyingHalted = await IsBuyingHaltedAsync(stoppingToken);
         cycle?.SetTag("trading.kill_switch.engaged", buyingHalted);
 
-        // Before the analyses, not after. A cycle's buying should see the cash and the
-        // position headroom the exits have just released, and a position the rules say to
-        // close should not survive because an analysis of it happened to come first.
+        // Before the analyses, not after. A cycle's buying should see the cash and the position
+        // headroom the exits have just released, and a position the rules say to close should not
+        // survive because an analysis of it happened to come first.
         await RunExitsAsync(stoppingToken);
         _heartbeat.Beat();
 
@@ -141,9 +140,9 @@ public class TradingWorker : BackgroundService
             _heartbeat.Beat();
 
             // Read again before every candidate, so a switch pulled mid-cycle costs at most the
-            // analysis already under way - and that one's buy is stopped by the gate, which
-            // reads it again after the agents have answered. A holding is analysed whatever
-            // the switch says; holdings come first in the selection anyway.
+            // analysis already under way - and that one's buy is stopped by the gate, which reads
+            // it again after the agents have answered. A holding is analysed whatever the switch
+            // says; holdings come first in the selection anyway.
             if (selected.Source != SelectionSource.Holding && await KillSwitchStateAsync(stoppingToken) is { Engaged: true })
             {
                 candidatesNotAnalysed++;
@@ -153,9 +152,9 @@ public class TradingWorker : BackgroundService
             // One scope per analysis, so one change tracker and one transaction per decision.
             using var scope = _scopeFactory.CreateScope();
 
-            // One id per analysis, generated here and logged before the call, so a line in
-            // this log can be found in the agent service's - it echoes the id and puts
-            // it in every line it writes while handling the request.
+            // One id per analysis, generated here and logged before the call, so a line in this log
+            // can be found in the agent service's - it echoes the id and puts it in every line it
+            // writes while handling the request.
             var correlationId = Guid.NewGuid().ToString();
 
             using var analysis = EngineTelemetry.ActivitySource.StartActivity(AnalysisSpan);
@@ -177,10 +176,10 @@ public class TradingWorker : BackgroundService
             }
             catch (ConcurrentChangeException ex)
             {
-                // An expected outcome rather than a bug, so no stack trace. Nothing was
-                // traded either: the buy is in the same transaction as the decision, so a
-                // commit that fails costs an LLM call and nothing else. The next cycle
-                // reads the portfolio again.
+                // An expected outcome rather than a bug, so no stack trace. Nothing was traded
+                // either: the buy is in the same transaction as the decision, so a commit that
+                // fails costs an LLM call and nothing else. The next cycle reads the portfolio
+                // again.
                 _logger.LogError(
                     "Cycle {CorrelationId} for {Ticker} was not stored: {Reason}",
                     correlationId, selected.Ticker.Value, ex.Message);
@@ -188,8 +187,8 @@ public class TradingWorker : BackgroundService
             }
             catch (Exception ex)
             {
-                // Only a bug, or an outage, reaches this point: every expected outcome of
-                // the analysis itself is a result rather than an exception.
+                // Only a bug, or an outage, reaches this point: every expected outcome of the
+                // analysis itself is a result rather than an exception.
                 _logger.LogError(
                     ex, "Unexpected failure in the trading cycle for {Ticker}.", selected.Ticker.Value);
                 Failed(analysis, ex);
