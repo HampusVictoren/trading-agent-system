@@ -45,6 +45,7 @@ builder.Services.Configure<TelemetryOptions>(options =>
 
 builder.Services.AddTransient<QuoteReader>();
 builder.Services.AddTransient<OrderGate>();
+builder.Services.AddSingleton<ShadowExitNotices>();
 builder.Services.AddTransient<ProcessProposalUseCase>();
 builder.Services.AddTransient<ApplyExitsUseCase>();
 builder.Services.AddTransient<SelectShortlistUseCase>();

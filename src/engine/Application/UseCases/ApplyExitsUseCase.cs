@@ -33,6 +33,7 @@ public sealed class ApplyExitsUseCase
     private readonly RiskEngine _riskEngine;
     private readonly RiskPolicy _policy;
     private readonly OrderGate _gate;
+    private readonly ShadowExitNotices _notices;
     private readonly TimeProvider _clock;
     private readonly ILogger<ApplyExitsUseCase> _logger;
 
@@ -41,6 +42,7 @@ public sealed class ApplyExitsUseCase
         RiskEngine riskEngine,
         RiskPolicy policy,
         OrderGate gate,
+        ShadowExitNotices notices,
         TimeProvider clock,
         ILogger<ApplyExitsUseCase> logger)
     {
@@ -48,6 +50,7 @@ public sealed class ApplyExitsUseCase
         _riskEngine = riskEngine;
         _policy = policy;
         _gate = gate;
+        _notices = notices;
         _clock = clock;
         _logger = logger;
     }
@@ -69,6 +72,8 @@ public sealed class ApplyExitsUseCase
         // should not survive because it happened to be today's subject.
         var quotes = await _quotes.ForHoldingsAsync(portfolio, now, correlationId, cancellationToken: cancellationToken);
 
+        _notices.BeginPass();
+
         foreach (var quote in quotes)
         {
             // Read again each time round. A sale changes the portfolio, and a holding that was
@@ -88,6 +93,8 @@ public sealed class ApplyExitsUseCase
             if (order is not null)
                 placed.Add(order);
         }
+
+        _notices.EndPass();
 
         // One line per pass, whether or not anything sold. A pass that judged its holdings and
         // was content used to say nothing at all, which a live run made the case against: with
@@ -139,10 +146,21 @@ public sealed class ApplyExitsUseCase
         if (permission is OrderPermission.ShadowOnly)
         {
             // Information, not a warning: in Shadow this is the exit working. The line is the only
-            // trace a shadow exit leaves - it writes no decision row in any mode.
-            _logger.LogInformation(
-                "Shadow mode: the {Trigger} exit would have sold {Quantity} {Ticker} at {Price} {Currency}.",
-                trigger, intent.Quantity, position.Ticker.Value, quote.Price.Amount, quote.Price.Currency);
+            // trace a shadow exit leaves - it writes no decision row in any mode. Said when it starts
+            // firing rather than every cycle: in Shadow the position is still there next cycle, and
+            // so is the reason to sell it.
+            if (_notices.Fired(position.Ticker, trigger, intent.Quantity))
+            {
+                _logger.LogInformation(
+                    "Shadow mode: the {Trigger} exit would have sold {Quantity} {Ticker} at {Price} {Currency}.",
+                    trigger, intent.Quantity, position.Ticker.Value, quote.Price.Amount, quote.Price.Currency);
+            }
+            else
+            {
+                _logger.LogDebug(
+                    "Shadow mode: the {Trigger} exit for {Ticker} still fires, as already reported.",
+                    trigger, position.Ticker.Value);
+            }
 
             return null;
         }

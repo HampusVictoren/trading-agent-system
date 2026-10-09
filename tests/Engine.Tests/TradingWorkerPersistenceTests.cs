@@ -170,6 +170,7 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
         services.AddTradingDatabase();
         services.AddTransient<QuoteReader>();
         services.AddTransient<OrderGate>();
+        services.AddSingleton<ShadowExitNotices>();
         services.AddTransient<ProcessProposalUseCase>();
         services.AddTransient<ApplyExitsUseCase>();
         services.AddTransient<SelectShortlistUseCase>();

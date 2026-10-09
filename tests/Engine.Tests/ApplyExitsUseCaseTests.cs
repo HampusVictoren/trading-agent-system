@@ -102,7 +102,15 @@ public class ApplyExitsUseCaseTests
         new(Options.Create(new TradingOptions { Mode = mode }), killSwitch ?? FixedKillSwitch.Released());
 
     private static (ApplyExitsUseCase Sut, CapturedLog Log) Build(
-        OrderGate gate, DateTimeOffset now, params (Ticker Ticker, decimal Price)[] prices)
+        OrderGate gate, DateTimeOffset now, params (Ticker Ticker, decimal Price)[] prices) =>
+        Build(gate, notices: null, now, prices);
+
+    /// <param name="notices">
+    /// Shared between two builds when a test is about what one pass remembers for the next, the
+    /// way the singleton is shared between the use cases a running engine resolves.
+    /// </param>
+    private static (ApplyExitsUseCase Sut, CapturedLog Log) Build(
+        OrderGate gate, ShadowExitNotices? notices, DateTimeOffset now, params (Ticker Ticker, decimal Price)[] prices)
     {
         var client = Substitute.For<IAgentClient>();
 
@@ -118,7 +126,7 @@ public class ApplyExitsUseCaseTests
         var reader = new QuoteReader(client, Policy, NullLogger<QuoteReader>.Instance);
         var log = new CapturedLog();
 
-        return (new ApplyExitsUseCase(reader, new RiskEngine(), Policy, gate, new FixedClock(now), log), log);
+        return (new ApplyExitsUseCase(reader, new RiskEngine(), Policy, gate, notices ?? new ShadowExitNotices(), new FixedClock(now), log), log);
     }
 
     private static Task<IReadOnlyList<Order>> Run(ApplyExitsUseCase sut, Portfolio portfolio) =>
@@ -234,6 +242,36 @@ public class ApplyExitsUseCaseTests
     }
 
     [Fact]
+    public async Task In_shadow_a_stop_loss_is_reported_when_it_starts_firing_and_not_every_cycle()
+    {
+        // The position is still there next cycle, so the rule fires again. One line for that, not
+        // one per fifteen minutes. A change in what it would sell is news; so is firing again
+        // after a pass where it did not.
+        var notices = new ShadowExitNotices();
+        var portfolio = Holding(Eric);
+        var reported = $"Shadow mode: the StopLoss exit would have sold 10 {Eric.Value}";
+
+        int Reports(CapturedLog log) => log.Lines.Count(line => line.StartsWith(reported, StringComparison.Ordinal));
+
+        var (first, firstLog) = Build(AGate(TradingMode.Shadow), notices, Bought.AddDays(1), (Eric, 85m));
+        await Run(first, portfolio);
+        Reports(firstLog).ShouldBe(1);
+
+        var (second, secondLog) = Build(AGate(TradingMode.Shadow), notices, Bought.AddDays(1), (Eric, 84m));
+        await Run(second, portfolio);
+        Reports(secondLog).ShouldBe(0);
+        secondLog.Lines.ShouldContain($"Shadow mode: the StopLoss exit for {Eric.Value} still fires, as already reported.");
+
+        // Back above the stop: nothing fires, so the next time it does is news again.
+        var (recovered, _) = Build(AGate(TradingMode.Shadow), notices, Bought.AddDays(1), (Eric, 95m));
+        await Run(recovered, portfolio);
+
+        var (third, thirdLog) = Build(AGate(TradingMode.Shadow), notices, Bought.AddDays(1), (Eric, 85m));
+        await Run(third, portfolio);
+        Reports(thirdLog).ShouldBe(1);
+    }
+
+    [Fact]
     public async Task With_the_kill_switch_engaged_a_stop_loss_sells_nothing_and_says_so()
     {
         // The exits are the engine acting without being asked, which makes them the orders a
@@ -265,6 +303,7 @@ public class ApplyExitsUseCaseTests
             new RiskEngine(),
             Policy,
             AGate(TradingMode.Paper),
+            new ShadowExitNotices(),
             new FixedClock(now),
             NullLogger<ApplyExitsUseCase>.Instance);
 
