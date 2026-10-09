@@ -32,6 +32,8 @@ public sealed class ApplyExitsUseCase
     private readonly QuoteReader _quotes;
     private readonly RiskEngine _riskEngine;
     private readonly RiskPolicy _policy;
+    private readonly OrderGate _gate;
+    private readonly ShadowExitNotices _notices;
     private readonly TimeProvider _clock;
     private readonly ILogger<ApplyExitsUseCase> _logger;
 
@@ -39,12 +41,16 @@ public sealed class ApplyExitsUseCase
         QuoteReader quotes,
         RiskEngine riskEngine,
         RiskPolicy policy,
+        OrderGate gate,
+        ShadowExitNotices notices,
         TimeProvider clock,
         ILogger<ApplyExitsUseCase> logger)
     {
         _quotes = quotes;
         _riskEngine = riskEngine;
         _policy = policy;
+        _gate = gate;
+        _notices = notices;
         _clock = clock;
         _logger = logger;
     }
@@ -66,6 +72,8 @@ public sealed class ApplyExitsUseCase
         // should not survive because it happened to be today's subject.
         var quotes = await _quotes.ForHoldingsAsync(portfolio, now, correlationId, cancellationToken: cancellationToken);
 
+        _notices.BeginPass();
+
         foreach (var quote in quotes)
         {
             // Read again each time round. A sale changes the portfolio, and a holding that was
@@ -80,11 +88,13 @@ public sealed class ApplyExitsUseCase
             if (trigger is null)
                 continue;
 
-            var order = Exit(portfolio, position, quote, trigger.Value, now);
+            var order = await ExitAsync(portfolio, position, quote, trigger.Value, now, cancellationToken);
 
             if (order is not null)
                 placed.Add(order);
         }
+
+        _notices.EndPass();
 
         // One line per pass, whether or not anything sold. A pass that judged its holdings and
         // was content used to say nothing at all, which a live run made the case against: with
@@ -103,8 +113,13 @@ public sealed class ApplyExitsUseCase
     /// stop-loss that sold half would leave the position it judged to be wrong, and a thesis
     /// that has expired is not half expired.
     /// </summary>
-    private Order? Exit(
-        Portfolio portfolio, Position position, InstrumentQuote quote, OrderTrigger trigger, DateTimeOffset now)
+    private async Task<Order?> ExitAsync(
+        Portfolio portfolio,
+        Position position,
+        InstrumentQuote quote,
+        OrderTrigger trigger,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
     {
         var intent = new OrderIntent.Sell(
             new Instrument.Equity(position.Ticker), position.Quantity, quote.Price, quote.AsOf, trigger);
@@ -121,6 +136,39 @@ public sealed class ApplyExitsUseCase
                 trigger, position.Ticker.Value, rejected.Reason);
 
             return null;
+        }
+
+        // The same gate an analysis's order passes, asked per sale and immediately before it. In
+        // Paper it grants every sale whatever the kill switch says: the switch stops new buys, and
+        // an exit is exactly the order that should still go out while it is engaged.
+        var permission = await _gate.AskAsync(OrderSide.Sell, cancellationToken);
+
+        if (permission is OrderPermission.ShadowOnly)
+        {
+            // Information, not a warning: in Shadow this is the exit working. The line is the only
+            // trace a shadow exit leaves - it writes no decision row in any mode. Said when it starts
+            // firing rather than every cycle: in Shadow the position is still there next cycle, and
+            // so is the reason to sell it.
+            if (_notices.Fired(position.Ticker, trigger, intent.Quantity))
+            {
+                _logger.LogInformation(
+                    "Shadow mode: the {Trigger} exit would have sold {Quantity} {Ticker} at {Price} {Currency}.",
+                    trigger, intent.Quantity, position.Ticker.Value, quote.Price.Amount, quote.Price.Currency);
+            }
+            else
+            {
+                _logger.LogDebug(
+                    "Shadow mode: the {Trigger} exit for {Ticker} still fires, as already reported.",
+                    trigger, position.Ticker.Value);
+            }
+
+            return null;
+        }
+
+        if (permission is not OrderPermission.Granted)
+        {
+            throw new InvalidOperationException(
+                $"The order gate answered {permission.GetType().Name} to a sale, which it never halts.");
         }
 
         var order = portfolio.ExecuteSell(position.Ticker, intent.Quantity, quote.Price, trigger);

@@ -2,6 +2,7 @@ using Engine.Application.Persistence;
 using Engine.Application.UseCases;
 using Engine.Domain.Aggregates.Portfolio;
 using Engine.Domain.Screening;
+using Engine.Domain.Trading;
 using Engine.Domain.ValueObjects;
 using Engine.Hosting;
 using Engine.Hosting.Options;
@@ -293,7 +294,13 @@ public class TradingSchemaTests : IAsyncLifetime
 
             await migrator.MigrateAsync(cancellationToken: TestContext.Current.CancellationToken);
 
-            (await TablesInTradingSchema(context)).ShouldBe(7);
+            (await TablesInTradingSchema(context)).ShouldBe(8);
+
+            // The kill switch's seed comes back with the table: a database that has just been
+            // migrated up is released, not empty - and empty would read as engaged.
+            (await context.Database.SqlQueryRaw<bool>(
+                    """SELECT engaged AS "Value" FROM trading.kill_switch""")
+                .SingleAsync(TestContext.Current.CancellationToken)).ShouldBeFalse();
             (await FunctionsInTradingSchema(context)).ShouldBe(1);
 
             // Two report views now, and both depend on tables, so they have to be dropped
@@ -305,6 +312,204 @@ public class TradingSchemaTests : IAsyncLifetime
         {
             // Leave the schema as the other tests expect it, whichever assertion failed.
             await migrator.MigrateAsync(cancellationToken: TestContext.Current.CancellationToken);
+        }
+    }
+
+    [Fact]
+    public async Task Decisions_from_before_the_mode_existed_are_paper_and_new_ones_have_to_say()
+    {
+        // The backfill is the ADD COLUMN's default, because the table's own trigger refuses the
+        // UPDATE a backfill would otherwise be. Paper is what is true about the history; and the
+        // default has to be gone afterwards, or a row written without a mode would claim one.
+        var portfolioId = await AnAccountThatHasBought();
+        await using var context = _database.NewContext();
+        var migrator = context.GetService<IMigrator>();
+        var cancellation = TestContext.Current.CancellationToken;
+
+        try
+        {
+            await migrator.MigrateAsync("ShortlistEdge", cancellation);
+
+            await context.Database.ExecuteSqlAsync(
+                $"""
+                INSERT INTO trading.decisions (correlation_id, portfolio_id, symbol, team_id, selection,
+                    requested_at, available_risk_budget, max_position_pct, key_risks, outcome)
+                VALUES ('before-stage-7', {portfolioId}, 'AAPL', 'default', 'Shortlist',
+                    now(), 10000, 0.05, ARRAY[]::varchar(300)[], 'NoAction')
+                """, cancellation);
+
+            await migrator.MigrateAsync(cancellationToken: cancellation);
+
+            (await context.Database.SqlQueryRaw<string>(
+                    """SELECT trading_mode AS "Value" FROM trading.decisions WHERE correlation_id = 'before-stage-7'""")
+                .SingleAsync(cancellation)).ShouldBe("Paper");
+
+            var refused = await Should.ThrowAsync<Exception>(() => context.Database.ExecuteSqlAsync(
+                $"""
+                INSERT INTO trading.decisions (correlation_id, portfolio_id, symbol, team_id, selection,
+                    requested_at, available_risk_budget, max_position_pct, key_risks, outcome)
+                VALUES ('after-stage-7', {portfolioId}, 'AAPL', 'default', 'Shortlist',
+                    now(), 10000, 0.05, ARRAY[]::varchar(300)[], 'NoAction')
+                """, cancellation));
+
+            refused.Message.ShouldContain("trading_mode");
+
+            // And back: the column goes, the report view is rebuilt without it, and the row that
+            // was there before the migration is still there after it.
+            await migrator.MigrateAsync("ShortlistEdge", cancellation);
+
+            (await context.Database.SqlQueryRaw<int>(
+                    """
+                    SELECT count(*)::int AS "Value" FROM information_schema.columns
+                    WHERE table_schema = 'trading' AND table_name = 'decisions' AND column_name = 'trading_mode'
+                    """)
+                .SingleAsync(cancellation)).ShouldBe(0);
+
+            (await ViewsInTradingSchema(context)).ShouldBe(2);
+
+            (await context.Database.SqlQueryRaw<int>(
+                    """SELECT count(*)::int AS "Value" FROM trading.decisions WHERE correlation_id = 'before-stage-7'""")
+                .SingleAsync(cancellation)).ShouldBe(1);
+        }
+        finally
+        {
+            await migrator.MigrateAsync(cancellationToken: cancellation);
+        }
+    }
+
+    [Fact]
+    public async Task A_shadow_cost_belongs_only_to_a_shadowed_decision_and_goes_away_on_the_way_down()
+    {
+        var portfolioId = await AnAccountThatHasBought();
+        await using var context = _database.NewContext();
+        var migrator = context.GetService<IMigrator>();
+        var cancellation = TestContext.Current.CancellationToken;
+
+        Task<int> Insert(string id, string outcome, decimal cost) => context.Database.ExecuteSqlAsync(
+            $"""
+            INSERT INTO trading.decisions (correlation_id, portfolio_id, symbol, team_id, selection,
+                requested_at, available_risk_budget, max_position_pct, key_risks, outcome, trading_mode, shadow_cost)
+            VALUES ({id}, {portfolioId}, 'AAPL', 'default', 'Shortlist',
+                now(), 10000, 0.05, ARRAY[]::varchar(300)[], {outcome}, 'Shadow', {cost})
+            """, cancellation);
+
+        Task<int> Count(string sql) => context.Database.SqlQueryRaw<int>(sql).SingleAsync(cancellation);
+
+        try
+        {
+            await migrator.MigrateAsync("KillSwitch", cancellation);
+
+            await context.Database.ExecuteSqlAsync(
+                $"""
+                INSERT INTO trading.decisions (correlation_id, portfolio_id, symbol, team_id, selection,
+                    requested_at, available_risk_budget, max_position_pct, key_risks, outcome, trading_mode)
+                VALUES ('before-shadow-cost', {portfolioId}, 'AAPL', 'default', 'Shortlist',
+                    now(), 10000, 0.05, ARRAY[]::varchar(300)[], 'Shadowed', 'Shadow')
+                """, cancellation);
+
+            await migrator.MigrateAsync(cancellationToken: cancellation);
+
+            // Nothing is backfilled. The row that was there keeps no cost rather than an invented one.
+            (await Count(
+                """
+                SELECT count(*)::int AS "Value" FROM trading.decisions
+                WHERE correlation_id = 'before-shadow-cost' AND shadow_cost IS NULL
+                """)).ShouldBe(1);
+
+            (await Insert("shadow-buy", "Shadowed", 500m)).ShouldBe(1);
+
+            (await Should.ThrowAsync<Exception>(() => Insert("not-shadowed", "Executed", 500m)))
+                .Message.ShouldContain("ck_decisions_shadow_cost_only_when_shadowed");
+            (await Should.ThrowAsync<Exception>(() => Insert("free", "Shadowed", 0m)))
+                .Message.ShouldContain("ck_decisions_shadow_cost_only_when_shadowed");
+
+            await migrator.MigrateAsync("KillSwitch", cancellation);
+
+            (await Count(
+                """
+                SELECT count(*)::int AS "Value" FROM information_schema.columns
+                WHERE table_schema = 'trading' AND table_name = 'decisions' AND column_name = 'shadow_cost'
+                """)).ShouldBe(0);
+
+            (await Count(
+                """
+                SELECT count(*)::int AS "Value" FROM trading.decisions
+                WHERE correlation_id IN ('before-shadow-cost', 'shadow-buy')
+                """)).ShouldBe(2);
+        }
+        finally
+        {
+            await migrator.MigrateAsync(cancellationToken: cancellation);
+        }
+    }
+
+    [Fact]
+    public async Task The_shortlist_edge_counts_shadow_buys_and_stops_on_the_way_down()
+    {
+        await using var context = _database.NewContext();
+        var migrator = context.GetService<IMigrator>();
+        var cancellation = TestContext.Current.CancellationToken;
+
+        // The definition as Postgres stores it, which is what a reader of the view gets. What the
+        // count means is tested against data in ShortlistEdgeTests; this is the migration's half.
+        Task<string> Definition() => context.Database.SqlQueryRaw<string>(
+                """SELECT pg_get_viewdef('trading.shortlist_edge'::regclass) AS "Value" """)
+            .SingleAsync(cancellation);
+
+        try
+        {
+            (await Definition()).ShouldContain("'Shadowed'");
+
+            await migrator.MigrateAsync("ShortlistEdgeByMode", cancellation);
+
+            var before = await Definition();
+            before.ShouldNotContain("'Shadowed'");
+            before.ShouldContain("trading_mode");
+            (await ViewsInTradingSchema(context)).ShouldBe(2);
+
+            await migrator.MigrateAsync(cancellationToken: cancellation);
+
+            (await Definition()).ShouldContain("'Shadowed'");
+            (await ViewsInTradingSchema(context)).ShouldBe(2);
+        }
+        finally
+        {
+            await migrator.MigrateAsync(cancellationToken: cancellation);
+        }
+    }
+
+    [Fact]
+    public async Task The_shortlist_edge_gains_the_mode_and_loses_it_on_the_way_down()
+    {
+        await using var context = _database.NewContext();
+        var migrator = context.GetService<IMigrator>();
+        var cancellation = TestContext.Current.CancellationToken;
+
+        Task<int> ModeColumns() => context.Database.SqlQueryRaw<int>(
+                """
+                SELECT count(*)::int AS "Value" FROM information_schema.columns
+                WHERE table_schema = 'trading' AND table_name = 'shortlist_edge' AND column_name = 'trading_mode'
+                """)
+            .SingleAsync(cancellation);
+
+        try
+        {
+            (await ModeColumns()).ShouldBe(1);
+
+            await migrator.MigrateAsync("DecisionShadowCost", cancellation);
+
+            // Back to the definition before it: the view is still there, without the mode.
+            (await ModeColumns()).ShouldBe(0);
+            (await ViewsInTradingSchema(context)).ShouldBe(2);
+
+            await migrator.MigrateAsync(cancellationToken: cancellation);
+
+            (await ModeColumns()).ShouldBe(1);
+            (await ViewsInTradingSchema(context)).ShouldBe(2);
+        }
+        finally
+        {
+            await migrator.MigrateAsync(cancellationToken: cancellation);
         }
     }
 
@@ -401,6 +606,7 @@ public class TradingSchemaTests : IAsyncLifetime
         Symbol = Aapl,
         TeamId = "default",
         Selection = SelectionSource.Shortlist,
+        TradingMode = TradingMode.Paper,
         RequestedAt = new DateTimeOffset(2026, 9, 23, 14, 0, 0, TimeSpan.Zero),
         AvailableRiskBudget = 10_000m,
         MaxPositionPct = 0.05m,

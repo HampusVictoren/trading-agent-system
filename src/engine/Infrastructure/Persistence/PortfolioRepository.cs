@@ -60,4 +60,22 @@ public sealed class PortfolioRepository : IPortfolioRepository
 
         return new Money(spent, Money.DefaultCurrency);
     }
+
+    /// <remarks>
+    /// A range over <c>requested_at</c> rather than a date taken from it, so the comparison is on
+    /// the stored instant and goes through the column's converter like any other parameter. Not
+    /// filtered on a portfolio, for the reason <see cref="DeployedOnAsync"/> gives.
+    /// </remarks>
+    public async Task<Money> ShadowDeployedOnAsync(DateOnly day, CancellationToken cancellationToken = default)
+    {
+        var from = new DateTimeOffset(day.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+        var until = from.AddDays(1);
+
+        var spent = await _context.Decisions
+            .Where(decision => decision.ShadowCost != null)
+            .Where(decision => decision.RequestedAt >= from && decision.RequestedAt < until)
+            .SumAsync(decision => decision.ShadowCost!.Value, cancellationToken);
+
+        return new Money(spent, Money.DefaultCurrency);
+    }
 }

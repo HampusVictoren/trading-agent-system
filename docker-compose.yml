@@ -169,6 +169,10 @@ services:
       # Overrides appsettings.json's 127.0.0.1, which is right for a host-run engine and
       # reaches nothing from inside a container.
       AgentService__BaseUrl: http://agents:8000
+      # Shadow unless the root .env says otherwise - the same default appsettings.json ships,
+      # spelled out here so that the mode a container runs in is readable in this file. Paper
+      # executes against the simulated portfolio; Live is refused at startup (there is no broker).
+      Trading__Mode: ${TRADING_MODE:-Shadow}
     # on-failure rather than unless-stopped: the engine's own loop already survives a failed
     # cycle, so a process that exits has hit something structural - a configuration it refuses
     # or a schema behind the build. Restarting is a bet that an operator is fixing it, and

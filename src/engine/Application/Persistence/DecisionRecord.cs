@@ -3,6 +3,7 @@ namespace Engine.Application.Persistence;
 using Engine.Application.UseCases;
 using Engine.Domain.Screening;
 using Engine.Domain.Signals;
+using Engine.Domain.Trading;
 using Engine.Domain.ValueObjects;
 
 /// <summary>
@@ -56,6 +57,19 @@ public sealed class DecisionRecord
     /// </remarks>
     public required SelectionSource Selection { get; init; }
 
+    /// <summary>
+    /// Whether an approved order from this decision could reach the portfolio: Paper, or Shadow,
+    /// where nothing is placed.
+    /// </summary>
+    /// <remarks>
+    /// Two populations again, and for a less obvious reason than "one of them traded". A Shadow
+    /// engine never builds a position, so it never analyses a holding it bought and never tells the
+    /// agents it owns anything - the questions it asks differ from Paper's, not only what it does
+    /// with the answers. Every row written before stage 7 is Paper, because that is what the
+    /// engine did.
+    /// </remarks>
+    public required TradingMode TradingMode { get; init; }
+
     /// <summary>The <c>as_of</c> the engine sent, from its injected clock.</summary>
     public required DateTimeOffset RequestedAt { get; init; }
 
@@ -85,6 +99,20 @@ public sealed class DecisionRecord
 
     /// <summary>The ledger line, when the decision produced one. Only an executed buy does.</summary>
     public Guid? OrderId { get; init; }
+
+    /// <summary>
+    /// What a buy Shadow mode did not place would have cost, in the account's currency. Null on
+    /// every other row.
+    /// </summary>
+    /// <remarks>
+    /// The daily deployment limit is a sum over the ledger, and Shadow writes no ledger. Without
+    /// this, every shadow buy of a day was sized against the whole day's budget, so ten of them
+    /// "would have bought" up to ten times what the limit lets Paper buy. Shadow adds these to
+    /// what the ledger says the day spent, and the limit binds as it would have. Cash and position
+    /// headroom are still not consumed. A shadow engine holds nothing, so that would take a
+    /// second portfolio, and at today's balances the daily limit binds long before cash does.
+    /// </remarks>
+    public decimal? ShadowCost { get; init; }
 
     /// <summary>Set by the database, so the row's own clock is the one that ordered it.</summary>
     public DateTimeOffset RecordedAt { get; private set; }

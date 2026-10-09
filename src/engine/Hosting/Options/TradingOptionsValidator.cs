@@ -1,5 +1,6 @@
 namespace Engine.Hosting.Options;
 
+using Engine.Domain.Trading;
 using Engine.Domain.ValueObjects;
 using Microsoft.Extensions.Options;
 
@@ -8,6 +9,9 @@ using Microsoft.Extensions.Options;
 /// configuration should stop the service at startup rather than reach the agent service.
 /// </summary>
 /// <remarks>
+/// It also refuses <see cref="TradingMode.Live"/>, which binds perfectly well and has nothing
+/// behind it.
+///
 /// The universe also has one rule of its own: no symbol twice. A duplicate would come back from
 /// the screen as one instrument ranked twice, which the contract seam refuses - so every cycle
 /// would fail on a configuration mistake that is one line to find here and confusing to find
@@ -33,6 +37,16 @@ public sealed class TradingOptionsValidator : IValidateOptions<TradingOptions>
             failures.Add(
                 $"{TradingOptions.SectionName}:{nameof(options.Universe)} names "
                 + $"{string.Join(", ", duplicates)} more than once.");
+        }
+
+        // Refused here rather than left out of the enum, so that the answer to somebody typing it
+        // is a sentence rather than a binding error about an unknown value.
+        if (options.Mode == TradingMode.Live)
+        {
+            failures.Add(
+                $"{TradingOptions.SectionName}:{nameof(options.Mode)} is Live, and this system has no "
+                + "broker to send an order to. Use Paper for the simulated portfolio or Shadow to "
+                + "place nothing.");
         }
 
         return failures.Count == 0

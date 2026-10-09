@@ -15,7 +15,9 @@ public enum DecisionOutcome
     RejectedByRisk,
     NoAction,
     InvalidResponse,
-    AgentUnavailable
+    AgentUnavailable,
+    Shadowed,
+    Halted
 }
 
 /// <summary>
@@ -87,6 +89,33 @@ public abstract record TradeDecisionResult
 
         /// <summary>The stance that produced no order. It is the whole reason there was none.</summary>
         public override string? OutcomeReason => Action;
+    }
+
+    /// <summary>
+    /// The risk gate approved an order and the engine is in Shadow mode, so nothing was placed.
+    /// The reason names the order that would have been, because a shadow decision that cannot
+    /// say how big it was is not worth comparing against anything.
+    /// </summary>
+    /// <remarks>
+    /// Its own outcome rather than <see cref="Executed"/> with no order behind it. Every report
+    /// that asks "what was bought" reads <c>outcome = 'Executed'</c>, and a row that claimed an
+    /// execution which never happened would be counted as one by all of them.
+    /// </remarks>
+    public sealed record Shadowed(Ticker Ticker, string Reason) : TradeDecisionResult
+    {
+        public override DecisionOutcome Outcome => DecisionOutcome.Shadowed;
+        public override string? OutcomeReason => Reason;
+    }
+
+    /// <summary>
+    /// The risk gate approved an order and the kill switch stopped it, in the moment between the
+    /// two. The agents' answer was paid for, so it is still recorded and still measured - it is a
+    /// signal like any other - but no order exists.
+    /// </summary>
+    public sealed record Halted(Ticker Ticker, string Reason) : TradeDecisionResult
+    {
+        public override DecisionOutcome Outcome => DecisionOutcome.Halted;
+        public override string? OutcomeReason => Reason;
     }
 
     /// <summary>The answer did not honour the contract, for example by naming another instrument.</summary>

@@ -4,6 +4,7 @@ using Engine.Domain.Aggregates.Portfolio;
 using Engine.Domain.Outcomes;
 using Engine.Domain.Screening;
 using Engine.Domain.Signals;
+using Engine.Domain.Trading;
 using Engine.Domain.ValueObjects;
 using Engine.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -47,6 +48,7 @@ public class ShortlistEdgeTests : IAsyncLifetime
     /// <summary>One row of the view, in the shape a reader of psql would see.</summary>
     private sealed record Row(
         DateOnly ScreenedOn,
+        string TradingMode,
         int Shortlisted,
         decimal? ShortlistExcessGross,
         int Bought,
@@ -62,10 +64,10 @@ public class ShortlistEdgeTests : IAsyncLifetime
             """
             -- No aliases: UseSnakeCaseNamingConvention applies to a query type too, so EF
             -- looks for the snake_case column the property maps to.
-            SELECT screened_on, shortlisted, shortlist_excess_gross,
+            SELECT screened_on, trading_mode, shortlisted, shortlist_excess_gross,
                    bought, bought_excess_gross, agents_edge_gross, bought_edge_net
             FROM trading.shortlist_edge
-            ORDER BY screened_on
+            ORDER BY screened_on, trading_mode
             """).ToListAsync(TestContext.Current.CancellationToken);
     }
 
@@ -87,7 +89,8 @@ public class ShortlistEdgeTests : IAsyncLifetime
         decimal? netEdge,
         OutcomeStatus status = OutcomeStatus.Measured,
         SelectionSource selection = SelectionSource.Shortlist,
-        DateTimeOffset? requestedAt = null)
+        DateTimeOffset? requestedAt = null,
+        TradingMode mode = TradingMode.Paper)
     {
         await using var context = _database.NewContext();
 
@@ -113,6 +116,7 @@ public class ShortlistEdgeTests : IAsyncLifetime
             TeamId = "default",
             TeamVersion = "abc123",
             Selection = selection,
+            TradingMode = mode,
             RequestedAt = requestedAt ?? RequestedAt,
             AvailableRiskBudget = 100_000m,
             MaxPositionPct = 0.05m,
@@ -177,6 +181,40 @@ public class ShortlistEdgeTests : IAsyncLifetime
         row.Bought.ShouldBe(2);
         row.BoughtExcessGross.ShouldBe(0.06m);
         row.AgentsEdgeGross.ShouldBe(0.03m);
+    }
+
+    [Fact]
+    public async Task Shadow_and_paper_are_two_rows_rather_than_one_average()
+    {
+        // The engine switched mode during the day: two instruments analysed in Paper, two in
+        // Shadow. Each mode gets its own control and its own buys. A shadowed buy is the agents'
+        // pick as much as an executed one is (decided 2026-10-09), so the Shadow row has an edge
+        // of its own: 10 % against a shortlist average of 3 %.
+        var account = await AnAccountAsync();
+
+        await AShortlistedInstrumentAsync(account, "AAA.ST", 1, Stance.Buy, DecisionOutcome.Executed, 0.08m, 0.0797m);
+        await AShortlistedInstrumentAsync(account, "BBB.ST", 2, Stance.Hold, DecisionOutcome.NoAction, 0.02m, null);
+        await AShortlistedInstrumentAsync(
+            account, "CCC.ST", 3, Stance.Buy, DecisionOutcome.Shadowed, 0.10m, 0.0997m, mode: TradingMode.Shadow);
+        await AShortlistedInstrumentAsync(
+            account, "DDD.ST", 4, Stance.Hold, DecisionOutcome.NoAction, -0.04m, null, mode: TradingMode.Shadow);
+
+        var rows = await ReadTheViewAsync();
+        rows.Count.ShouldBe(2);
+
+        var paper = rows.Single(row => row.TradingMode == "Paper");
+        paper.Shortlisted.ShouldBe(2);
+        paper.ShortlistExcessGross.ShouldBe(0.05m);
+        paper.Bought.ShouldBe(1);
+        paper.AgentsEdgeGross.ShouldBe(0.03m);
+
+        var shadow = rows.Single(row => row.TradingMode == "Shadow");
+        shadow.Shortlisted.ShouldBe(2);
+        shadow.ShortlistExcessGross.ShouldBe(0.03m);
+        shadow.Bought.ShouldBe(1);
+        shadow.BoughtExcessGross.ShouldBe(0.10m);
+        shadow.AgentsEdgeGross.ShouldBe(0.07m);
+        shadow.BoughtEdgeNet.ShouldBe(0.0997m);
     }
 
     [Fact]
@@ -296,6 +334,24 @@ public class ShortlistEdgeTests : IAsyncLifetime
         // Had the sale counted as a buy, this would read -0.06 - (-0.06) = 0.00, which is the
         // shape of a number that means nothing while looking like agreement.
         row.AgentsEdgeGross.ShouldBe(0.14m);
+    }
+
+    [Fact]
+    public async Task A_buy_the_kill_switch_stopped_is_in_the_control_and_not_in_the_buys()
+    {
+        // A shadowed buy counts as the agents' pick; a halted one does not. The switch stopped
+        // it in Paper, where "bought" has always meant bought, and the switch only ever stops buys,
+        // so this is the one shape a halted decision takes.
+        var account = await AnAccountAsync();
+
+        await AShortlistedInstrumentAsync(account, "AAA.ST", 1, Stance.Buy, DecisionOutcome.Executed, 0.10m, 0.0997m);
+        await AShortlistedInstrumentAsync(account, "BBB.ST", 2, Stance.Buy, DecisionOutcome.Halted, 0.02m, 0.0197m);
+
+        var row = (await ReadTheViewAsync()).ShouldHaveSingleItem();
+
+        row.Shortlisted.ShouldBe(2);
+        row.Bought.ShouldBe(1);
+        row.BoughtExcessGross.ShouldBe(0.10m);
     }
 
     [Theory]

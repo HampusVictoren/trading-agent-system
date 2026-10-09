@@ -5,6 +5,7 @@ using Engine.Application.UseCases;
 using Engine.Domain.Aggregates.Portfolio;
 using Engine.Domain.Screening;
 using Engine.Domain.Signals;
+using Engine.Domain.Trading;
 using Engine.Domain.ValueObjects;
 using Engine.Hosting.Options;
 using Microsoft.Extensions.Options;
@@ -36,21 +37,55 @@ public class TradingWorker : BackgroundService
     /// </remarks>
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // Once, first, and in words. Which mode a process ran in is the first thing to establish
+        // when reading what it did, and a log that only said it per decision would not say it at
+        // all on a day when nothing was due.
+        _logger.LogInformation(
+            "Trading mode is {Mode}: {Meaning}",
+            _options.Mode,
+            _options.Mode == TradingMode.Paper
+                ? "approved orders are executed against the simulated portfolio."
+                : "every decision is recorded and no order is placed.");
+
+        if (_options.Mode != TradingMode.Paper)
+            await WarnAboutHoldingsNobodyIsManagingAsync(stoppingToken);
+
         while (!stoppingToken.IsCancellationRequested)
         {
+            // First, before anything is asked of anyone. The switch stops new buys only, so an
+            // engaged one does not stop the cycle: the exits still run, and the holdings are still
+            // analysed, because the agents' SELL on a holding is a sale the switch lets through.
+            // What it skips is the screen and every candidate, since the only order a candidate
+            // can lead to is a buy, and an analysis of one would be LLM time spent on an order
+            // that could not be placed.
+            var buyingHalted = await IsBuyingHaltedAsync(stoppingToken);
+
             // Before the analyses, not after. A cycle's buying should see the cash and the
             // position headroom the exits have just released, and a position the rules say to
             // close should not survive because an analysis of it happened to come first.
             await RunExitsAsync(stoppingToken);
 
             var today = DateOnly.FromDateTime(_clock.GetUtcNow().UtcDateTime);
-            var selection = await SelectAsync(today, stoppingToken);
+            var selection = buyingHalted
+                ? await HoldingsOnlyAsync(stoppingToken)
+                : await SelectAsync(today, stoppingToken);
             var verdicts = new Dictionary<AnalysisVerdict, int>();
+            var candidatesNotAnalysed = 0;
 
             foreach (var selected in selection)
             {
                 if (stoppingToken.IsCancellationRequested)
                     return;
+
+                // Read again before every candidate, so a switch pulled mid-cycle costs at most the
+                // analysis already under way - and that one's buy is stopped by the gate, which
+                // reads it again after the agents have answered. A holding is analysed whatever
+                // the switch says; holdings come first in the selection anyway.
+                if (selected.Source != SelectionSource.Holding && await KillSwitchStateAsync(stoppingToken) is { Engaged: true })
+                {
+                    candidatesNotAnalysed++;
+                    continue;
+                }
 
                 // One scope per analysis, so one change tracker and one transaction per decision.
                 using var scope = _scopeFactory.CreateScope();
@@ -92,15 +127,105 @@ public class TradingWorker : BackgroundService
 
             LogWhatTheCycleDid(selection.Count, verdicts);
 
-            try
+            if (candidatesNotAnalysed > 0)
             {
-                await Task.Delay(_options.CycleInterval, stoppingToken);
+                _logger.LogWarning(
+                    "The kill switch was engaged during the cycle: {Count} candidate(s) were not analysed, "
+                    + "because the only order they could lead to is a buy.",
+                    candidatesNotAnalysed);
             }
-            catch (OperationCanceledException)
-            {
+
+            if (!await WaitForTheNextCycleAsync(stoppingToken))
                 return;
-            }
         }
+    }
+
+    /// <summary>
+    /// Says loudly, once at startup, that Shadow mode is leaving real positions to themselves.
+    /// </summary>
+    /// <remarks>
+    /// Shadow places nothing, and that includes the stop-loss and time-limit sales. An account
+    /// that was paper-trading and is restarted in Shadow (which is what the shipped default does
+    /// to an engine that never set the mode) keeps its positions, and from then on nothing closes
+    /// them; the exits only log what they would have sold. That is correct for Shadow, but it is
+    /// a change nobody would guess from the word, so it is a warning that names the setting to
+    /// change. Read in a scope of its own, and never allowed to stop the worker: this is
+    /// a message, not a check.
+    /// </remarks>
+    private async Task WarnAboutHoldingsNobodyIsManagingAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var portfolio = await scope.ServiceProvider
+                .GetRequiredService<IPortfolioRepository>()
+                .FindAsync(cancellationToken);
+
+            if (portfolio is null || portfolio.Positions.Count == 0)
+                return;
+
+            _logger.LogWarning(
+                "Trading mode is {Mode} and the portfolio holds {Count} position(s): {Tickers}. Their "
+                + "stop-loss and time-limit exits will be logged but NOT placed, so nothing will close "
+                + "them. Set Trading:Mode to Paper (TRADING_MODE=Paper under compose) to keep managing them.",
+                _options.Mode,
+                portfolio.Positions.Count,
+                string.Join(", ", portfolio.Positions.Select(held => held.Ticker.Value).Order(StringComparer.Ordinal)));
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Shutting down before the first cycle, which is not a failure.
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Could not read the portfolio to check for holdings Shadow mode will not manage.");
+        }
+    }
+
+    /// <returns>False when the worker is shutting down.</returns>
+    private async Task<bool> WaitForTheNextCycleAsync(CancellationToken stoppingToken)
+    {
+        try
+        {
+            await Task.Delay(_options.CycleInterval, stoppingToken);
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Reads the kill switch at the start of a cycle, and says so when it is engaged.
+    /// </summary>
+    /// <remarks>
+    /// A warning every time it is found engaged, rather than once: at a fifteen-minute cadence that
+    /// is a line per cycle, and an engine whose buying has been stopped should keep saying why for
+    /// as long as it is stopped. The read itself fails closed, so "could not read it" arrives here
+    /// as engaged with that as the reason.
+    /// </remarks>
+    private async Task<bool> IsBuyingHaltedAsync(CancellationToken cancellationToken)
+    {
+        var state = await KillSwitchStateAsync(cancellationToken);
+
+        if (!state.Engaged)
+            return false;
+
+        _logger.LogWarning(
+            "The kill switch is engaged (since {Since}): {Reason}. No new buys until it is released. The exits "
+            + "and sales still run and the holdings are still analysed; the screen and its candidates wait.",
+            state.Since?.ToString("u") ?? "unknown",
+            state.Reason);
+
+        return true;
+    }
+
+    /// <summary>The kill switch, read in a scope of its own.</summary>
+    private async Task<KillSwitchState> KillSwitchStateAsync(CancellationToken cancellationToken)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        return await scope.ServiceProvider.GetRequiredService<IKillSwitch>().ReadAsync(cancellationToken);
     }
 
     /// <summary>
@@ -365,6 +490,14 @@ public class TradingWorker : BackgroundService
             case TradeDecisionResult.NoAction noAction:
                 _logger.LogInformation(
                     "No action for {Ticker}: the agents answered {Stance}.", noAction.Ticker.Value, noAction.Action);
+                break;
+
+            case TradeDecisionResult.Shadowed shadowed:
+                _logger.LogInformation("No order for {Ticker}. {Reason}.", shadowed.Ticker.Value, shadowed.Reason);
+                break;
+
+            case TradeDecisionResult.Halted halted:
+                _logger.LogWarning("No order for {Ticker}. {Reason}.", halted.Ticker.Value, halted.Reason);
                 break;
 
             case TradeDecisionResult.InvalidResponse invalid:

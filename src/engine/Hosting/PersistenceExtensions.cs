@@ -31,6 +31,7 @@ public static class PersistenceExtensions
         services.AddScoped<IOutcomeLog, OutcomeLog>();
         services.AddScoped<IShortlistLog, ShortlistLog>();
         services.AddScoped<IUnitOfWork, UnitOfWork>();
+        services.AddScoped<IKillSwitch, KillSwitch>();
 
         return services;
     }

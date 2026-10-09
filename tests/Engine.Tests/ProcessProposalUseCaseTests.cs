@@ -6,6 +6,7 @@ using Engine.Domain.Aggregates.Portfolio;
 using Engine.Domain.Risk;
 using Engine.Domain.Screening;
 using Engine.Domain.Signals;
+using Engine.Domain.Trading;
 using Engine.Domain.ValueObjects;
 using Engine.Hosting.Options;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -120,9 +121,12 @@ public class ProcessProposalUseCaseTests
         Exception? throws = null,
         QuoteDto? quote = null,
         RiskPolicy? policy = null,
-        decimal deployedToday = 0m)
+        decimal deployedToday = 0m,
+        TradingMode mode = TradingMode.Paper,
+        FixedKillSwitch? killSwitch = null)
     {
-        var (sut, client, decisions, _) = BuildWithLedger(signal, throws, quote, policy, deployedToday);
+        var (sut, client, decisions, _) =
+            BuildWithLedger(signal, throws, quote, policy, deployedToday, mode, killSwitch);
         return (sut, client, decisions);
     }
 
@@ -132,7 +136,10 @@ public class ProcessProposalUseCaseTests
         Exception? throws = null,
         QuoteDto? quote = null,
         RiskPolicy? policy = null,
-        decimal deployedToday = 0m)
+        decimal deployedToday = 0m,
+        TradingMode mode = TradingMode.Paper,
+        FixedKillSwitch? killSwitch = null,
+        decimal shadowDeployedToday = 0m)
     {
         var inForce = policy ?? Policy;
         var client = Substitute.For<IAgentClient>();
@@ -141,6 +148,8 @@ public class ProcessProposalUseCaseTests
         var portfolios = Substitute.For<IPortfolioRepository>();
         portfolios.DeployedOnAsync(Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
             .Returns(new Money(deployedToday, Money.DefaultCurrency));
+        portfolios.ShadowDeployedOnAsync(Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(new Money(shadowDeployedToday, Money.DefaultCurrency));
 
         // Null unless a test says otherwise, which is what "the engine could not get a price
         // for that holding" looks like from here.
@@ -163,7 +172,8 @@ public class ProcessProposalUseCaseTests
             ShortlistSize = 10,
             MinDollarVolume = 10_000_000m,
             CycleIntervalMinutes = 15,
-            TeamId = TeamId
+            TeamId = TeamId,
+            Mode = mode
         });
 
         var quotes = new QuoteReader(client, inForce, NullLogger<QuoteReader>.Instance);
@@ -171,7 +181,7 @@ public class ProcessProposalUseCaseTests
         return (
             new ProcessProposalUseCase(
                 client, portfolios, quotes, decisions, new PositionSizer(), new RiskEngine(), inForce, options,
-                new FixedClock(Now)),
+                new OrderGate(options, killSwitch ?? FixedKillSwitch.Released()), new FixedClock(Now)),
             client,
             decisions,
             portfolios);
@@ -180,6 +190,174 @@ public class ProcessProposalUseCaseTests
     private static Task<TradeDecisionResult> Run(
         ProcessProposalUseCase sut, Portfolio portfolio, string correlationId = "cycle-1") =>
         sut.ExecuteAsync(portfolio, AShortlistPick, correlationId, TestContext.Current.CancellationToken);
+
+    /// <summary>
+    /// Shadow is the whole decision with the last step removed. Everything up to the risk gate runs
+    /// exactly as in Paper - so a test here passes only if the same cycle would have traded.
+    /// </summary>
+    public class InShadowMode
+    {
+        [Fact]
+        public async Task An_approved_buy_is_recorded_and_not_placed()
+        {
+            // The first test of ABuyThatGoesThrough, in Shadow: five shares at 100 would have been
+            // bought. The portfolio is exactly as it was, and the row says what would have happened.
+            var portfolio = NewPortfolio();
+            var (sut, _, decisions) = Build(Signal(), mode: TradingMode.Shadow);
+
+            var result = await Run(sut, portfolio);
+
+            result.ShouldBeOfType<TradeDecisionResult.Shadowed>()
+                .Reason.ShouldBe("Shadow mode: would have bought 5 AAPL at 100 SEK");
+
+            portfolio.CashBalance.Amount.ShouldBe(10_000m);
+            portfolio.Positions.ShouldBeEmpty();
+            portfolio.NewOrders.ShouldBeEmpty();
+
+            var row = decisions.OfTheCycle;
+            row.Outcome.ShouldBe(DecisionOutcome.Shadowed);
+            row.TradingMode.ShouldBe(TradingMode.Shadow);
+            row.OrderId.ShouldBeNull();
+            row.Stance.ShouldBe(Stance.Buy);
+
+            // Five at 100: what the next shadow buy of the day is sized against.
+            row.ShadowCost.ShouldBe(500m);
+        }
+
+        [Fact]
+        public async Task A_shadowed_sale_has_no_cost_to_count()
+        {
+            // Selling frees capital, so a shadow sale takes nothing from the day's budget.
+            var (sut, _, decisions) = Build(Signal(stance: "SELL"), mode: TradingMode.Shadow);
+
+            (await Run(sut, Holding(quantity: 10m, daysAgo: 10))).ShouldBeOfType<TradeDecisionResult.Shadowed>();
+
+            decisions.OfTheCycle.ShadowCost.ShouldBeNull();
+        }
+
+        [Fact]
+        public async Task An_approved_sale_is_recorded_and_not_placed()
+        {
+            var portfolio = Holding(quantity: 10m);
+            var (sut, _, decisions) = Build(Signal(stance: "SELL"), mode: TradingMode.Shadow);
+
+            var result = await Run(sut, portfolio);
+
+            result.ShouldBeOfType<TradeDecisionResult.Shadowed>()
+                .Reason.ShouldStartWith("Shadow mode: would have sold 10 AAPL");
+
+            portfolio.Positions.ShouldHaveSingleItem().Quantity.ShouldBe(10m);
+            decisions.OfTheCycle.OrderId.ShouldBeNull();
+        }
+
+        [Fact]
+        public async Task A_hold_is_still_a_hold_and_still_says_which_mode_it_was_made_in()
+        {
+            // The mode decides what happens to an order, and a HOLD never had one. It is on the row
+            // anyway: a Shadow engine never holds what it decided to buy, so its HOLDs are answers
+            // to different questions from a Paper engine's.
+            var (sut, _, decisions) = Build(Signal(stance: "HOLD"), mode: TradingMode.Shadow);
+
+            (await Run(sut, NewPortfolio())).ShouldBeOfType<TradeDecisionResult.NoAction>();
+            decisions.OfTheCycle.Outcome.ShouldBe(DecisionOutcome.NoAction);
+            decisions.OfTheCycle.TradingMode.ShouldBe(TradingMode.Shadow);
+        }
+
+        [Fact]
+        public async Task A_paper_row_says_paper()
+        {
+            var (sut, _, decisions) = Build(Signal());
+
+            await Run(sut, NewPortfolio());
+
+            decisions.OfTheCycle.TradingMode.ShouldBe(TradingMode.Paper);
+        }
+
+        [Fact]
+        public async Task A_row_with_no_answer_still_says_which_mode_it_was_made_in()
+        {
+            var (sut, _, decisions) = Build(
+                throws: new AgentServiceUnavailableException("down"), mode: TradingMode.Shadow);
+
+            await Run(sut, NewPortfolio());
+
+            decisions.OfTheCycle.TradingMode.ShouldBe(TradingMode.Shadow);
+        }
+
+        [Fact]
+        public async Task A_risk_rejection_is_still_a_risk_rejection()
+        {
+            // A sale inside the minimum holding period is refused by the gate in either mode, and
+            // the row has to say so rather than "would have sold" - Shadow records what Paper
+            // would have done, and Paper would have done nothing.
+            var portfolio = Holding(daysAgo: 1);
+            var (sut, _, _) = Build(Signal(stance: "SELL"), mode: TradingMode.Shadow);
+
+            (await Run(sut, portfolio)).ShouldBeOfType<TradeDecisionResult.RejectedByRisk>();
+        }
+    }
+
+    /// <summary>
+    /// The kill switch, read immediately before an order and after the agents have answered - so a
+    /// switch pulled while they were thinking still stops this order.
+    /// </summary>
+    public class WithTheKillSwitchEngaged
+    {
+        [Fact]
+        public async Task An_approved_buy_is_recorded_as_halted_and_nothing_is_placed()
+        {
+            var portfolio = NewPortfolio();
+            var (sut, _, decisions) = Build(Signal(), killSwitch: FixedKillSwitch.Engaged("prices look wrong"));
+
+            var result = await Run(sut, portfolio);
+
+            result.ShouldBeOfType<TradeDecisionResult.Halted>()
+                .Reason.ShouldBe("Kill switch engaged: prices look wrong; would have bought 5 AAPL at 100 SEK");
+
+            portfolio.CashBalance.Amount.ShouldBe(10_000m);
+            portfolio.Positions.ShouldBeEmpty();
+            portfolio.NewOrders.ShouldBeEmpty();
+
+            // The answer was paid for, so it is kept and will be measured like any other signal.
+            var row = decisions.OfTheCycle;
+            row.Outcome.ShouldBe(DecisionOutcome.Halted);
+            row.Stance.ShouldBe(Stance.Buy);
+            row.OrderId.ShouldBeNull();
+        }
+
+        [Fact]
+        public async Task An_approved_sale_still_goes_through()
+        {
+            // The agents arguing to leave a position is a reduction in risk, which is what the
+            // switch is for. Only new buys are stopped, so the sale is placed and the switch is
+            // not even read.
+            var portfolio = Holding(quantity: 10m);
+            var killSwitch = FixedKillSwitch.Engaged();
+            var (sut, _, decisions) = Build(Signal(stance: "SELL"), killSwitch: killSwitch);
+
+            (await Run(sut, portfolio)).ShouldBeOfType<TradeDecisionResult.Executed>()
+                .Side.ShouldBe(OrderSide.Sell);
+
+            portfolio.Positions.ShouldBeEmpty();
+            decisions.OfTheCycle.Outcome.ShouldBe(DecisionOutcome.Executed);
+            killSwitch.Reads.ShouldBe(0);
+        }
+
+        [Fact]
+        public async Task It_is_not_read_for_a_decision_that_places_nothing()
+        {
+            // A HOLD has no order to stop. Reading the switch for it would not be wrong, but it
+            // would make "the gate is asked immediately before an order" a sentence rather than a
+            // property - and this is what pins the property.
+            var killSwitch = FixedKillSwitch.Engaged();
+            var (sut, _, decisions) = Build(Signal(stance: "HOLD"), killSwitch: killSwitch);
+
+            (await Run(sut, NewPortfolio())).ShouldBeOfType<TradeDecisionResult.NoAction>();
+
+            killSwitch.Reads.ShouldBe(0);
+            decisions.OfTheCycle.Outcome.ShouldBe(DecisionOutcome.NoAction);
+        }
+    }
 
     public class ABuyThatGoesThrough
     {
@@ -311,6 +489,43 @@ public class ProcessProposalUseCaseTests
 
             await portfolios.Received(1).DeployedOnAsync(
                 DateOnly.FromDateTime(Now.UtcDateTime), Arg.Any<CancellationToken>());
+        }
+
+        [Fact]
+        public async Task In_shadow_the_days_shadow_buys_count_against_it()
+        {
+            // The ledger is empty in Shadow, so without the shadow buys every one of them would be
+            // sized against the whole day. 1 900 of shadow buys and 100 left: one share, exactly
+            // as Paper would have bought after spending the same 1 900.
+            var (sut, _, decisions, _) = BuildWithLedger(
+                Signal(), policy: Capped, mode: TradingMode.Shadow, shadowDeployedToday: 1_900m);
+
+            (await Run(sut, NewPortfolio())).ShouldBeOfType<TradeDecisionResult.Shadowed>()
+                .Reason.ShouldBe("Shadow mode: would have bought 1 AAPL at 100 SEK");
+
+            decisions.OfTheCycle.ShadowCost.ShouldBe(100m);
+        }
+
+        [Fact]
+        public async Task In_shadow_a_day_spent_in_shadow_buys_nothing_more()
+        {
+            var (sut, _, _, _) = BuildWithLedger(
+                Signal(), policy: Capped, mode: TradingMode.Shadow, shadowDeployedToday: 2_000m);
+
+            (await Run(sut, NewPortfolio())).ShouldBeOfType<TradeDecisionResult.NotSized>();
+        }
+
+        [Fact]
+        public async Task In_paper_shadow_buys_are_not_spending()
+        {
+            // A Paper engine on a day that started in Shadow: what Shadow did not buy is not money
+            // Paper has spent, so it is not even asked.
+            var (sut, _, _, portfolios) = BuildWithLedger(
+                Signal(), policy: Capped, shadowDeployedToday: 2_000m);
+
+            (await Run(sut, NewPortfolio())).ShouldBeOfType<TradeDecisionResult.Executed>().Quantity.ShouldBe(5m);
+
+            await portfolios.DidNotReceive().ShadowDeployedOnAsync(Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
         }
 
         [Fact]

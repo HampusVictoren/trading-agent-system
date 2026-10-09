@@ -95,6 +95,36 @@ public sealed class TradingDatabaseFixture : IAsyncLifetime
             // test into the next.
             "TRUNCATE trading.decisions, trading.orders, trading.positions, trading.portfolios, "
             + "trading.shortlists RESTART IDENTITY CASCADE");
+
+        await ReleaseTheKillSwitchAsync();
+    }
+
+    /// <summary>
+    /// Puts the kill switch back to the state the migration leaves it in: one released row. Not
+    /// left alone, because a test that engaged it would otherwise stop every test after it; and
+    /// not simply truncated, because an empty table reads as engaged - it fails closed.
+    /// </summary>
+    public async Task ReleaseTheKillSwitchAsync()
+    {
+        await using var context = NewContext();
+        await context.Database.ExecuteSqlRawAsync(
+            "TRUNCATE trading.kill_switch RESTART IDENTITY; "
+            + "INSERT INTO trading.kill_switch (engaged, reason) VALUES (false, 'released by the test fixture')");
+    }
+
+    /// <summary>What an operator does, word for word: one INSERT, as the superuser would type it.</summary>
+    public async Task EngageTheKillSwitchAsync(string reason)
+    {
+        await using var context = NewContext();
+        await context.Database.ExecuteSqlAsync(
+            $"INSERT INTO trading.kill_switch (engaged, reason) VALUES (true, {reason})");
+    }
+
+    /// <summary>The same, synchronously, for a test that pulls the switch from inside a substitute.</summary>
+    public void EngageTheKillSwitch(string reason)
+    {
+        using var context = NewContext();
+        context.Database.ExecuteSql($"INSERT INTO trading.kill_switch (engaged, reason) VALUES (true, {reason})");
     }
 
     public async ValueTask DisposeAsync() => await _container.DisposeAsync();

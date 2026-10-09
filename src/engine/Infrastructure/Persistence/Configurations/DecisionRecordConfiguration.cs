@@ -21,7 +21,11 @@ public sealed class DecisionRecordConfiguration : IEntityTypeConfiguration<Decis
 
     public void Configure(EntityTypeBuilder<DecisionRecord> builder)
     {
-        builder.ToTable("decisions");
+        // Only a shadowed decision has a cost it did not spend, and it is a purchase, so it is
+        // more than nothing. A row that broke either would be counted against a day's budget.
+        builder.ToTable("decisions", table => table.HasCheckConstraint(
+            "ck_decisions_shadow_cost_only_when_shadowed",
+            "shadow_cost IS NULL OR (outcome = 'Shadowed' AND shadow_cost > 0)"));
 
         builder.HasKey(decision => decision.Id);
         builder.Property(decision => decision.Id).UseIdentityAlwaysColumn();
@@ -49,6 +53,8 @@ public sealed class DecisionRecordConfiguration : IEntityTypeConfiguration<Decis
             .HasPrecision(MoneyPrecision.Digits, MoneyPrecision.Decimals);
         builder.Property(decision => decision.ReferencePrice)
             .HasPrecision(MoneyPrecision.Digits, MoneyPrecision.Decimals);
+        builder.Property(decision => decision.ShadowCost)
+            .HasPrecision(MoneyPrecision.Digits, MoneyPrecision.Decimals);
         builder.Property(decision => decision.ReferenceCurrency).HasMaxLength(3).IsFixedLength();
 
         builder.Property(decision => decision.RequestedAt).HasConversion(StoredInstant.Converter);
@@ -61,11 +67,12 @@ public sealed class DecisionRecordConfiguration : IEntityTypeConfiguration<Decis
         builder.Property(decision => decision.KeyRisks)
             .HasColumnType($"varchar({MaxRiskLength})[]");
 
-        // Both enums are stored as text, for the same reason the order side is: a decision
+        // The enums are stored as text, for the same reason the order side is: a decision
         // history is read from psql at least as often as from C#.
         builder.Property(decision => decision.Stance).HasConversion<string>().HasMaxLength(8);
         builder.Property(decision => decision.Selection).HasConversion<string>().HasMaxLength(16);
         builder.Property(decision => decision.Outcome).HasConversion<string>().HasMaxLength(24);
+        builder.Property(decision => decision.TradingMode).HasConversion<string>().HasMaxLength(8);
 
         builder.Property(decision => decision.RecordedAt)
             .HasDefaultValueSql("now()")

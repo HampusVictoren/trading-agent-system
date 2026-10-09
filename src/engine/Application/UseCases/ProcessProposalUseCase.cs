@@ -7,6 +7,7 @@ using Engine.Domain.Aggregates.Portfolio;
 using Engine.Domain.Risk;
 using Engine.Domain.Screening;
 using Engine.Domain.Signals;
+using Engine.Domain.Trading;
 using Engine.Domain.ValueObjects;
 using Engine.Hosting.Options;
 using Microsoft.Extensions.Options;
@@ -21,6 +22,7 @@ public class ProcessProposalUseCase
     private readonly RiskEngine _riskEngine;
     private readonly RiskPolicy _policy;
     private readonly TradingOptions _trading;
+    private readonly OrderGate _gate;
     private readonly TimeProvider _clock;
 
     public ProcessProposalUseCase(
@@ -32,6 +34,7 @@ public class ProcessProposalUseCase
         RiskEngine riskEngine,
         RiskPolicy policy,
         IOptions<TradingOptions> trading,
+        OrderGate gate,
         TimeProvider clock)
     {
         _agentClient = agentClient;
@@ -42,6 +45,7 @@ public class ProcessProposalUseCase
         _riskEngine = riskEngine;
         _policy = policy;
         _trading = trading.Value;
+        _gate = gate;
         _clock = clock;
     }
 
@@ -76,7 +80,22 @@ public class ProcessProposalUseCase
     /// What one cycle produced. The signal and the order are separate from the result because
     /// most outcomes have neither, and the record has to say which.
     /// </summary>
-    private sealed record Cycle(TradeDecisionResult Result, TradeSignal? Signal = null, Order? Order = null);
+    private sealed record Cycle(
+        TradeDecisionResult Result, TradeSignal? Signal = null, Order? Order = null, decimal? ShadowCost = null);
+
+    /// <summary>
+    /// What the trading day has already committed to purchases: the ledger's sum, and in Shadow
+    /// what the day's shadow buys would have cost, since none of those reached the ledger.
+    /// </summary>
+    private async Task<Money> DeployedTodayAsync(DateOnly day, CancellationToken cancellationToken)
+    {
+        var placed = await _portfolios.DeployedOnAsync(day, cancellationToken);
+
+        if (_gate.Mode != TradingMode.Shadow)
+            return placed;
+
+        return placed.Add(await _portfolios.ShadowDeployedOnAsync(day, cancellationToken));
+    }
 
     /// <remarks>
     /// The order is deliberate. The agents give a view; the sizer turns it into a quantity;
@@ -153,8 +172,7 @@ public class ProcessProposalUseCase
         // much of the day is left. A sale needs none of it - selling frees capital rather than
         // committing it - so the query is only made when there is a purchase to bound.
         var deployedToday = signal.Stance == Stance.Buy
-            ? await _portfolios.DeployedOnAsync(
-                DateOnly.FromDateTime(request.AsOf.UtcDateTime), cancellationToken)
+            ? await DeployedTodayAsync(DateOnly.FromDateTime(request.AsOf.UtcDateTime), cancellationToken)
             : Money.Zero();
 
         var intent = _sizer.Size(signal, portfolio, prices, _policy, deployedToday);
@@ -184,6 +202,27 @@ public class ProcessProposalUseCase
                 signal);
         }
 
+        // Asked here and nowhere earlier: after the agents, the sizer and the risk gate have all
+        // had their say, and immediately before the portfolio is touched. Shadow mode is then the
+        // whole decision with only the last step removed, so what it records is what Paper would
+        // have done - and for a buy the kill switch is read after the LLM call rather than before
+        // it, so a switch pulled while the agents were thinking still stops this buy. A sale is
+        // never stopped by the switch: it reduces exposure, which is what the switch is for.
+        var permission = await _gate.AskAsync(
+            intent is OrderIntent.Buy ? OrderSide.Buy : OrderSide.Sell, cancellationToken);
+
+        if (permission is not OrderPermission.Granted)
+        {
+            // A shadow buy keeps what it would have cost, so the next one is sized against what is
+            // left of the day. A halted one does not: the switch stopped trading, and the day's
+            // budget is Paper's ledger again when it is released.
+            var shadowCost = permission is OrderPermission.ShadowOnly && intent is OrderIntent.Buy buy
+                ? buy.Price.Amount * buy.Quantity
+                : (decimal?)null;
+
+            return new Cycle(NotPlaced(requested, intent, permission), signal, ShadowCost: shadowCost);
+        }
+
         // request.AsOf rather than the clock read again, so the trade is stamped with the same
         // instant the risk gate judged the quote against. A holding period is counted in days;
         // the seconds between the two would be precision that means nothing.
@@ -207,6 +246,32 @@ public class ProcessProposalUseCase
             new TradeDecisionResult.Executed(requested, placed.Side, placed.Quantity, placed.Price),
             signal,
             placed);
+    }
+
+    /// <summary>
+    /// An approved order the gate would not let through, as the outcome the decision row stores.
+    /// </summary>
+    private static TradeDecisionResult NotPlaced(Ticker requested, OrderIntent intent, OrderPermission permission)
+    {
+        var (verb, quantity, price) = intent switch
+        {
+            OrderIntent.Buy buy => ("bought", buy.Quantity, buy.Price),
+            OrderIntent.Sell sell => ("sold", sell.Quantity, sell.Price),
+            _ => throw new InvalidOperationException($"{intent.GetType().Name} is not an order.")
+        };
+
+        return permission switch
+        {
+            OrderPermission.ShadowOnly => new TradeDecisionResult.Shadowed(
+                requested,
+                $"Shadow mode: would have {verb} {quantity} {requested.Value} at {price.Amount} {price.Currency}"),
+
+            OrderPermission.Halted halted => new TradeDecisionResult.Halted(
+                requested, $"{halted.Reason}; would have {verb} {quantity} {requested.Value} at {price.Amount} {price.Currency}"),
+
+            _ => throw new InvalidOperationException(
+                $"The order gate answered {permission.GetType().Name}, which is not a reason to hold an order back.")
+        };
     }
 
     /// <summary>
@@ -244,13 +309,18 @@ public class ProcessProposalUseCase
     /// trusting, which is itself a measurement: a stretch of rows with nothing in them says
     /// the agent service was down, not that the agents were cautious.
     /// </summary>
-    private static DecisionRecord ToRecord(
+    private DecisionRecord ToRecord(
         Guid portfolioId, InstrumentSelection selected, TradeSignalRequestDto request, Cycle cycle) => new()
         {
             CorrelationId = request.CorrelationId,
             PortfolioId = portfolioId,
             Symbol = selected.Ticker,
             Selection = selected.Source,
+
+            // On every row, including the ones that never reached the gate: a Shadow engine asks
+            // different questions from a Paper one (it never holds what it decided to buy), so a
+            // HOLD in Shadow is not the same population as a HOLD in Paper either.
+            TradingMode = _gate.Mode,
 
             // The team that was *asked for*, which is known whatever happens. The version is
             // the answer's own, because only an answer has one.
@@ -276,6 +346,7 @@ public class ProcessProposalUseCase
             Outcome = cycle.Result.Outcome,
             OutcomeReason = cycle.Result.OutcomeReason,
             OrderId = cycle.Order?.Id,
+            ShadowCost = cycle.ShadowCost,
         };
 
     /// <summary>

@@ -38,6 +38,17 @@ public interface IPortfolioRepository
     /// shared mutable state. A day is also the truer unit for what the limit is about.
     /// </remarks>
     Task<Money> DeployedOnAsync(DateOnly day, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// What the buys Shadow mode recorded but did not place on a given trading day would have
+    /// cost, in the account's currency. Zero when there were none.
+    /// </summary>
+    /// <remarks>
+    /// The other half of the day's budget in Shadow, where nothing reaches the ledger
+    /// <see cref="DeployedOnAsync"/> sums. Read from the decisions, by the day the decision was
+    /// requested, which is the same day the caller asks about.
+    /// </remarks>
+    Task<Money> ShadowDeployedOnAsync(DateOnly day, CancellationToken cancellationToken = default);
 }
 
 /// <summary>

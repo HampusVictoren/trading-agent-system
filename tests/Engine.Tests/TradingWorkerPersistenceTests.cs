@@ -3,6 +3,9 @@ using Engine.Application.Interfaces;
 using Engine.Application.UseCases;
 using Engine.Domain.Aggregates.Portfolio;
 using Engine.Domain.Risk;
+using Engine.Domain.Screening;
+using Engine.Domain.Signals;
+using Engine.Domain.Trading;
 using Engine.Domain.ValueObjects;
 using Engine.Hosting;
 using Engine.Hosting.Options;
@@ -81,7 +84,55 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
     /// cycle and then waits, so what the assertions see is one cycle's work rather than
     /// however many fitted into the wait.
     /// </summary>
-    private ServiceProvider AnEngine(IAgentClient agents, DateTimeOffset? clock = null)
+    /// <summary>Every line the engine logs, so a test can wait for one that leaves no row behind.</summary>
+    private readonly CapturedLines _lines = new();
+
+    private sealed class CapturedLines : ILoggerProvider
+    {
+        private readonly System.Collections.Concurrent.ConcurrentQueue<string> _lines = new();
+
+        public IReadOnlyCollection<string> Lines => _lines;
+
+        public ILogger CreateLogger(string categoryName) => new Writer(_lines);
+
+        public void Dispose() { }
+
+        private sealed class Writer(System.Collections.Concurrent.ConcurrentQueue<string> lines) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state)
+                where TState : notnull => null;
+
+            public bool IsEnabled(LogLevel logLevel) => true;
+
+            public void Log<TState>(
+                LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+                Func<TState, Exception?, string> formatter) => lines.Enqueue(formatter(state, exception));
+        }
+    }
+
+    private async Task WaitForALineAsync(string fragment)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
+
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            if (_lines.Lines.Any(line => line.Contains(fragment, StringComparison.Ordinal)))
+                return;
+
+            await Task.Delay(25, TestContext.Current.CancellationToken);
+        }
+
+        // The whole log in the failure, because the line that did not come is rarely the clue.
+        throw new TimeoutException(
+            $"The worker never logged '{fragment}'. It logged:{Environment.NewLine}"
+            + string.Join(Environment.NewLine, _lines.Lines));
+    }
+
+    private ServiceProvider AnEngine(
+        IAgentClient agents,
+        DateTimeOffset? clock = null,
+        TradingMode mode = TradingMode.Paper,
+        string? alsoInTheUniverse = null)
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -102,12 +153,16 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
                 ["Trading:CycleIntervalMinutes"] = "60",
                 ["Trading:TeamId"] = "default",
                 ["Trading:OpeningBalance"] = "10000",
+                ["Trading:Mode"] = mode.ToString(),
                 ["Database:ConnectionString"] = _database.ConnectionString,
             })
+            .AddInMemoryCollection(alsoInTheUniverse is null
+                ? []
+                : new Dictionary<string, string?> { ["Trading:Universe:1"] = alsoInTheUniverse })
             .Build();
 
         var services = new ServiceCollection();
-        services.AddLogging();
+        services.AddLogging(logging => logging.AddProvider(_lines));
         services.AddEngineOptions(configuration);
         services.AddSingleton<RiskEngine>();
         services.AddSingleton(sp => sp.GetRequiredService<IOptions<RiskPolicyOptions>>().Value.ToRiskPolicy());
@@ -116,12 +171,35 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
         services.AddSingleton(agents);
         services.AddTradingDatabase();
         services.AddTransient<QuoteReader>();
+        services.AddTransient<OrderGate>();
+        services.AddSingleton<ShadowExitNotices>();
         services.AddTransient<ProcessProposalUseCase>();
         services.AddTransient<ApplyExitsUseCase>();
         services.AddTransient<SelectShortlistUseCase>();
         services.AddTransient<AnalysisDueCheck>();
 
         return services.BuildServiceProvider();
+    }
+
+    /// <summary>Starts the real worker, waits for a line it logs, and stops it.</summary>
+    private async Task RunUntilItLogsAsync(ServiceProvider engine, string fragment)
+    {
+        var worker = new TradingWorker(
+            engine.GetRequiredService<IServiceScopeFactory>(),
+            engine.GetRequiredService<IOptions<TradingOptions>>(),
+            engine.GetRequiredService<TimeProvider>(),
+            engine.GetRequiredService<ILogger<TradingWorker>>());
+
+        await worker.StartAsync(TestContext.Current.CancellationToken);
+
+        try
+        {
+            await WaitForALineAsync(fragment);
+        }
+        finally
+        {
+            await worker.StopAsync(TestContext.Current.CancellationToken);
+        }
     }
 
     /// <summary>Starts the real worker, waits for its cycle to be committed, and stops it.</summary>
@@ -278,6 +356,200 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
         // The second cycle saw the money the first one spent.
         decisions[1].AvailableRiskBudget.ShouldBe(9_800m);
         decisions[1].ExistingQuantity.ShouldBe(2m);
+    }
+
+    [Fact]
+    public async Task A_shadow_engine_records_its_decisions_and_places_nothing()
+    {
+        // The same cycle as the restart test's first half - a full-tier buy the risk gate
+        // approves - run in Shadow. The row says what would have been bought; the ledger, the
+        // positions and the cash say nothing happened.
+        await using (var engine = AnEngine(AnAgentServiceThatAnswers(ABuy(conviction: 0.9)), mode: TradingMode.Shadow))
+        {
+            await RunOneCycleAsync(engine, expectedDecisionsAfterwards: 1);
+        }
+
+        await using var context = _database.NewContext();
+
+        var decision = await context.Decisions.SingleAsync(TestContext.Current.CancellationToken);
+        decision.Outcome.ShouldBe(DecisionOutcome.Shadowed);
+        decision.TradingMode.ShouldBe(TradingMode.Shadow);
+        decision.OutcomeReason.ShouldBe("Shadow mode: would have bought 5 AAPL at 100 SEK");
+        decision.OrderId.ShouldBeNull();
+        decision.ShadowCost.ShouldBe(500m);
+
+        (await context.Orders.CountAsync(TestContext.Current.CancellationToken)).ShouldBe(0);
+
+        // The account is opened - sizing needs a balance to be a share of - and left untouched.
+        var portfolio = await context.Portfolios
+            .Include(held => held.Positions)
+            .SingleAsync(TestContext.Current.CancellationToken);
+
+        portfolio.CashBalance.Amount.ShouldBe(10_000m);
+        portfolio.Positions.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task A_shadow_engine_warns_at_startup_that_it_will_not_close_what_the_account_holds()
+    {
+        // A paper account with a holding, restarted in Shadow, which is what the shipped default
+        // does to an engine that never set the mode. Its exits stop selling, so it has to say so.
+        await using (var first = AnEngine(AnAgentServiceThatAnswers(ABuy(conviction: 0.6))))
+        {
+            await RunOneCycleAsync(first, expectedDecisionsAfterwards: 1);
+        }
+
+        await using (var second = AnEngine(AnAgentServiceThatAnswers(ABuy(conviction: 0.6)), mode: TradingMode.Shadow))
+        {
+            await RunUntilItLogsAsync(second, "will be logged but NOT placed");
+        }
+
+        _lines.Lines.ShouldContain(line =>
+            line.StartsWith("Trading mode is Shadow and the portfolio holds 1 position(s): AAPL.", StringComparison.Ordinal)
+            && line.Contains("Set Trading:Mode to Paper", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task A_shadow_engine_with_nothing_held_has_nothing_to_warn_about()
+    {
+        await using (var engine = AnEngine(AnAgentServiceThatAnswers(ABuy(conviction: 0.9)), mode: TradingMode.Shadow))
+        {
+            await RunOneCycleAsync(engine, expectedDecisionsAfterwards: 1);
+        }
+
+        _lines.Lines.ShouldNotContain(line => line.Contains("NOT placed", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// The kill switch's first proof. A Paper engine holding a position that has fallen through its
+    /// stop, with an instrument on the screen the agents would buy. The switch is engaged the way an
+    /// operator engages it. The stop-loss still sells, because the switch stops new buys only, and
+    /// nothing is bought: the screen is not asked and no candidate is analysed.
+    /// </summary>
+    [Fact]
+    public async Task With_the_kill_switch_engaged_the_stop_loss_still_sells_and_nothing_is_bought()
+    {
+        await using (var first = AnEngine(AnAgentServiceThatAnswers(ABuy(conviction: 0.6))))
+        {
+            await RunOneCycleAsync(first, expectedDecisionsAfterwards: 1);
+        }
+
+        await _database.EngageTheKillSwitchAsync("prices look wrong");
+
+        // A day later at 80: the stop-loss floor is 90, so the exits sell. AAPL is on the screen
+        // again and the agents would buy it again, which is the buy the switch has to stop.
+        var later = Now.AddDays(1);
+        var agents = AnAgentServiceThatAnswers(ABuy(conviction: 0.6, quoteAsOf: later), AQuote(price: 80m, asOf: later));
+        agents.ClearReceivedCalls();
+
+        await using (var second = AnEngine(agents, clock: later))
+        {
+            await RunUntilItLogsAsync(second, "Nothing to analyse this cycle");
+        }
+
+        // Asked for the exit's price and nothing else: no screen, no analysis.
+        await agents.DidNotReceive().GetScreenAsync(Arg.Any<ScreenRequestDto>(), Arg.Any<CancellationToken>());
+        await agents.DidNotReceive().GetSignalAsync(Arg.Any<TradeSignalRequestDto>(), Arg.Any<CancellationToken>());
+
+        await using var context = _database.NewContext();
+
+        var orders = await context.Orders.ToListAsync(TestContext.Current.CancellationToken);
+        orders.Count(order => order.Side == OrderSide.Buy).ShouldBe(1);
+
+        var sale = orders.Where(order => order.Side == OrderSide.Sell).ShouldHaveSingleItem();
+        sale.Trigger.ShouldBe(OrderTrigger.StopLoss);
+        sale.Quantity.ShouldBe(2m);
+
+        (await context.Decisions.CountAsync(TestContext.Current.CancellationToken)).ShouldBe(1);
+
+        var portfolio = await context.Portfolios
+            .Include(held => held.Positions)
+            .SingleAsync(TestContext.Current.CancellationToken);
+
+        portfolio.Positions.ShouldBeEmpty();
+
+        // 10 000 less the 200 bought, plus the 160 the stop-loss raised at 80.
+        portfolio.CashBalance.Amount.ShouldBe(9_960m);
+
+        _lines.Lines.ShouldContain(line =>
+            line.Contains("The kill switch is engaged", StringComparison.Ordinal)
+            && line.Contains("prices look wrong", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task With_the_kill_switch_engaged_a_holding_is_still_analysed_and_the_agents_sale_goes_through()
+    {
+        // Four days on, past the minimum holding period and inside the five-day thesis, at 101:
+        // no exit fires, but the price has moved, so the holding is due an analysis. The agents
+        // argue to sell, and a sale is what the switch lets through.
+        await using (var first = AnEngine(AnAgentServiceThatAnswers(ABuy(conviction: 0.6))))
+        {
+            await RunOneCycleAsync(first, expectedDecisionsAfterwards: 1);
+        }
+
+        await _database.EngageTheKillSwitchAsync("prices look wrong");
+
+        var later = Now.AddDays(4);
+        var sell = ABuy(conviction: 0.9, quoteAsOf: later) with { Stance = "SELL", ReferencePrice = 101m };
+        var agents = AnAgentServiceThatAnswers(sell, AQuote(price: 101m, asOf: later));
+        agents.ClearReceivedCalls();
+
+        await using (var second = AnEngine(agents, clock: later))
+        {
+            await RunOneCycleAsync(second, expectedDecisionsAfterwards: 2);
+        }
+
+        await agents.DidNotReceive().GetScreenAsync(Arg.Any<ScreenRequestDto>(), Arg.Any<CancellationToken>());
+        await agents.Received(1).GetSignalAsync(Arg.Any<TradeSignalRequestDto>(), Arg.Any<CancellationToken>());
+
+        await using var context = _database.NewContext();
+
+        var decision = await context.Decisions.OrderBy(row => row.Id).LastAsync(TestContext.Current.CancellationToken);
+        decision.Selection.ShouldBe(SelectionSource.Holding);
+        decision.Stance.ShouldBe(Stance.Sell);
+        decision.Outcome.ShouldBe(DecisionOutcome.Executed);
+
+        var sale = (await context.Orders.ToListAsync(TestContext.Current.CancellationToken))
+            .Where(order => order.Side == OrderSide.Sell).ShouldHaveSingleItem();
+        sale.Trigger.ShouldBe(OrderTrigger.Signal);
+    }
+
+    [Fact]
+    public async Task A_switch_pulled_while_the_agents_are_thinking_stops_that_order_and_the_rest_of_the_cycle()
+    {
+        // Two shortlisted instruments. While the agents are answering about the first, an operator
+        // engages the switch. The answer comes back a BUY the risk gate approves - and the gate reads
+        // the switch again before placing it, so it is recorded as halted with nothing placed. The
+        // second instrument is never analysed.
+        var agents = Substitute.For<IAgentClient>();
+        agents.GetQuoteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns((QuoteDto?)null);
+        agents.GetSignalAsync(Arg.Any<TradeSignalRequestDto>(), Arg.Any<CancellationToken>())
+            .Returns(_ =>
+            {
+                _database.EngageTheKillSwitch("pulled mid-cycle");
+                return ABuy(conviction: 0.9);
+            });
+        ThatShortlists(agents, Symbol, "MSFT");
+
+        await using (var engine = AnEngine(agents, alsoInTheUniverse: "MSFT"))
+        {
+            await RunUntilItLogsAsync(engine, "Cycle over 2 instrument(s)");
+        }
+
+        // MSFT was a candidate, and the only order a candidate can lead to is a buy.
+        await agents.Received(1).GetSignalAsync(Arg.Any<TradeSignalRequestDto>(), Arg.Any<CancellationToken>());
+        _lines.Lines.ShouldContain(line => line.Contains("1 candidate(s) were not analysed", StringComparison.Ordinal));
+
+        await using var context = _database.NewContext();
+
+        var decision = await context.Decisions.SingleAsync(TestContext.Current.CancellationToken);
+        decision.Symbol.Value.ShouldBe(Symbol);
+        decision.Outcome.ShouldBe(DecisionOutcome.Halted);
+        decision.OutcomeReason.ShouldBe("Kill switch engaged: pulled mid-cycle; would have bought 5 AAPL at 100 SEK");
+        decision.OrderId.ShouldBeNull();
+
+        (await context.Orders.CountAsync(TestContext.Current.CancellationToken)).ShouldBe(0);
     }
 
     [Fact]

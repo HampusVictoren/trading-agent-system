@@ -7,6 +7,7 @@ using Engine.Domain.Outcomes;
 using Engine.Domain.Risk;
 using Engine.Domain.Screening;
 using Engine.Domain.Signals;
+using Engine.Domain.Trading;
 using Engine.Domain.ValueObjects;
 using Engine.Hosting.Options;
 using Engine.Infrastructure.Persistence;
@@ -83,7 +84,8 @@ public class MeasurementSweepTests : IAsyncLifetime
         int horizonDays = 5,
         string correlationId = "cycle-1",
         string teamVersion = "abc123",
-        decimal referencePrice = 100m)
+        decimal referencePrice = 100m,
+        TradingMode tradingMode = TradingMode.Paper)
     {
         await using var context = _database.NewContext();
 
@@ -97,6 +99,7 @@ public class MeasurementSweepTests : IAsyncLifetime
             Symbol = Aapl,
             TeamId = "default",
             Selection = SelectionSource.Shortlist,
+            TradingMode = tradingMode,
             RequestedAt = new DateTimeOffset(2026, 9, 21, 14, 0, 0, TimeSpan.Zero),
             AvailableRiskBudget = 10_000m,
             MaxPositionPct = 0.05m,
@@ -132,6 +135,7 @@ public class MeasurementSweepTests : IAsyncLifetime
             Symbol = Aapl,
             TeamId = "default",
             Selection = SelectionSource.Shortlist,
+            TradingMode = TradingMode.Paper,
             RequestedAt = new DateTimeOffset(2026, 9, 21, 14, 0, 0, TimeSpan.Zero),
             AvailableRiskBudget = 10_000m,
             MaxPositionPct = 0.05m,
@@ -450,6 +454,21 @@ public class MeasurementSweepTests : IAsyncLifetime
 
         // One row each, not one row of two. Everything else about them is identical.
         rows.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task A_shadow_decision_and_a_paper_decision_are_two_rows_in_the_report()
+    {
+        // Alike in every column the view groups by except the mode. A Shadow engine never holds
+        // what it decided to buy, so it asks the agents different questions; pooling the two
+        // would measure two regimes as one number.
+        await ASignalWasMade(correlationId: "cycle-paper");
+        await ASignalWasMade(correlationId: "cycle-shadow", tradingMode: TradingMode.Shadow);
+
+        await SweepAsync(AgentServiceWith());
+
+        (await FromTheView<long>("measured", $"{OneTradingDay} AND trading_mode = 'Paper'")).ShouldBe(1);
+        (await FromTheView<long>("measured", $"{OneTradingDay} AND trading_mode = 'Shadow'")).ShouldBe(1);
     }
 
     [Fact]

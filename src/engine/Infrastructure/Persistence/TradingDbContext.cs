@@ -37,6 +37,9 @@ public sealed class TradingDbContext : DbContext
 
     public DbSet<ShortlistEntry> Shortlists => Set<ShortlistEntry>();
 
+    /// <summary>Read by the engine, written only by an operator. See <see cref="KillSwitch"/>.</summary>
+    public DbSet<KillSwitchEvent> KillSwitch => Set<KillSwitchEvent>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema(Schema);
