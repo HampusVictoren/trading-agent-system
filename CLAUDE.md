@@ -107,6 +107,12 @@ docker compose logs -f engine             # what a cycle did
 docker compose down                       # stop; the volume and its decisions stay
 docker exec -it trading-db psql -U postgres -d tradingdb   # superuser, via the container's local socket
 
+# The kill switch. Stops every order, exits included, with no restart: the engine reads it at
+# cycle start, before each analysis and immediately before each order. The latest row wins.
+docker exec -it trading-db psql -U postgres -d tradingdb -c "INSERT INTO trading.kill_switch (engaged, reason) VALUES (true, '<why>')"
+docker exec -it trading-db psql -U postgres -d tradingdb -c "INSERT INTO trading.kill_switch (engaged, reason) VALUES (false, '<why>')"
+docker exec -it trading-db psql -U postgres -d tradingdb -c "SELECT * FROM trading.kill_switch ORDER BY id DESC LIMIT 5"
+
 # Python agent service — run from src/agents (Python 3.12, managed with uv)
 uv sync
 uv run python -m app                        # the service's own entrypoint, as the container runs it
@@ -206,7 +212,7 @@ docker run --rm tas-engine-migrate --version
 - **There is no HEALTHCHECK**, on purpose. Nothing is gated on this container, and a useful
   check would have to ask "did a cycle finish in the last fifteen minutes" rather than "is the
   process alive" - which needs the engine to publish that somewhere. Stage 7.
-- **The `trading` schema has eleven migrations** and `agent` has five. CI reads the first number
+- **The `trading` schema has thirteen migrations** and `agent` has five. CI reads the first number
   off the migration files rather than holding it, because this file and the worklog have both
   had it wrong.
 
@@ -215,9 +221,11 @@ configuration.
 
 - **The engine is behind a profile.** `docker compose up -d` brings up the database, both
   schemas and the agent service; `--profile trade` adds the engine. The engine is the only
-  service here that spends money, and the kill switch does not arrive until stage 7 - so until
-  then "not starting it" is the only way to stop it, and that should cost a word on the command
-  line rather than being what `up` happens to do. Both migration steps run **by default**,
+  service here that spends money. When this was decided (D2), "not starting it" was the only way
+  to stop it, and that should cost a word on the command line rather than being what `up`
+  happens to do. **Stage 7 has added the other ways**: `Trading:Mode` defaults to Shadow, which
+  places nothing, and `trading.kill_switch` stops a running engine. The profile is kept anyway,
+  until the owner decides to lift D2. Both migration steps run **by default**,
   because a provisioned database is not trading: after a plain `up` the schemas are current and
   a host-run engine can point at the same database.
 - **Each schema is applied by a container of its own**, and whatever needs it waits on
@@ -262,7 +270,7 @@ about four minutes for a first full cycle - screen, account opened, ten analyses
 
 **Every request carries a correlation id.** `CorrelationIdMiddleware` reads `X-Correlation-Id`, or invents one, echoes it on the response and puts it in every log line. Logs are JSON, configured in the lifespan, so uvicorn's own lines are formatted too - except the two banner lines it prints before startup. `/health` is liveness and checks nothing else on purpose; `/ready` checks the database and the LLM backend and answers 503 until both do, with the dependency names in the body only when `TAS_READY_DETAIL` is set.
 
-The engine reads `AgentService:BaseUrl`, `RequestTimeoutSeconds`, `RiskPolicy` and `Trading` (including `OpeningBalance`, the balance the account is opened with on the very first cycle) from `appsettings.json`, all validated at startup. It also **refuses to start when the database is behind the build**, naming the pending migrations and the command that applies them - and it never migrates itself, because applying at startup would move the schema before anyone could decide to. That check is its first connection, so an unreachable database fails there too. `Trading` holds `Universe` (31 OMXS30 symbols), `ShortlistSize`, `MinDollarVolume`, `CycleIntervalMinutes` and `TeamId`; `TradingOptionsValidator` refuses a universe entry that is not a ticker, or one named twice. **`AgentService:ApiKey`, `AgentService:OutcomesHmacSecret` and `Database:ConnectionString` are not there**, because all three are secrets: locally they live in the user secrets store, outside the repository, and elsewhere they come from the environment. `AgentService:SignalsApiKey`, `ScreenApiKey`, `OutcomesApiKey` and `MarketApiKey` are optional scoped overrides in the same store, and `ApiKeyFor(scope)` falls back to `ApiKey` for any scope without one. Neither has a default - an engine that cannot reach its database refuses to start, because from stage 4 a cycle it cannot store is a cycle whose evidence is lost.
+The engine reads `AgentService:BaseUrl`, `RequestTimeoutSeconds`, `RiskPolicy` and `Trading` (including `OpeningBalance`, the balance the account is opened with on the very first cycle) from `appsettings.json`, all validated at startup. It also **refuses to start when the database is behind the build**, naming the pending migrations and the command that applies them - and it never migrates itself, because applying at startup would move the schema before anyone could decide to. That check is its first connection, so an unreachable database fails there too. `Trading` holds `Mode` (required: `Shadow`, the shipped default, or `Paper`; `Live` is refused, and compose sets it from `TRADING_MODE`), `Universe` (31 OMXS30 symbols), `ShortlistSize`, `MinDollarVolume`, `CycleIntervalMinutes` and `TeamId`; `TradingOptionsValidator` refuses a universe entry that is not a ticker, or one named twice. **`AgentService:ApiKey`, `AgentService:OutcomesHmacSecret` and `Database:ConnectionString` are not there**, because all three are secrets: locally they live in the user secrets store, outside the repository, and elsewhere they come from the environment. `AgentService:SignalsApiKey`, `ScreenApiKey`, `OutcomesApiKey` and `MarketApiKey` are optional scoped overrides in the same store, and `ApiKeyFor(scope)` falls back to `ApiKey` for any scope without one. Neither has a default - an engine that cannot reach its database refuses to start, because from stage 4 a cycle it cannot store is a cycle whose evidence is lost.
 
 ```bash
 # Both sides need the same value. Generate one, then give it to each:
@@ -299,7 +307,7 @@ dotnet user-secrets set "Database:ConnectionString" \
 
 | Schema | Owner | Holds |
 |---|---|---|
-| `trading` | `engine_svc` | `portfolios`, `positions`, `orders`, `decisions`, `signal_outcomes`, `outcome_deliveries`, `shortlists` and the `hit_rate` and `shortlist_edge` views, through EF Core |
+| `trading` | `engine_svc` | `portfolios`, `positions`, `orders`, `decisions`, `signal_outcomes`, `outcome_deliveries`, `shortlists`, `kill_switch` and the `hit_rate` and `shortlist_edge` views, through EF Core |
 | `agent` | `agent_svc` | `analysis_runs`, `step_outputs`, `signal_outcomes` and `analysis_embeddings` — the journal and the pgvector memory over it, through Alembic |
 
 Each role owns its schema, so its migration tool can create tables there, and has **no access to the other's** — not even to see what tables exist. Neither can create anything in `public`. Only the two roles and the superuser may connect. The `vector` extension stays in `public`, because `pgvector.asyncpg.register_vector` looks it up there.
@@ -312,7 +320,7 @@ rather than a convention, and it uses Postgres's `xmin` as its concurrency token
 `decisions` are **append-only, enforced by a trigger** that raises on `UPDATE` and `DELETE`,
 including a `DELETE` that would match no rows; `TRUNCATE` is deliberately left alone, because
 that is the owner clearing the table on purpose rather than a cycle rewriting history.
-`decisions.correlation_id` is unique, so one analysis cannot become two rows. `decisions.selection` says which regime put the instrument in front of the agents - `Shortlist`, `Holding`, or `FixedList` for everything that predates stage 5's screening - because a holding is analysed whatever it ranked and a candidate precisely because it ranked well, so a hit rate over both would measure the screen's selection and the portfolio's inertia as one number. `orders.triggered_by` says who asked for a sale (`Signal`, `StopLoss` or `TimeLimit`), which is what lets the minimum holding period exempt the deterministic exits.
+`decisions.correlation_id` is unique, so one analysis cannot become two rows. `decisions.trading_mode` says whether a decision was taken in `Shadow` or `Paper` (history is backfilled as `Paper`), and `hit_rate` groups by it, so a shadow run never pools with a traded one. `kill_switch` is an append-only log of the switch: `engaged`, a `reason` that may not be blank, and `changed_at`/`changed_by` filled by the database. The latest row is the state, and the migration seeds one released row. `decisions.selection` says which regime put the instrument in front of the agents - `Shortlist`, `Holding`, or `FixedList` for everything that predates stage 5's screening - because a holding is analysed whatever it ranked and a candidate precisely because it ranked well, so a hit rate over both would measure the screen's selection and the portfolio's inertia as one number. `orders.triggered_by` says who asked for a sale (`Signal`, `StopLoss` or `TimeLimit`), which is what lets the minimum holding period exempt the deterministic exits.
 
 `signal_outcomes` is one row per signal per horizon, append-only as well, unique on
 `(decision_id, horizon_unit, horizon_days)` so a sweep that runs twice cannot write the same
@@ -348,7 +356,7 @@ idempotent on the other side.
 
 ### Request flow
 
-1. `TradingWorker` (`src/engine/Hosting/Workers`) is a `BackgroundService` that holds **no** portfolio. Every `Trading:CycleIntervalMinutes` (15) it does three things in order, each in its own scope and transaction:
+1. `TradingWorker` (`src/engine/Hosting/Workers`) is a `BackgroundService` that holds **no** portfolio. Every `Trading:CycleIntervalMinutes` (15) it first reads the kill switch. If the switch is engaged it does nothing that cycle: no exits, no screen, and no agent is asked. Otherwise it does three things in order, each in its own scope and transaction:
 
    - **The deterministic exits**, through `ApplyExitsUseCase`. One pass over the whole portfolio, taking no signal and asking no agent: `ExitRules` sells a position that has fallen `RiskPolicy:StopLossPercentage` below its average purchase price, or whose `horizon_days` have passed since the last purchase. They run **before** the analyses so a cycle's buying sees the cash and the position headroom they have just released. An empty database is left alone - an account that exists because a sweep for sales ran is an odd thing to explain.
    - **The selection**, through `SelectShortlistUseCase`. `POST /v1/screen` ranks `Trading:Universe` (31 OMXS30 names) with no LLM call and returns the best `Trading:ShortlistSize` (10); the result is stored in `trading.shortlists` and **read back on every later cycle that day**, because the factors come from daily bars so two screens on one day rank identically. `CycleSelection` then makes the cycle **everything the portfolio holds, plus that shortlist** - holdings first, by symbol, so a sale frees cash before a buy is sized, and a held instrument that was also ranked appears once, as a holding.
@@ -390,6 +398,8 @@ idempotent on the other side.
 
    - a **buy** is `budget = min(position headroom, cash above the buffer, what is left of the trading day) × conviction tier`, then `floor(budget / the signal's own price)` - the headroom is `RiskPolicy:MaxPositionPercentage` (0.05) of the portfolio's value, the buffer is `RiskPolicy:CashBufferPct` (0.10) of it, and what is left of `RiskPolicy:MaxDailyDeploymentPercentage` (0.20) is a third term in the same `min` - so an order shrinks against the trading day's own budget the way it shrinks against the buffer. That last limit is about **correlation in time** rather than position size: a day's buying is up to ten decisions from one model on one screen within a few minutes, and a momentum ranking in a rising market hands it ten names that move together. The accumulator is the ledger - `orders.placed_at` makes "how much was bought today" a query - because the engine deliberately keeps no cycle-level state. A sale ignores it: selling frees capital rather than committing it;
    - a **sale** is `floor(held quantity × conviction tier)` and its gate takes **no prices and no signal** - a sale has no budget to breach and nothing to value, which is also what lets a deterministic exit reach the same gate and stops a market-data outage from trapping the portfolio. SELL on something not held is no order at all, because there is no shorting.
+
+   **An approved order still has to pass `OrderGate`** before anything is placed, and it asks two questions. The first is `Trading:Mode`: `Shadow` (the default) records the decision as `Shadowed`, with what it would have done, and places nothing; `Paper` places it in the simulated portfolio; `Live` is refused at startup, because there is no broker. The second is the kill switch, read on every ask in Paper: if it is engaged, the decision is `Halted` with the reason. Exits ask the same gate, sale by sale. Both outcomes keep their signal, so they are still measured.
 
    Sizing producing nothing is `NotSized`, which is kept apart from `RejectedByRisk` because one says something about the team and the other about the portfolio. `RiskPolicy:MinHoldingPeriodDays` stops the agents selling what they just bought, and the exits are **exempt** from it by reading the order's `triggered_by` - a stop-loss that had to wait would be a waiting period rather than a risk control, and that exemption is why the column exists.
 

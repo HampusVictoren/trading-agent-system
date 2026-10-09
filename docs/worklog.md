@@ -7,10 +7,11 @@ A running record of what has been done, what was learned along the way, and what
 
 This file answers "where are we, how did we get here, and what is next". When resuming, read *Current state* and *Next steps* first, then the roadmap section for the next stage.
 
-**Last updated:** 2026-10-08. **Stage 6 is four pull requests in**: the two images and the
-compose file are merged as #58, #59 and #60, and the contract drift check is the branch in hand
-(`stage-6-contract-drift`, PR 4). *Current state* and *Next steps* are current; the paragraphs
-directly below are the 2026-10-01 record of stage 5 and are kept as they were written.
+**Last updated:** 2026-10-09. **Stage 6 is done**, with all five pull requests merged (#58-#62).
+**Stage 7 has started.** Its first pull request is `stage-7-trading-mode`, which adds
+`Trading:Mode` (Shadow by default) and a kill switch in `trading.kill_switch`. *Current state* and
+*Next steps* are current. The paragraphs directly below are the 2026-10-01 record of stage 5 and
+are kept as they were written.
 
 **2026-10-01: Stage 5's fourth pull request is merged as #51, and verified
 live.** The engine no longer trades a list somebody typed: it screened 31 OMXS30 names with no LLM
@@ -89,11 +90,11 @@ Two things that are easy to misread as broken:
 
 ## Current state
 
-- **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21, **stage 3 done** 2026-09-23. **Stage 4 started** 2026-09-23. PR 5 and PR 6 were each split in two, so the stage is eight pull requests, and **all eight are merged** as of 2026-09-25. **Stage 5 is merged in full** - #42 to #51, the shortlist edge as #54 and the daily deployment cap as #56. **Stage 6 is in progress**: PRs 1-3 merged (#58, #59, #60), PR 4 is `stage-6-contract-drift`, PR 5 is next. Stages 7-8 exist only as plan.
-- **`master` is at PR #61** (the contract drift check, merged 2026-10-08). Stage 6's first four pull requests are on it, plus Dependabot's seven Python bumps as #57 - which merged *after* #58. Stage 4's eight pull requests and all five of stage 5's are on it, plus the live-run record as #53, the security hardening as #52 and the `CLAUDE.md` levelling as #55. **Which CI jobs block a merge is branch protection**, and three were added during stage 6 - `Agents (image)`, `Engine (image)` and `Compose`. This file has twice assumed the required list keeps up with the workflow; it does not, and nobody here can read that setting. Check it under *Settings - Branches*.
+- **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21, **stage 3 done** 2026-09-23. **Stage 4 started** 2026-09-23. PR 5 and PR 6 were each split in two, so the stage is eight pull requests, and **all eight are merged** as of 2026-09-25. **Stage 5 is merged in full** - #42 to #51, the shortlist edge as #54 and the daily deployment cap as #56. **Stage 6 is done**: all five PRs are merged (#58-#62). **Stage 7 is in progress**: PR 1 is `stage-7-trading-mode`, with five more planned (see the stage 7 log). Stage 8 exists only as a plan.
+- **`master` is at PR #62** (the compose bring-up in CI, merged 2026-10-09). All five of stage 6's pull requests are on it, plus Dependabot's seven Python bumps as #57 - which merged *after* #58. Stage 4's eight pull requests and all five of stage 5's are on it, plus the live-run record as #53, the security hardening as #52 and the `CLAUDE.md` levelling as #55. **Which CI jobs block a merge is branch protection**, and three were added during stage 6 - `Agents (image)`, `Engine (image)` and `Compose`. This file has twice assumed the required list keeps up with the workflow; it does not, and nobody here can read that setting. Check it under *Settings - Branches*.
 - **Dependabot's bumps are in.** #46 (setup-uv) and #47 (six Python packages) merged to `master` on 2026-09-26 and were merged *into* `stage-5-selling` rather than rebased onto, because the branch was already pushed and a rebase would need a force-push. Two of the six matter behaviourally - **ag2 1.0.5 to 1.0.6** and **openai 3.16.1 to 3.19.1** - and the lock also *downgraded* SQLAlchemy from 2.1.1 to 2.0.54, which the Alembic fixture exercises on every database test. 476 Python tests green on all of it.
 - **Stage 5's merge history:** `stage-5-model-and-horizon` as #42, `stage-5-screening` as #43, `stage-5-sek` as #44, `stage-5-symbol-columns` as #45 - the last of those repairing #44, which merged four of its six commits and left `master` with the widened pattern and the old columns for a few minutes - `stage-5-selling` as #48 and `stage-5-cycle` as #51.
-- **Two pull requests are open as of 2026-10-08:** this stage's PR 5 (`stage-6-compose-smoke`) and #50, `plan/jev-placement` - a docs-only branch adding `docs/arkitektur-jev-roadmap.md`, **not reviewed here, and left to the owner** - nothing in this repository's work merges, rebases or pushes to it. **Four** remote branches are stale and can go, all merged or superseded: `security/hardening-f01-f14` (the superseded first attempt at #52), `docs/pr4-live-run` (#53), `stage-5-shortlist-edge` (#54) and `stage-5-cycle` (#51). The previous version of this sentence said five and named `security/hardening-master-bdf5bf1`, which was deleted long ago - checked against `git ls-remote` this time, because the one thing the list promises is that deleting them is a reading exercise rather than a search.
+- **Two pull requests are open as of 2026-10-09:** stage 7's PR 1 (`stage-7-trading-mode`) and #50, `plan/jev-placement` - a docs-only branch adding `docs/arkitektur-jev-roadmap.md`, **not reviewed here, and left to the owner** - nothing in this repository's work merges, rebases or pushes to it. **Four** remote branches are stale and can go, all merged or superseded: `security/hardening-f01-f14` (the superseded first attempt at #52), `docs/pr4-live-run` (#53), `stage-5-shortlist-edge` (#54) and `stage-5-cycle` (#51). The previous version of this sentence said five and named `security/hardening-master-bdf5bf1`, which was deleted long ago - checked against `git ls-remote` this time, because the one thing the list promises is that deleting them is a reading exercise rather than a search.
 - **The security hardening is merged as #52 and verified live** on 2026-10-01: `POST /v1/outcomes` accepted its HMAC signature end to end (`Delivery 8097ab0f: sent 1 outcomes`), 25 market-scope calls answered 200, `/openapi.json` and `/docs` both answer 404, `/ready` returns `{"status":"ready"}` with no dependency detail, and an unauthenticated signal is refused with 401. Nothing was rate-limited. **Both of its required secrets had to be created first** - neither existed after the merge, so neither service would start.
 - **Two of its paths are not verified live:** `POST /v1/signals` and `POST /v1/screen` with their scope keys, because the verification ran on the same trading day as the live run, so no analysis was due and the shortlist was read from the database. All five call sites go through the same `AddApiKey`/`ApiKeyFor` code and no scoped keys are configured, so all five resolve to the legacy key that the 25 successful calls used - but the first new trading day is what proves it, and that is where the blocker found in review would have shown.
 - **The portfolio holds five instruments as of 2026-10-01**, up from one: ERIC-B.ST (26 at 94.96, from 2026-09-26) plus HEXA-B.ST (25 at 99.02), SEB-A.ST (10 at 229.20), EVO.ST (3 at 791.80) and KINV-B.ST (40 at 61.70), all four bought by the engine's own first screened cycle. Cash is 87 920.14 kr. Every one of the four is a *measurable* decision with `selection = Shortlist`, which is what stage 5 existed to produce.
@@ -113,14 +114,44 @@ Two things that are easy to misread as broken:
 - **The model is `qwen2.5:14b`**, at temperature 0 with seed 42, replacing `llama3.2` (3B). A cycle is about 20 s warm and 28 s cold, against 7-10 s before. `TAS_LLM__DEFAULT__TIMEOUT_S` is 60 and `AgentService:RequestTimeoutSeconds` is 120; the old 30 was below a single step on any 14B model.
 - **Two team_versions are in the data; two more are only in the code.** `default` ran 28 decisions as `6c6da0e6edad` and `default-memory` 8 as `79dfb7307b57`. The model change makes them `5926c629dcbe` and `b856e3edf611`, but the engine has not run since, so neither has a row yet. The stored rows keep their old values, which is the point of putting the version on the row - and the distinction between a version that exists and one that has been *used* is what this file got wrong about `b1234878670a` above.
 - **The engine trades a screened shortlist, not a list.** `Trading:Tickers` was deleted in #51: a cycle is now the portfolio's holdings plus the ten best of 31 OMXS30 names, each analysed at most once a trading day. The quote endpoint is used for the exits every cycle and for the fact-sheet rule when a day is new.
-- **The `trading` schema is live and has real rows in it.** The account was opened at 10 000 USD on 2026-09-24, moved to SEK in #44, and holds 100 000 kr of opening balance with five Swedish positions as of 2026-10-01. The local database has **all eleven** engine migrations and all **five** Alembic revisions applied, so it is level with `master`. Both numbers in the previous version of this sentence were wrong - twelve and three - which is the hazard this file keeps rediscovering: a count written into prose is a count nobody updates. Stage 6's CI now reads the engine's off the migration files. The USD rows from before the move are kept and self-describing - `decisions.reference_currency` and `signal_outcomes.benchmark_symbol` say which world each belongs to. Clear everything with `TRUNCATE trading.shortlists, trading.signal_outcomes, trading.decisions, trading.orders, trading.positions, trading.portfolios RESTART IDENTITY CASCADE` if a clean baseline ever matters; the append-only triggers deliberately do not block that.
+- **The `trading` schema is live and has real rows in it.** The account was opened at 10 000 USD on 2026-09-24, moved to SEK in #44, and holds 100 000 kr of opening balance with five Swedish positions as of 2026-10-01. As of 2026-10-08 the local database had **all eleven** engine migrations and all **five** Alembic revisions applied, so it was level with `master` then. **Stage 7's PR 1 adds two more** (`DecisionTradingMode`, `KillSwitch`), so there are thirteen after it merges, and they apply with `dotnet dotnet-ef database update` as usual. Both numbers in the previous version of this sentence were wrong - twelve and three - which is the hazard this file keeps rediscovering: a count written into prose is a count nobody updates. Stage 6's CI now reads the engine's off the migration files. The USD rows from before the move are kept and self-describing - `decisions.reference_currency` and `signal_outcomes.benchmark_symbol` say which world each belongs to. Clear everything with `TRUNCATE trading.shortlists, trading.signal_outcomes, trading.decisions, trading.orders, trading.positions, trading.portfolios RESTART IDENTITY CASCADE` if a clean baseline ever matters; the append-only triggers deliberately do not block that.
 - **The engine now needs `Database:ConnectionString`** or it refuses to start. It is in the user secrets store on this machine, set 2026-09-23. `dotnet user-secrets list --project src/engine` prints it, so do not run that where anyone can see the screen.
 - **Migrations are applied by hand, and the engine refuses to start without them.** Decided 2026-09-24: `dotnet dotnet-ef database update` stays a deploy step, but startup names the pending migrations and the command instead of failing on a missing column mid-cycle.
 - **What is now impossible** rather than merely unlikely: the agents cannot name an amount (the contract has no `amount_usd`, and a test refuses one that reappears); an answer that is not the contract cannot deserialise into nulls; a position cannot be sized against cash instead of net asset value; an order cannot be placed on a quote that is stale or dated in the future; nothing can sell shares it does not hold, or sell a holding the agents bought less than three days ago on a new opinion; and a HOLD cannot extend the clock the exits read, because only a purchase moves it.
 
 ## Next steps
 
-### Resume here — stage 6, PR 5 of 5, the last (2026-10-08)
+### Resume here — stage 7, PR 1 of 6 (2026-10-09)
+
+Stage 6 is merged in full: #58-#62. **Stage 7 has started.** Read that stage in the roadmap
+(*Etapp 7*) and the stage 7 log below before continuing. Five measurements changed the plan:
+there is no broker, so Live has nothing to do; rate limiting already exists; and the engine's
+healthcheck belongs with the metrics.
+
+1. **`stage-7-trading-mode` is the branch in hand.** It adds `Trading:Mode` (Shadow, Paper, or
+   Live refused at startup), records the mode on every decision, and adds a kill switch: the
+   append-only table `trading.kill_switch`, read at cycle start, before each analysis and
+   immediately before each order, failing closed. It brings two migrations.
+   **When it merges, the engine defaults to Shadow and stops placing orders.** To keep
+   paper-trading, set `Trading:Mode` to `Paper` in user secrets, or `TRADING_MODE=Paper` in the
+   root `.env`.
+2. **Next: the engine's metrics and the cycle trace** (PR 2), then Python tracing (PR 3), which
+   is the PR the stage's check reads.
+3. **Six decisions are the owner's**, and they are listed in PR 1's description:
+   - whether Live should ever exist;
+   - lifting D2 (the engine behind `--profile trade`);
+   - the deploy target;
+   - whether the running engine goes to Paper;
+   - whether the kill switch should stop exits;
+   - whether `shortlist_edge` should count shadowed decisions.
+
+**Stage 6's closing note, kept for the record:** the compose job's bring-up had not run on
+`stage-6-compose-smoke` before merge, because dispatching it needed *Actions: write*. The token
+has that permission now.
+
+---
+
+### Resume here — stage 6, PR 5 of 5, the last (2026-10-08) (superseded)
 
 Stage 5 is merged in full, follow-ups included: `CLAUDE.md` level as #55 and the trading day's
 deployment limit as #56. **Stage 6 has started** - read that stage in the roadmap and the stage 6
@@ -627,6 +658,7 @@ open until then.
 - **How much one trading day may deploy is now capped** - built 2026-10-01 as `RiskPolicy:MaxDailyDeploymentPercentage`, 20 % of net asset value. **Counted per day, not per cycle, which is a change from how this item was first written.** The two are nearly the same thing since #51 - an instrument is analysed once a day, so a day has one buying cycle and the rest buy nothing - but the day is both the truer unit for the risk being controlled and the robust one: a cycle that failed halfway would otherwise be handed a fresh budget fifteen minutes later. What remains open is only the number, which wants measurements rather than argument.
 - **`Trading:MinDollarVolume` filters nothing, and that is settled as correct** - decided 2026-10-01: **keep 10 000 000 SEK, unchanged.** The live screen put all 31 OMXS30 names through it and rejected none, which is the evidence this item was waiting for. **A guard that does not fire on healthy data is a guard working.** Its job is to catch a symbol whose listing has gone inactive or whose data has gone stale, not to filter live large caps; raising it until it bites would be optimising a number against the wrong objective, and removing it would let a delisted name with a stale thirty-day volume rank. The condition to revisit it is the account size rather than the market: at 100 000 kr a 5 % position is about 5 000 kr against a 10 MSEK floor - 0.05 % of a day's turnover - so liquidity starts to matter somewhere above a ten-million-krona account, and the floor should move with it rather than on its own.
 - **A fastapi or pydantic bump now fails CI until `contracts/openapi.json` is regenerated.** Added by #61 and correct: those two packages decide what the service's OpenAPI document looks like, so a bump that changes it has changed the served contract. What it means in practice is that those Dependabot pull requests need a regeneration commit - `uv run python -m app.openapi_snapshot > ../../contracts/openapi.json` from `src/agents` - and that whoever makes it should **read the diff**, because the engine's `OpenApiContractTests` then judge the new document against the DTOs. Prose is stripped from the file precisely so that the diff is worth reading; a document that moved with every docstring would train regenerating without looking.
+- **Stage 7's open decisions belong to the owner** and are listed in the stage 7 log (E1, E5, E7) and in PR 1's description: whether Live should ever exist; lifting D2; the deploy target; whether the running engine goes to Paper; whether the kill switch should stop exits; and whether `shortlist_edge` should count shadowed decisions (today its "agents' picks" are the `Executed` buys only, so a Shadow engine adds nothing to that side, though its signals are still scored).
 - **Nothing translates a duplicate `correlation_id`.** `UnitOfWork` turns EF's concurrency exception into `ConcurrentChangeException`, but a unique-index violation still surfaces as `DbUpdateException` and lands in the worker's general handler with a stack trace. That is arguably right - the ids are fresh Guids, so a duplicate is a bug - but it has never been seen, so it has never been read.
 
 ---
@@ -1953,7 +1985,7 @@ things running it made visible.
 
 ---
 
-## Stage 6 log (2026-10-01 ->, in progress)
+## Stage 6 log (2026-10-01 -> 2026-10-09, done)
 
 Read the stage in `docs/arkitektur-roadmap.md` first. It is two days of work on paper:
 multi-stage Dockerfiles for both services, compose with healthchecks and
@@ -2393,6 +2425,116 @@ database came back with its 54 decisions, 5 positions and 87 920.14 kr.
   tore down only their own volume; the bring-up itself stopped at the migrations, because
   containers on this dev box cannot reach each other over a compose network (a plain TCP
   connect between two containers times out) - an environment limit, not the file's.
+
+## Stage 7 log (2026-10-09 ->, in progress)
+
+Read the stage in `docs/arkitektur-roadmap.md` first. On paper it is two days of work and seven
+items:
+- OpenTelemetry in the engine with its own metrics;
+- `ag2[tracing]` and `TelemetryMiddleware` in Python, with `traceparent` carried from the engine
+  so that one cycle is **one** trace;
+- `capture_content=False`;
+- `TradingMode: Shadow | Paper | Live` plus a kill switch;
+- rate limiting;
+- a deploy;
+- a runbook.
+
+The roadmap's check for the stage is *"en analyscykel syns som ett sammanhängande trace från
+motorn genom agentkedjan"* ("an analysis cycle shows up as one connected trace, from the engine
+through the agent chain").
+
+### Five measurements taken before the plan was written
+
+1. **There is no broker anywhere.** `Portfolio.ExecuteBuy` and `ExecuteSell` are the only paths
+   that execute anything, and they write a simulated order into `trading.orders`. So **Paper is
+   what the engine does today**, and *Live* has nothing to send an order to. That settles what
+   the three modes can mean before any of them is built.
+2. **Rate limiting is already done.** #52 added a token bucket per key and per scope on the agent
+   service (`TAS_RATE_LIMIT_*`, `app/api/rate_limit.py`). What stage 7 still owes is a sentence
+   in the runbook, not code.
+3. **OpenTelemetry is half-present.** `opentelemetry-api` is already in `uv.lock` as a transitive
+   dependency. ag2 1.1.1 is installed with the `openai` extra only, not `tracing`. The engine has
+   no OTel package at all.
+4. **A pulled switch costs at most one analysis.** A cycle is about eleven analyses at 20-30 s
+   each, so a switch checked once per cycle could let up to five minutes of decisions through.
+   Checking it before each analysis *and* immediately before each order bounds the damage to the
+   analysis already in flight, and that analysis's order is still stopped.
+5. **The engine's healthcheck was deferred to this stage.** `CLAUDE.md` says so: a Worker has no
+   endpoint, so health needs a cycle heartbeat. That belongs with the metrics in PR 2.
+
+### The decisions
+
+| # | Question | Taken |
+|---|---|---|
+| E1 | What do the three modes mean when there is no broker? | **Shadow** analyses, sizes, risk-gates and records the decision, and places nothing. **Paper** is the simulated portfolio the engine has always run. **Live** exists in the enum so the word means one thing, but **startup refuses it** ("this system has no broker to send an order to"). Whether Live should ever exist is left to the owner. |
+| E2 | What is the default? | **Shadow**, in `appsettings.json` and in compose (`${TRADING_MODE:-Shadow}`). The setting is required, so a configuration without it fails at startup. `OrderGate` still treats a missing value as Shadow, in case options validation is bypassed in a test host. The mode is read at startup; changing it means a restart, and that is deliberate. |
+| E3 | Where does the kill switch live? | **The append-only table `trading.kill_switch`, where the latest row wins.** An operator INSERTs a row with psql, and the history records who pulled the switch, when and why. Rejected: a file or an environment variable (both need a container exec or a restart) and an HTTP endpoint (it would be the engine's first inbound surface). |
+| E4 | What happens when the switch can't be read? | **It fails closed.** A read error or an empty table counts as engaged. The migration seeds one released row, so a fresh database trades as before. |
+| E5 | Where is it checked? | **In three places:** at cycle start (exits, screening and analyses are all skipped and no agent is asked); before each analysis; and in `OrderGate`, immediately before each order. **It stops exits too**, because "stop trading" should mean no orders, sales included. Left open for review. |
+| E6 | Are shadowed and halted decisions measured? | **Yes.** They keep their signal, so the outcome sweep scores them like any other. The mode is recorded on every decision (`decisions.trading_mode`), history is backfilled as `Paper`, and `trading.hit_rate` groups by it, so the two populations never pool. |
+| E7 | Does the engine leave `--profile trade` now that the switch exists? | **Not in this PR.** D2 kept the engine behind the profile because not starting it was the only way to stop it. That reason is now gone, but lifting D2 changes what `docker compose up` does for the owner, so it is the owner's call and its own PR. |
+
+### The pull requests
+
+Six, in this order:
+1. `TradingMode` and the kill switch.
+2. Engine metrics (`decisions_total{outcome,mode}`, `risk_rejections_total`,
+   `agent_latency_seconds`), plus an `ActivitySource` per cycle so that `HttpClient` carries
+   `traceparent`, plus the cycle heartbeat and the engine's healthcheck.
+3. Python tracing: `ag2[tracing]`, `TelemetryMiddleware`, `traceparent` extraction,
+   `capture_content=False`, and a collector in compose. This is the PR the stage's check reads.
+4. The engine leaves the profile (D2 revisited), if the owner says so.
+5. `docs/runbook.md`: restarting, where the logs are, and how to stop trading (the kill switch),
+   with rate limiting described rather than built.
+6. The deploy, once a target is chosen: a VPS with compose, Azure Container Apps, or Fly.io.
+
+### PR 1 - Trading:Mode and the kill switch (`stage-7-trading-mode`)
+
+- **`Trading:Mode` and `OrderGate`.** The mode is a required option, validated at startup with
+  Live refused. Between the risk engine's approval and the portfolio, the use case asks
+  `OrderGate`, a single question, whether this approved order may be placed. It gets back
+  `Granted`, `ShadowOnly` or `Halted(reason)`. A shadowed buy is recorded as
+  `DecisionOutcome.Shadowed` with a reason like *"Shadow mode: would have bought 5 AAPL at 100
+  SEK"*. Exits ask the same gate, sale by sale. The worker logs the mode at start, because a
+  mode nobody can see is a mode nobody can check.
+  *Mutation-tested:* Shadow answering `Granted` turns exactly four tests red, including the
+  database test that a shadow engine records its decision and leaves cash and positions alone.
+- **`decisions.trading_mode`** (migration `DecisionTradingMode`). It is added with a `'Paper'`
+  default that is then dropped, because the table is append-only and an `UPDATE` backfill would
+  be refused. The default fills the existing rows, and once it is dropped every new row has to
+  name its mode. `trading.hit_rate` is recreated with the mode as a grouping column.
+  *Tested both ways* on a row inserted before the migration: up gives `Paper`, an insert without
+  a mode is refused, down removes the column and the row survives.
+  *Mutation-tested:* keeping the default turns the migration test red.
+- **The kill switch** (migration `KillSwitch`): the table, its append-only trigger, a
+  not-blank-reason constraint, `changed_by` defaulting to `current_user`, and the seeded released
+  row. `KillSwitch` reads the latest row with no tracking, and any exception reads as engaged
+  with the exception's type in the reason.
+- **The proof**, as two worker tests against a real database:
+  - *Engaged before the cycle:* the engine is in Paper with a holding below its stop at 80 and an
+    analysis due. It makes **no agent call at all**, places no order and no sale, and the
+    portfolio is unchanged (still 1 order, 1 decision, position 2, cash 9 800).
+  - *Pulled while the agents are thinking:* the switch is engaged from inside the fake agent's
+    `GetSignalAsync`. The one decision in flight is recorded as `Halted`, no order exists, and
+    the second instrument in the cycle is **never analysed**.
+
+  *Mutation-tested:*
+  - the gate ignoring the switch turns five tests red, including the mid-cycle proof;
+  - the worker skipping both of its checks turns both worker proofs red;
+  - `KillSwitch` failing open turns the unreachable-database test red.
+- **The operator's commands** are in `CLAUDE.md`. Engage:
+  `INSERT INTO trading.kill_switch (engaged, reason) VALUES (true, '<why>')`. Release: the same
+  with `false`. The engine picks up either within one check, with no restart.
+- **Local runs:**
+  - .NET: 562/562, up from 528, including Testcontainers. `dotnet build -warnaserror` and
+    `dotnet format --verify-no-changes` are clean, and `has-pending-model-changes` reports none.
+  - Python: 515/515, with ruff check, ruff format and mypy clean as CI runs them. Python is
+    untouched by this PR.
+- **What changes for a running engine after the merge:** a host-run engine reads Shadow from
+  `appsettings.json` and **stops placing orders**. To keep paper-trading, set
+  `dotnet user-secrets set Trading:Mode Paper --project src/engine`, or `TRADING_MODE=Paper` in
+  the root `.env` under compose. Shadow is the safe default, but it is a change of behaviour, and
+  that is why this paragraph is here.
 
 ---
 
