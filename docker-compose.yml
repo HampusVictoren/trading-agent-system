@@ -1,15 +1,23 @@
 # The whole system, on one host. Compose owns every container here - trading-db included, and
 # it is still never created by hand.
 #
-#   docker compose up -d                   # database, both schemas, agent service, collector
-#   docker compose --profile trade up -d   # and the engine, which places orders
+#   docker compose up -d     # database, both schemas, agent service, collector - and the engine
 #
-# The split is deliberate. The engine is the only service here that spends money, and the
-# kill switch does not arrive until stage 7 - so until then "not starting it" is the only way
-# to stop it, and that should cost a word on the command line rather than being what `up`
-# happens to do. Everything else comes up by default, including both migration steps, because
-# a provisioned database is not trading: after a plain `up` the schemas are current and a
-# host-run engine (`dotnet run --project src/engine`) can point at the same database.
+# **The engine starts with a plain `up`, in Shadow unless TRADING_MODE says otherwise**: it
+# analyses, sizes, risk-gates and records every decision and places nothing - not even the
+# stop-loss and time-limit sales on positions the account already holds. An account with real
+# paper positions needs TRADING_MODE=Paper in the root .env, or nothing closes them (the engine
+# says so at startup, with a warning naming the holdings).
+#
+# Until stage 7 the engine sat behind a `trade` profile (stage 6's D2): it is the one service
+# that spends money, and "not starting it" was then the only way to stop it. Stage 7 added the
+# other ways - Shadow as the default, which places nothing, and trading.kill_switch, which stops
+# a running engine's buying - so D2 is lifted and the profile is gone (Hampus, 2026-10-09).
+#
+# **One engine per database.** Nothing stops a second one: an engine run on the host (`dotnet
+# run --project src/engine`) against this database while the container also runs is two
+# engines analysing, recording and - in Paper - trading the same account. Run one or the
+# other; `docker compose stop engine` stops the container's without touching the rest.
 #
 # Secrets come from .env in the repository root; see .env.example. **Compose reads that file
 # itself**, for the ${...} below - it is never handed to a container. What each service gets
@@ -183,8 +191,7 @@ services:
     restart: unless-stopped
 
   engine:
-    # The one service behind a profile. See the note at the top of this file.
-    profiles: ["trade"]
+    # Started by a plain `up` since stage 7 (D2 lifted); see the note at the top of this file.
     build:
       context: .
       dockerfile: src/engine/Dockerfile
@@ -208,8 +215,9 @@ services:
       # reaches nothing from inside a container.
       AgentService__BaseUrl: http://agents:8000
       # Shadow unless the root .env says otherwise - the same default appsettings.json ships,
-      # spelled out here so that the mode a container runs in is readable in this file. Paper
-      # executes against the simulated portfolio; Live is refused at startup (there is no broker).
+      # spelled out here so that the mode a container runs in is readable in this file, and CI's
+      # compose job asserts that a plain `up` resolves to it. Paper executes against the simulated
+      # portfolio and is what manages held positions; Live is refused at startup (no broker).
       Trading__Mode: ${TRADING_MODE:-Shadow}
       # Where the engine's metrics and traces go: the collector below, over OTLP/HTTP like the
       # agent service's, so one collector port takes both and the engine's cycle trace and the
