@@ -31,6 +31,7 @@ The global tracer provider is never set, so no library can start emitting by acc
 """
 
 import logging
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final
@@ -97,14 +98,18 @@ def _timeout_s(environ: Mapping[str, str]) -> float:
     The Python exporter reads the same variable as seconds, so left to itself the value that
     gives the engine a 3 s timeout would give this service fifty minutes. It is parsed here and
     passed in explicitly instead, so one value means one thing in both services. Anything that is
-    not a positive number falls back to the default rather than stopping startup.
+    not a positive, finite number falls back to the default rather than stopping startup.
     """
     raw = environ.get(TIMEOUT_KEY, "").strip()
     try:
         milliseconds = float(raw)
     except ValueError:
         return DEFAULT_TIMEOUT_S
-    return milliseconds / 1000 if milliseconds > 0 else DEFAULT_TIMEOUT_S
+    # float() also reads "inf" and "nan": an infinite timeout is a stop that never ends, and
+    # NaN compares false with everything, so neither gets past here.
+    if not math.isfinite(milliseconds) or milliseconds <= 0:
+        return DEFAULT_TIMEOUT_S
+    return milliseconds / 1000
 
 
 def decide(environ: Mapping[str, str]) -> TracingDecision:

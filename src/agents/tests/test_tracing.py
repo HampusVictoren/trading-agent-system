@@ -135,6 +135,11 @@ class TestOffUnlessAskedFor:
             ("0", 3.0),
             ("-5", 3.0),
             ("soon", 3.0),
+            ("inf", 3.0),
+            ("-inf", 3.0),
+            ("Infinity", 3.0),
+            ("nan", 3.0),
+            ("1e400", 3.0),  # overflows to inf
         ],
     )
     def test_the_export_timeout_is_read_in_milliseconds_like_the_engines(self, value, seconds):
