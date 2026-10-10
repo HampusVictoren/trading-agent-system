@@ -8,6 +8,7 @@ sheet and in every answer the model gives, and none of it may appear in what is 
 """
 
 import json
+import threading
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -305,12 +306,18 @@ class TestTheLifespanDecides:
         shut_down: list[Tracing] = []
         real = started.configure_tracing
 
+        shut_down_on: list[threading.Thread] = []
+
         def watched(environ):
             tracing = real(environ)
             original = tracing.shutdown
-            monkeypatch.setattr(
-                tracing, "shutdown", lambda: (shut_down.append(tracing), original())
-            )
+
+            def recorded():
+                shut_down.append(tracing)
+                shut_down_on.append(threading.current_thread())
+                original()
+
+            monkeypatch.setattr(tracing, "shutdown", recorded)
             return tracing
 
         monkeypatch.setattr(started, "configure_tracing", watched)
@@ -318,12 +325,15 @@ class TestTheLifespanDecides:
         slot = app.state.tracing_slot
 
         async with started.lifespan(app):
+            loop_thread = threading.current_thread()
             tracing = slot.current
             assert tracing is not None and tracing.enabled
             assert shut_down == []
 
         assert slot.current is None
         assert shut_down == [tracing]
+        # Off the event loop: the flush can block for the exporter's whole timeout.
+        assert shut_down_on != [loop_thread]
 
     async def test_without_one_the_service_runs_untraced(self, started):
         app = started.create_app()

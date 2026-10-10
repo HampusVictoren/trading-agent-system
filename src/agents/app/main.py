@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 from collections.abc import AsyncIterator, Sequence
@@ -166,9 +167,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             yield
     finally:
         slot.current = None
-        # Only what this lifespan built; a preset belongs to whoever passed it in.
+        # Only what this lifespan built; a preset belongs to whoever passed it in. In a worker
+        # thread, because the flush is a blocking HTTP call that can take the exporter's whole
+        # timeout against a collector that is gone, and on the event loop it would freeze
+        # every other shutdown step - and any request still draining - for that long.
         if slot.preset is None:
-            tracing.shutdown()
+            await asyncio.to_thread(tracing.shutdown)
 
 
 @asynccontextmanager
