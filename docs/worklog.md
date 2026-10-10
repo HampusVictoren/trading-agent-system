@@ -146,9 +146,10 @@ Two things that are easy to misread as broken:
 > 4. **Run one engine.** If the engine runs on the host (`dotnet run --project src/engine`),
 >    `docker compose stop engine` after every `up`. Until PR 4a (`stage-7-engine-lock`) merges,
 >    nothing prevents the container and the host process being two engines on one account.
->    After it, the second to start refuses (exit 3, naming the holder) - but a refused container
->    is retried by `restart: on-failure` and **takes over when the host engine stops**, in the
->    mode `.env` gives it, so stopping the container is still the way to run on the host.
+>    After it, the second to start refuses with one line naming the holder and **stays
+>    stopped** (Hampus, 2026-10-10) - it never takes over when the other one stops. So the host
+>    engine and the container are whichever started first: stop the container to run on the
+>    host, and `docker compose up -d` after stopping the host's to hand back.
 > 5. Under compose, step 2 happens by itself: `up` runs `engine-migrate` before the engine.
 >
 > Remove this note once all of it is done.
@@ -160,14 +161,16 @@ continuing.
 1. **`stage-7-engine-lock`** enforces **one engine per database** (Hampus, 2026-10-10): a
    Postgres session-level advisory lock taken before either worker starts and held for the
    process lifetime on an unpooled connection of its own. A second engine is refused with one
-   line naming the holder and **exit code 3**; a lock that can no longer be confirmed (checked
-   every 5 s) stops the engine with **exit code 4** - fail closed. The migrator and efbundle are
+   line naming the holder, no stack trace, and **exit code 0, so that it stays stopped** (Hampus,
+   2026-10-10); a lock that can no longer be confirmed (checked every 5 s) stops the engine with
+   **exit code 4**, which compose restarts through the lock - fail closed. The migrator and efbundle are
    not blocked. Proven with Testcontainers - including two real `dotnet engine.dll` processes -
-   and in the compose job with a second engine from the shipped image. No migration, no schema
+   and in the compose job with a second replica of the engine service, which must stay exited
+   after the first is stopped. No migration, no schema
    change, `team_version` untouched.
 2. **Next: PR 4b, Jaeger in compose with 7-day retention, and log export turned on with it**;
-   then PR 5, the runbook. Open on PR 4a: what `restart: on-failure` should do with a refused
-   container - see the PR 4a entry.
+   then PR 5, the runbook. Nothing on PR 4a is open; Review Bot's nits and Hampus's decision
+   are in its entry.
 
 The PR 4 summary, as it stood when #66 merged:
 
@@ -3092,9 +3095,10 @@ tests and the lock file, and the pieces only prove anything together.
   pooled Dispose keeps the physical session (and the lock) alive.
 - **Startup.** `EngineLockService` is registered before both workers; the host starts hosted
   services in order and stops at the first that throws, so a second engine is refused before
-  either worker runs. Program.cs logs one critical line naming the holder (application name,
-  address, backend pid, since when, from `pg_locks` joined to `pg_stat_activity`) and returns
-  **exit code 3**. The schema check still runs first, so an unreachable database keeps its own
+  either worker runs. Program.cs takes the lock itself, before the host runs (inside a hosted
+  service the host would log "Hosting failed to start" with a stack trace first), logs one
+  critical line naming the holder (application name, address, backend pid, since when, from
+  `pg_locks` joined to `pg_stat_activity`) and returns **exit code 0** - see *Decisions* below. The schema check still runs first, so an unreachable database keeps its own
   sentence. The lock is released last on shutdown, after both workers.
 - **Fail closed.** Every 5 s the lock's own connection is asked whether this backend still holds
   the lock (`pg_locks` where `pid = pg_backend_pid()`). A dropped connection, a terminated
@@ -3113,21 +3117,36 @@ tests and the lock file, and the pieces only prove anything together.
   admitted after; a terminated session releases it and reports lost; the holder is described;
   migration not blocked; the service refuses before a worker starts; a lost lock stops the app;
   no stop while held, and stopping releases. Plus **two real `dotnet engine.dll` processes**: the
-  second exits 3 with the sentence and never logs its trading mode; after the first is killed,
-  the next starts. CI's compose job runs a second engine from the shipped image with `docker
-  compose run --rm --no-deps engine` and requires exit 3, the sentence, and the first engine
-  still running.
+  second exits 0 with the sentence, no stack trace, and never logs its trading mode; after the
+  first is killed, the next starts; SIGTERM exits 0, never 4. CI's compose job (dispatch/master)
+  scales the engine service to two: the new replica - the stack's own image, configuration and
+  restart policy - must log the refusal, be exited with code 0 and zero restarts, and still be
+  exited 20 s after the first engine is stopped.
 - **Deliberate breaks.** Granting the lock unconditionally fails 6 tests; ignoring a lost lock
   fails the loss test; registering the lock after the workers fails the process test (the second
-  engine logs its trading mode before refusing); not mapping the refusal to exit 3 fails it too.
-- **Open, for Hampus.** A refused container is retried by `restart: on-failure` with Docker's
-  backoff and **takes over when the other engine stops**, in the mode `.env` gives it - so a host
-  engine stopped for a restart can find the container holding the lock (the host engine is then
-  the one refused, loudly). Documented, with `docker compose stop engine` as the way to run on the
-  host. Alternatives: exit 0 on refusal (no restart, but the requirement is non-zero), or
-  `on-failure:N` (gives up after N, but also after N lost-lock restarts).
-- **Local runs.** .NET 646/646 (637 + 9) with Testcontainers, `-warnaserror`, `dotnet format`
-  and `has-pending-model-changes` clean. Python 595/595, ruff, ruff format and mypy clean. Compose
+  engine logs its trading mode before refusing).
+- **Review Bot's nits (accept-with-nits), one commit each.** (1) `WatchAsync` returns, rather
+  than marking the lock lost, once stopping is requested, and the lock check runs with its own
+  timeout instead of the stopping token (an Npgsql cancellation mid-check could hang the stop);
+  `StopAsync` cancels the watch before closing the connection. A Testcontainers test and a
+  process test show a normal stop is never exit 4. (2) The refusal is one critical line with no
+  stack trace (above). (3) The engine's log is capped at three files of 10 MB, as the
+  collector's. (4) The worklog no longer lists #65 as open.
+- **Decisions taken by Hampus (2026-10-10).** **A refused engine stays stopped**: it must not be
+  retried until the other engine stops and then take over. Docker cannot exempt one exit code
+  from a restart policy, and `on-failure` must stay for real failures (a lost lock, exit 4,
+  goes back through the lock; a crash; a refused configuration). So a refusal is not a failure:
+  `RefusedExitCode` is **0** (was 3), and `on-failure` leaves it exited. Rejected: keeping exit 3
+  with `restart: "no"` (a lost lock would then stay down) or `on-failure:N` (gives up on lost
+  locks too, and still retries a refusal N times). What says "refused" is the line - which now
+  also says it stays stopped - and that is what the tests and CI read. Exit 4 stays restartable:
+  a lost lock most often means a restarted database or a dropped connection, and the restart
+  either holds the lock again or is refused and stays stopped, so it can never become a second
+  engine. Breaks: `RefusedExitCode = 3` fails the process test; `restart: unless-stopped` fails
+  `test_the_restart_policy_retries_failures_but_not_a_refusal`.
+- **Local runs** (after the review round and the decision). .NET 648/648 (637 + 11) with
+  Testcontainers, `-warnaserror`, `dotnet format` and `has-pending-model-changes` clean. Python
+  597/597, ruff, ruff format and mypy clean. Compose
   validated statically; the bring-up, including the second-engine step, is CI's.
 
 ## Lessons and gotchas
