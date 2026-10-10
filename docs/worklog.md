@@ -2914,6 +2914,30 @@ tests and the lock file, and the pieces only prove anything together.
 - **Open, for Hampus** (also in #65's description): which backend keeps traces and for how long;
   whether export should stay on by default under compose (it goes to a local process that keeps
   nothing); and log export, when there is a backend.
+- **Review (Review Bot: accept with nits) and CodeQL**, fixed on the branch, one commit each:
+  - **CodeQL, "incomplete URL substring sanitization"** on a test's
+    `description.endswith("https://collector.example:443")`. A false positive - it is an
+    assertion - but the exact comparison is the stronger test, so the whole line is compared.
+  - **The raw path on 404s.** `url.path` copied whatever a caller sent into the server span,
+    scanners included. Gone from the span and the allowlist; the span has the route template
+    when one matched and only its method when none did. A marker path that matches nothing now
+    leaves no trace of itself; putting the path back fails that test.
+  - **Shutdown on the event loop.** The flush is a blocking export of up to the 3 s timeout; it
+    now runs through `asyncio.to_thread`. The lifespan test records the thread and fails if it
+    is the loop's.
+  - **`OTEL_EXPORTER_OTLP_TIMEOUT` meant milliseconds to the engine and seconds to Python**, so
+    one `.env` value giving the engine 3 s would have given the agent service fifty minutes.
+    Normalised rather than documented: the agent service parses it as milliseconds and hands the
+    exporter the result, so the exporter never reads it. Named in `.env.example` and CLAUDE.md.
+    Reading it as seconds fails 3 tests; leaving it to the exporter fails the silent-collector
+    test.
+  - **The collector's log grew without bound.** Kept at detailed verbosity, because the trace
+    check reads parent ids, and capped by the json-file driver at three files of 10 MB.
+    `tests/test_compose_collector.py` holds the cap, the digest pin and the loopback publish on
+    every pull request; removing the cap fails it.
+  - **The one-trace step runs only outside pull requests**, so it was run by dispatch after the
+    final push; its result is in #65.
+  - Python after the review: 571/571. .NET: 637/637, untouched.
 
 ---
 
