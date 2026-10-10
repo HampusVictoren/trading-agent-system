@@ -283,6 +283,23 @@ class TestFastApisOwnTelemetryStaysOff:
     """FastAPI 0.142 exports traces, metrics and logs by itself when it sees an OTLP endpoint and
     the SDK. Run through the real ASGI lifespan, where it would do so, with an endpoint set."""
 
+    # Not switches: where to send, and what to leave out - None means FastAPI's own choice,
+    # which with every switch off is nothing.
+    NOT_SWITCHES = {"tracer_provider", "meter_provider", "logger_provider", "exclude"}
+
+    def test_fastapis_telemetry_config_is_all_off(self):
+        import app.main as main
+
+        config = main.create_app()._telemetry
+
+        # Every key FastAPI resolves, defaults included - so a release that adds a switch
+        # defaulting to on fails here rather than exporting.
+        assert {k: v for k, v in config.items() if k in self.NOT_SWITCHES} == dict.fromkeys(
+            self.NOT_SWITCHES
+        )
+        switches = {k: v for k, v in config.items() if k not in self.NOT_SWITCHES}
+        assert switches and all(value is False for value in switches.values()), switches
+
     def test_an_endpoint_in_the_environment_installs_no_global_provider(self, monkeypatch):
         from contextlib import asynccontextmanager
 

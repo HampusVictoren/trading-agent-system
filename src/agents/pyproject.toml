@@ -10,7 +10,10 @@ requires-python = ">=3.12"
 dependencies = [
     "ag2[openai,tracing]>=1.1.1",
     "asyncpg>=0.31.0",
-    "fastapi>=0.142.2",
+    # Capped below the next minor: 0.142 ships automatic OpenTelemetry that app/main.py switches
+    # off key by key, and a release that adds a key defaulting to on would export past it. A new
+    # minor is its own Dependabot PR, where test_fastapis_telemetry_config_is_all_off reads it.
+    "fastapi>=0.142.2,<0.143",
     # openai 3.x types its http_client against httpx2 (pydantic's successor to httpx), and
     # memory.py needs a client of its own to set trust_env=False. Declared directly rather
     # than relied on through openai, and capped so a new major is its own Dependabot PR.
