@@ -50,6 +50,12 @@ public sealed class EngineProcessLockTests : IAsyncLifetime
         second.Output.ShouldContain("Another engine is already running against this database");
         second.Output.ShouldContain("tas-engine (instance lock)");
         second.Output.ShouldNotContain("Trading mode is"); // refused before the trading worker started
+
+        // One clear line and nothing else: not the host's "Hosting failed to start" with the
+        // exception's stack trace, which is what a refusal thrown from a hosted service produced.
+        second.Output.ShouldNotContain("Hosting failed to start");
+        second.Output.ShouldNotContain("EngineAlreadyRunningException");
+        second.Output.ShouldNotContain("   at ");
         first.HasExited.ShouldBeFalse();
     }
 

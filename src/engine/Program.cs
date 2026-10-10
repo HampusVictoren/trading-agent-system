@@ -90,17 +90,20 @@ await host.Services.EnsureTheSchemaIsCurrentAsync();
 var engineLock = host.Services.GetRequiredService<EngineLockService>();
 var startup = host.Services.GetRequiredService<ILogger<Program>>();
 
+// The lock before the host runs, not only inside it: a refusal thrown from a hosted service is
+// logged by the host as "Hosting failed to start" with a stack trace. Here it is one sentence and
+// a distinct exit code - an operator's mistake with a clear remedy, not a fault in the engine.
 try
 {
-    await host.RunAsync();
+    await engineLock.AcquireAsync();
 }
 catch (EngineAlreadyRunningException refused)
 {
-    // A distinct exit code and one sentence, rather than a stack trace: this is an operator's
-    // mistake with a clear remedy, not a fault in the engine.
     startup.LogCritical("{Refusal}", refused.Message);
     return EngineLockService.AnotherEngineExitCode;
 }
+
+await host.RunAsync();
 
 // Non-zero after losing the lock, so compose's on-failure restarts it - through the lock again.
 return engineLock.Lost ? EngineLockService.LostLockExitCode : 0;

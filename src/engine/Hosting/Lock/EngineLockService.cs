@@ -12,7 +12,8 @@ using Microsoft.Extensions.Options;
 /// <para>
 /// Registered before both workers. The host starts hosted services one at a time, in order,
 /// and a start that throws stops the host there - so a second engine is refused before the
-/// trading worker or the measurement worker has run a line, and Program.cs turns the refusal into
+/// trading worker or the measurement worker has run a line. Program.cs takes the lock earlier still,
+/// through <see cref="AcquireAsync"/> before the host runs, and turns a refusal into one line and
 /// exit code <see cref="AnotherEngineExitCode"/>. The host also stops services in reverse order,
 /// so the lock is the last thing released, after both workers have finished.
 /// </para>
@@ -59,8 +60,21 @@ public sealed class EngineLockService : IHostedService, IAsyncDisposable
     /// <summary>True once the lock has been lost and the application asked to stop.</summary>
     public bool Lost { get; private set; }
 
-    public async Task StartAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// Takes the lock, or throws <see cref="EngineAlreadyRunningException"/> naming the holder.
+    /// </summary>
+    /// <remarks>
+    /// Program.cs calls this before running the host, so a refusal is one line it logs itself:
+    /// thrown from <see cref="StartAsync"/> instead, the host would first log "Hosting failed to
+    /// start" with the exception's whole stack trace, for what is an operator's mistake with a
+    /// one-line remedy. <see cref="StartAsync"/> still takes the lock if nothing has, so a host
+    /// built without Program.cs is never unlocked.
+    /// </remarks>
+    public async Task AcquireAsync(CancellationToken cancellationToken = default)
     {
+        if (_lock is not null)
+            return;
+
         _lock = await EngineInstanceLock.TryAcquireAsync(_connectionString, cancellationToken);
 
         if (_lock is null)
@@ -73,8 +87,12 @@ public sealed class EngineLockService : IHostedService, IAsyncDisposable
             "Took the engine lock (advisory lock {ClassKey}/{ObjectKey}); no other engine can start against this database while this one runs.",
             EngineInstanceLock.ClassKey,
             EngineInstanceLock.ObjectKey);
+    }
 
-        _watch = WatchAsync(_lock, _stopping.Token);
+    public async Task StartAsync(CancellationToken cancellationToken)
+    {
+        await AcquireAsync(cancellationToken);
+        _watch = WatchAsync(_lock!, _stopping.Token);
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
