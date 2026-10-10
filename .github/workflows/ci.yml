@@ -291,26 +291,33 @@ jobs:
           ENV
 
       # Cheap, so it runs on every pull request: the file parses, every variable it requires
-      # has a value, and the engine is where the profile puts it. That last line is stage 6's
-      # decision D2 as an assertion - the engine is the only service that spends money, and
-      # `up` must not be what starts it.
-      # Spelled as an `if` rather than `! ... | grep`, which is what it used to be and which
+      # has a value, a plain `up` starts the engine, and the mode that engine resolves to when
+      # nobody has chosen one is Shadow. The last two replaced stage 6's D2 assertion (the engine
+      # behind a profile) when stage 7 lifted it: the engine may start by default only because
+      # its default places nothing. The mode is resolved with TRADING_MODE removed from both the
+      # environment and the .env compose reads, so it is the file's own default being checked
+      # and not whatever a developer's .env happens to choose.
+      # Spelled as `if` rather than `! ... | grep`, which is what D2's check once was and which
       # could never fail: bash -e ignores the status of a command negated with `!`, so the
       # line ran, reported, and was discarded. Each assertion here names what it found.
-      - name: The compose file is valid, and the engine is behind its profile
+      - name: The compose file is valid, and a plain up starts the engine in Shadow
         run: |
           set -euo pipefail
           docker compose config --quiet
           default=$(docker compose config --services)
-          if grep -qx engine <<<"$default"; then
-            echo "engine is not behind its profile: a plain 'up' would start it"
+          if ! grep -qx engine <<<"$default"; then
+            echo "a plain 'up' does not start the engine; it starts: $(tr '\n' ' ' <<<"$default")"
             exit 1
           fi
-          traded=$(docker compose --profile trade config --services)
-          if ! grep -qx engine <<<"$traded"; then
-            echo "engine is missing from the trade profile"
+          unset_env="${RUNNER_TEMP:-/tmp}/without-trading-mode.env"
+          grep -v '^[[:space:]]*TRADING_MODE[[:space:]]*=' .env > "$unset_env" || true
+          mode=$(env -u TRADING_MODE docker compose --env-file "$unset_env" config --format json \
+            | python3 -c 'import json, sys; print(json.load(sys.stdin)["services"]["engine"]["environment"].get("Trading__Mode", ""))')
+          if [ "$mode" != "Shadow" ]; then
+            echo "a plain 'up' runs the engine in '${mode}' when no mode is chosen, not Shadow"
             exit 1
           fi
+          echo "a plain 'up' starts: $(tr '\n' ' ' <<<"$default")- the engine in $mode"
 
       # Every port compose publishes is on the host's loopback. Three services publish one -
       # the database, the agent service and the collector - and a bare "4318:4318" would put
@@ -318,7 +325,7 @@ jobs:
       - name: Every published port is loopback-only
         run: |
           set -euo pipefail
-          docker compose --profile trade config --format json | python3 -c '
+          docker compose config --format json | python3 -c '
           import json, sys
           services = json.load(sys.stdin)["services"]
           published = [(name, port) for name, service in services.items() for port in service.get("ports", [])]
@@ -334,9 +341,10 @@ jobs:
       # `docker compose up -d`, as a person types it, and then waiting by hand - because
       # `--wait` reports failure when a container exits, even with code 0, so a compose file
       # that provisions through short-lived containers cannot be waited on as a whole.
-      # Naming only the long-running service would work and would also skip engine-migrate,
-      # since nothing but the engine depends on it; that would quietly stop testing half of
-      # what a plain `up` is supposed to provision.
+      # Naming only the long-running service would work and would also skip engine-migrate;
+      # that would quietly stop testing half of what a plain `up` is supposed to provision.
+      # Since stage 7 lifted D2 that `up` starts the engine too, in Shadow; the steps after the
+      # agent service's check follow it.
       - name: The system comes up from nothing
         if: github.event_name != 'pull_request'
         run: |
@@ -380,15 +388,16 @@ jobs:
       # if it is behind the build, and "Application started" is logged after that check passes.
       # So one line in this log is the whole chain: the bundle ran, the schema is current, and
       # the engine accepted it. It then fails every cycle for want of an LLM, which is not
-      # what is being tested and is why it only has to still be running.
+      # what is being tested and is why it only has to still be running. No `up` of its own:
+      # the plain `up` above started it, which is the point, and the mode it logs at startup
+      # has to be Shadow - the runtime half of the static check at the top of this job.
       # The log is captured before it is searched: `logs | grep -q` under pipefail fails when
       # grep finds the line, exits, and leaves `logs` writing into a closed pipe - a match
       # reported as a miss, more likely the longer the log.
-      - name: The engine starts behind its profile, and its schema check passes
+      - name: The plain up started the engine, in Shadow, and its schema check passes
         if: github.event_name != 'pull_request'
         run: |
           set -euo pipefail
-          docker compose --profile trade up -d
           started() { local log; log=$(docker compose logs engine 2>&1); grep -q "Application started" <<<"$log"; }
           for _ in $(seq 1 30); do
             started && break
@@ -396,6 +405,12 @@ jobs:
           done
           started || { echo "the engine never logged 'Application started'"; exit 1; }
           test "$(docker inspect -f "{{.State.Status}}" "$(docker compose ps -aq engine)")" = "running"
+          log=$(docker compose logs engine 2>&1)
+          if ! grep -q "Trading mode is Shadow" <<<"$log"; then
+            echo "the engine did not start in Shadow:"
+            grep "Trading mode is" <<<"$log" || echo "(no 'Trading mode is' line)"
+            exit 1
+          fi
 
       # The image's HEALTHCHECK reads the heartbeat the trading loop writes, and this is the check
       # that it does: healthy with no LLM on the runner, so every cycle's analyses fail, because
@@ -452,11 +467,11 @@ jobs:
 
       - name: What the system said, for whoever reads a failed run
         if: always() && github.event_name != 'pull_request'
-        run: docker compose --profile trade logs --tail 40 || true
+        run: docker compose logs --tail 40 || true
 
       - name: Tear the system down, volume included
         if: always() && github.event_name != 'pull_request'
-        run: docker compose -p tas-ci --profile trade down -v || true
+        run: docker compose -p tas-ci down -v || true
 
   secrets:
     name: Secret scan
