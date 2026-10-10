@@ -467,6 +467,34 @@ jobs:
           echo "no trace reached from the engine's cycle into the agent service in five minutes"
           exit 1
 
+      # One engine per database, end to end: with the stack's engine running and holding the
+      # lock, a second engine from the same image, configuration and database - which is what a
+      # host-run engine beside a plain `up` amounts to - must refuse before trading, say why, and
+      # exit 3. `run` neither restarts nor waits on dependencies; `timeout` turns a second engine
+      # that starts instead of refusing into a failure here rather than a hung job. The first
+      # engine has to still be running afterwards.
+      - name: A second engine against the same database refuses to start
+        if: github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          rc=0
+          out=$(timeout 120 docker compose run --rm --no-deps -T engine 2>&1) || rc=$?
+          tail -n 5 <<<"$out"
+          if [ "$rc" -ne 3 ]; then
+            echo "the second engine exited $rc, not 3 (another engine holds the lock)"
+            exit 1
+          fi
+          if ! grep -q "Another engine is already running against this database" <<<"$out"; then
+            echo "the second engine exited 3 without saying why"
+            exit 1
+          fi
+          if grep -q "Trading mode is" <<<"$out"; then
+            echo "the second engine got as far as its trading worker before refusing"
+            exit 1
+          fi
+          test "$(docker inspect -f "{{.State.Status}}" "$(docker compose ps -aq engine)")" = "running"
+          echo "refused with exit 3; the first engine is still running"
+
       - name: What the system said, for whoever reads a failed run
         if: always() && github.event_name != 'pull_request'
         run: docker compose logs --tail 40 || true
