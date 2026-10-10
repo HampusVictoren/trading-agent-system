@@ -91,8 +91,10 @@ var engineLock = host.Services.GetRequiredService<EngineLockService>();
 var startup = host.Services.GetRequiredService<ILogger<Program>>();
 
 // The lock before the host runs, not only inside it: a refusal thrown from a hosted service is
-// logged by the host as "Hosting failed to start" with a stack trace. Here it is one sentence and
-// a distinct exit code - an operator's mistake with a clear remedy, not a fault in the engine.
+// logged by the host as "Hosting failed to start" with a stack trace. Here it is one sentence - an
+// operator's mistake with a clear remedy, not a fault in the engine - and exit code 0, so that
+// compose's `restart: on-failure` leaves a refused engine stopped instead of retrying it until the
+// other engine stops and then taking over (Hampus, 2026-10-10). The line is what says "refused".
 try
 {
     await engineLock.AcquireAsync();
@@ -100,7 +102,7 @@ try
 catch (EngineAlreadyRunningException refused)
 {
     startup.LogCritical("{Refusal}", refused.Message);
-    return EngineLockService.AnotherEngineExitCode;
+    return EngineLockService.RefusedExitCode;
 }
 
 await host.RunAsync();

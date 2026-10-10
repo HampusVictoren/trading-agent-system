@@ -7,7 +7,8 @@ namespace Engine.Tests.Persistence;
 
 /// <summary>
 /// Two real engine processes - <c>dotnet engine.dll</c>, Program.cs and all - against one real
-/// database: the second refuses to start, says why, and exits non-zero.
+/// database: the second refuses to start, says why in one line, and exits 0 so that compose
+/// leaves it stopped.
 /// </summary>
 /// <remarks>
 /// The engine's agent service points at a port nothing listens on, so the first engine's cycles
@@ -38,7 +39,7 @@ public sealed class EngineProcessLockTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_second_engine_process_refuses_to_start_with_a_clear_error_and_a_non_zero_exit()
+    public async Task A_second_engine_process_refuses_to_start_with_one_clear_line_and_exits_zero_so_it_stays_stopped()
     {
         var first = Start();
         await first.WaitForLineAsync("Took the engine lock", Patience);
@@ -46,7 +47,9 @@ public sealed class EngineProcessLockTests : IAsyncLifetime
         var second = Start();
         var exitCode = await second.WaitForExitAsync(Patience);
 
-        exitCode.ShouldBe(EngineLockService.AnotherEngineExitCode);
+        // Zero, so compose's on-failure leaves it stopped; the line is what says it was refused.
+        exitCode.ShouldBe(EngineLockService.RefusedExitCode);
+        exitCode.ShouldBe(0);
         second.Output.ShouldContain("Another engine is already running against this database");
         second.Output.ShouldContain("tas-engine (instance lock)");
         second.Output.ShouldNotContain("Trading mode is"); // refused before the trading worker started

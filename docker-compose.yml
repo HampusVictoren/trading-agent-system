@@ -16,11 +16,10 @@
 #
 # **One engine per database, enforced.** The engine takes a Postgres advisory lock at startup and
 # holds it for as long as it runs; a second engine against the same database - the container
-# beside one on the host (`dotnet run --project src/engine`), or the reverse - refuses to start,
-# naming the holder, and exits 3. Note what `restart: on-failure` below then does with a refused
-# container: it retries, with Docker's backoff, and **takes over when the other engine stops** -
-# in the mode .env gives it. To run the engine on the host, `docker compose stop engine` first;
-# a stopped container is not restarted until the next `up`.
+# beside one on the host (`dotnet run --project src/engine`), or the reverse - refuses to start
+# with one line naming the holder, and **stays stopped** (Hampus, 2026-10-10): it exits 0, so
+# `restart: on-failure` below does not retry it, and it never takes over when the other engine
+# stops. Start it again deliberately (`docker compose up -d`) once the other one is gone.
 #
 # Secrets come from .env in the repository root; see .env.example. **Compose reads that file
 # itself**, for the ${...} below - it is never handed to a container. What each service gets
@@ -246,14 +245,16 @@ services:
     stop_grace_period: 45s
     # on-failure rather than unless-stopped: the engine's own loop already survives a failed
     # cycle, so a process that exits has hit something structural - a configuration it refuses,
-    # a schema behind the build, another engine holding the lock (exit 3) or the lock lost
-    # mid-run (exit 4). Restarting is a bet that an operator is fixing it, and Docker's backoff
-    # keeps the bet cheap; a clean exit stays exited. After exit 4 the restart goes back through
-    # the lock, so it either holds it again or is refused.
+    # a schema behind the build, or the lock lost mid-run (exit 4). Restarting is a bet that an
+    # operator is fixing it, and Docker's backoff keeps the bet cheap; a clean exit stays exited.
+    # That last clause is load-bearing: **a refused engine exits 0**, so it is never restarted
+    # into taking over from the engine that refused it. After exit 4 the restart goes back
+    # through the lock, so it either holds it again or is refused - and then stays stopped.
+    # always or unless-stopped would restart the refusal; CI and test_compose_engine.py hold it.
     restart: on-failure
-    # Capped like the collector's: a refused container is restarted with Docker's backoff for as
-    # long as the other engine runs, and logs its refusal each time, on top of a cycle's own
-    # lines every few minutes. Three files of 10 MB keep days of a running engine's log.
+    # Capped like the collector's: a running engine writes a cycle's lines every few minutes,
+    # and the restarts above (each logging its reason) add to that. Three files of 10 MB keep
+    # days of a running engine's log.
     logging:
       driver: json-file
       options:

@@ -73,3 +73,10 @@ def test_the_engines_log_is_capped():
     assert logging["driver"] == "json-file"
     assert logging["options"]["max-size"] == "10m"
     assert logging["options"]["max-file"] == "3"
+
+
+def test_the_restart_policy_retries_failures_but_not_a_refusal():
+    # A refused engine exits 0 and must stay stopped (Hampus, 2026-10-10); a lost lock exits 4
+    # and must be restarted. on-failure is the one policy that does both - always and
+    # unless-stopped would restart the refusal, "no" would not restart the lost lock.
+    assert _services()["engine"]["restart"] == "on-failure"

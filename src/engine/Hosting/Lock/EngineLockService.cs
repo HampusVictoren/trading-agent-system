@@ -14,7 +14,7 @@ using Microsoft.Extensions.Options;
 /// and a start that throws stops the host there - so a second engine is refused before the
 /// trading worker or the measurement worker has run a line. Program.cs takes the lock earlier still,
 /// through <see cref="AcquireAsync"/> before the host runs, and turns a refusal into one line and
-/// exit code <see cref="AnotherEngineExitCode"/>. The host also stops services in reverse order,
+/// exit code <see cref="RefusedExitCode"/> - zero, so compose does not restart it. The host also stops services in reverse order,
 /// so the lock is the last thing released, after both workers have finished.
 /// </para>
 /// <para>
@@ -31,8 +31,18 @@ using Microsoft.Extensions.Options;
 /// </remarks>
 public sealed class EngineLockService : IHostedService, IAsyncDisposable
 {
-    /// <summary>Another engine holds this database's lock; this one never started.</summary>
-    public const int AnotherEngineExitCode = 3;
+    /// <summary>
+    /// Another engine holds this database's lock; this one never started, and <b>stays stopped</b>.
+    /// </summary>
+    /// <remarks>
+    /// Zero on purpose (Hampus, 2026-10-10: a refused engine must not restart and take over when
+    /// the other one stops). Docker's restart policies cannot exempt one exit code, and compose's
+    /// <c>on-failure</c> must keep restarting real failures - a lost lock, a crash - so the one
+    /// way to make a refusal final under that policy is for it not to be a failure: the engine
+    /// did what it should, which was not to start. What says "refused" is the critical line,
+    /// which names the holder; CI and the tests look for that line, not for the code.
+    /// </remarks>
+    public const int RefusedExitCode = 0;
 
     /// <summary>The lock was lost while running; the engine stopped rather than go on unlocked.</summary>
     public const int LostLockExitCode = 4;
@@ -170,7 +180,7 @@ public sealed class EngineAlreadyRunningException : Exception
         : base(
             "Another engine is already running against this database"
             + (holder is null ? "" : $" (it holds the engine lock: {holder})")
-            + ", and only one may. This one will not start. Stop the other first - `docker compose stop engine` "
+            + ", and only one may. This one will not start, and stays stopped (it is not restarted). Stop the other first - `docker compose stop engine` "
             + "for the container, or end the host's `dotnet run` - or point this one at a different database.")
     {
         Holder = holder;
