@@ -9,8 +9,9 @@ This file answers "where are we, how did we get here, and what is next". When re
 
 **Last updated:** 2026-10-10. **Stage 6 is done**, with all five pull requests merged (#58-#62).
 **Stage 7 is in progress**: PR 1 (`Trading:Mode` and the kill switch) is merged as #63, PR 2 (the
-engine's metrics, cycle trace and heartbeat) as #64, and PR 3 (`stage-7-agent-tracing`, the agent
-service's tracing and a collector in compose) is open as #65. *Current state* and *Next steps* are
+engine's metrics, cycle trace and heartbeat) as #64, PR 3 (the agent service's tracing and a
+collector in compose) as #65, and PR 4 (`stage-7-engine-default`, the engine leaves `--profile
+trade` - D2 lifted) is open. *Current state* and *Next steps* are
 current. The paragraphs directly below are the 2026-10-01 record of stage 5 and
 are kept as they were written.
 
@@ -91,8 +92,8 @@ Two things that are easy to misread as broken:
 
 ## Current state
 
-- **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21, **stage 3 done** 2026-09-23. **Stage 4 started** 2026-09-23. PR 5 and PR 6 were each split in two, so the stage is eight pull requests, and **all eight are merged** as of 2026-09-25. **Stage 5 is merged in full** - #42 to #51, the shortlist edge as #54 and the daily deployment cap as #56. **Stage 6 is done**: all five PRs are merged (#58-#62). **Stage 7 is in progress**: PR 1 (`stage-7-trading-mode`) is merged as #63, PR 2 (`stage-7-engine-telemetry`, the engine's metrics, the cycle trace and the heartbeat) as #64, and PR 3 (`stage-7-agent-tracing`, the agent service's tracing and the collector) is open as #65. See the stage 7 log. Stage 8 exists only as a plan.
-- **`master` is at PR #64** (the engine's metrics, one trace per cycle and the heartbeat, merged 2026-10-10 as `9babe5f`), after #63 (Trading:Mode and the kill switch) and #62 (the compose bring-up in CI). All five of stage 6's pull requests are on it, plus Dependabot's seven Python bumps as #57 - which merged *after* #58. Stage 4's eight pull requests and all five of stage 5's are on it, plus the live-run record as #53, the security hardening as #52 and the `CLAUDE.md` levelling as #55. **Which CI jobs block a merge is branch protection**, and three were added during stage 6 - `Agents (image)`, `Engine (image)` and `Compose`. This file has twice assumed the required list keeps up with the workflow; it does not, and nobody here can read that setting. Check it under *Settings - Branches*.
+- **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21, **stage 3 done** 2026-09-23. **Stage 4 started** 2026-09-23. PR 5 and PR 6 were each split in two, so the stage is eight pull requests, and **all eight are merged** as of 2026-09-25. **Stage 5 is merged in full** - #42 to #51, the shortlist edge as #54 and the daily deployment cap as #56. **Stage 6 is done**: all five PRs are merged (#58-#62). **Stage 7 is in progress**: PR 1 (`stage-7-trading-mode`) is merged as #63, PR 2 (`stage-7-engine-telemetry`, the engine's metrics, the cycle trace and the heartbeat) as #64, PR 3 (`stage-7-agent-tracing`, the agent service's tracing and the collector) as #65, and PR 4 (`stage-7-engine-default`, a plain `docker compose up` starts the engine, in Shadow - D2 lifted) is open. See the stage 7 log. Stage 8 exists only as a plan.
+- **`master` is at PR #65** (the agent service's tracing and the collector, merged 2026-10-10 as `d2d12da`), after #64 (the engine's metrics, one trace per cycle and the heartbeat, `9babe5f`), #63 (Trading:Mode and the kill switch) and #62 (the compose bring-up in CI). All five of stage 6's pull requests are on it, plus Dependabot's seven Python bumps as #57 - which merged *after* #58. Stage 4's eight pull requests and all five of stage 5's are on it, plus the live-run record as #53, the security hardening as #52 and the `CLAUDE.md` levelling as #55. **Which CI jobs block a merge is branch protection**, and three were added during stage 6 - `Agents (image)`, `Engine (image)` and `Compose`. This file has twice assumed the required list keeps up with the workflow; it does not, and nobody here can read that setting. Check it under *Settings - Branches*.
 - **Dependabot's bumps are in.** #46 (setup-uv) and #47 (six Python packages) merged to `master` on 2026-09-26 and were merged *into* `stage-5-selling` rather than rebased onto, because the branch was already pushed and a rebase would need a force-push. Two of the six matter behaviourally - **ag2 1.0.5 to 1.0.6** and **openai 3.16.1 to 3.19.1** - and the lock also *downgraded* SQLAlchemy from 2.1.1 to 2.0.54, which the Alembic fixture exercises on every database test. 476 Python tests green on all of it.
 - **Stage 5's merge history:** `stage-5-model-and-horizon` as #42, `stage-5-screening` as #43, `stage-5-sek` as #44, `stage-5-symbol-columns` as #45 - the last of those repairing #44, which merged four of its six commits and left `master` with the widened pattern and the old columns for a few minutes - `stage-5-selling` as #48 and `stage-5-cycle` as #51.
 - **Two pull requests are open as of 2026-10-10:** stage 7's PR 3 (#65, `stage-7-agent-tracing`) and #50, `plan/jev-placement` - a docs-only branch adding `docs/arkitektur-jev-roadmap.md`, **not reviewed here, and left to the owner** - nothing in this repository's work merges, rebases or pushes to it. **Four** remote branches are stale and can go, all merged or superseded: `security/hardening-f01-f14` (the superseded first attempt at #52), `docs/pr4-live-run` (#53), `stage-5-shortlist-edge` (#54) and `stage-5-cycle` (#51). The previous version of this sentence said five and named `security/hardening-master-bdf5bf1`, which was deleted long ago - checked against `git ls-remote` this time, because the one thing the list promises is that deleting them is a reading exercise rather than a search.
@@ -122,7 +123,7 @@ Two things that are easy to misread as broken:
 
 ## Next steps
 
-### Resume here — stage 7, PR 3 of 6 (2026-10-10)
+### Resume here — stage 7, PR 4 of 7 (2026-10-10)
 
 > **After pulling master with #63 in it, do these two things on the machine that runs the
 > engine, before starting it again** (#63 was merged before they were done there):
@@ -134,11 +135,39 @@ Two things that are easy to misread as broken:
 > 2. **Apply the five new migrations**: `dotnet dotnet-ef database update --project src/engine`.
 >    Without them the engine refuses to start, loudly, because the schema is behind it.
 >
-> Remove this note once both are done.
+> **Once PR 4 (`stage-7-engine-default`) is on master, a plain `docker compose up -d` also
+> starts the engine** - before, it took `--profile trade`. So, in addition:
+>
+> 3. **The container's mode comes from the root `.env` only.** `dotnet user-secrets` sets the
+>    host-run engine's mode and nothing else; a container started by `up` with no
+>    `TRADING_MODE=Paper` in `.env` runs in **Shadow**, and the startup warning naming the held
+>    positions is the only sign that nothing is closing them.
+> 4. **Run one engine.** If the engine runs on the host (`dotnet run --project src/engine`),
+>    `docker compose stop engine` after every `up`, or the container and the host process are
+>    two engines on one account - and with both in Paper, two engines trading it. Nothing in
+>    the system prevents that yet.
+> 5. Under compose, step 2 happens by itself: `up` runs `engine-migrate` before the engine.
+>
+> Remove this note once all of it is done.
 
-Stage 7's PR 1 is merged as #63 and PR 2 as #64. **PR 3 is the branch in hand**:
-`stage-7-agent-tracing`, open as #65 and not merged. Read the stage in the roadmap (*Etapp 7*)
-and the stage 7 log below before continuing.
+Stage 7's PRs 1-3 are merged as #63, #64 and #65. **PR 4 is the branch in hand**:
+`stage-7-engine-default`, open and not merged. Read the stage in the roadmap (*Etapp 7*) and the
+stage 7 log below before continuing.
+
+1. **`stage-7-engine-default`** lifts D2: **`docker compose up -d` starts the engine**, which
+   until now took `--profile trade`. The default mode stays **Shadow** (`${TRADING_MODE:-Shadow}`),
+   so a plain `up` places nothing; D2's reason - "not starting it is the only way to stop it" -
+   went when Shadow and the kill switch arrived in #63. CI's compose job asserts the inverse of
+   D2 on every pull request (the engine is in a plain `up`, and its mode resolves to Shadow with
+   `TRADING_MODE` unset), and the bring-up checks the engine logged `Trading mode is Shadow`.
+   `.env.example` and CLAUDE.md say loudly that an account with real paper positions needs
+   `TRADING_MODE=Paper`, and that only one engine may run per database. No engine code changes,
+   no migration, `team_version` untouched.
+2. **Next: PR 4b, Jaeger in compose with 7-day retention, and log export turned on with it**;
+   then PR 5, the runbook. Open on PR 4: whether to enforce one engine per database (an advisory
+   lock at startup) - see the PR 4 entry.
+
+The PR 3 summary, as it stood when #65 merged:
 
 1. **`stage-7-agent-tracing`** makes an engine cycle and the agents' work **one trace**, which is
    the stage's own check:
@@ -157,9 +186,7 @@ and the stage 7 log below before continuing.
    collector**, which prints them and keeps nothing: `docker compose logs otel-collector`.
    `OTEL_EXPORTER_OTLP_ENDPOINT=` (empty) or `OTEL_SDK_DISABLED=true` in the root `.env` turns
    that off. No migration, no change to what is traded, and `team_version` does not move.
-2. **Next: PR 4, the engine leaves `--profile trade`** (decided by Hampus). Then PR 4b,
-   **Jaeger in compose with 7-day retention, and log export turned on with it**; then PR 5, the
-   runbook. Hampus decided #65's three open questions on 2026-10-10 - see the PR 3 entry: Jaeger
+   Hampus decided #65's three open questions on 2026-10-10 - see the PR 3 entry: Jaeger
    locally, export on by default under compose, log export with the Jaeger PR.
 
 Hampus's six answers from 2026-10-09 and his two on PR 2 still stand - see *Hampus's decisions*
@@ -2098,7 +2125,7 @@ Each of them changed it.
 | # | Question | Taken |
 |---|---|---|
 | D1 | Who applies the migrations under compose? | One short-lived container per schema - `efbundle` for `trading`, `alembic upgrade head` for `agent` - gated with `service_completed_successfully`. The engine keeps its refusal to start against a database that is behind it, and that refusal becomes the *proof* the migration container ran. |
-| D2 | Does `docker compose up` start the engine? | **No.** Database, agent service and both migrations by default; the engine behind `--profile trade`. It is the only service that spends money and the kill switch does not arrive until stage 7, so until then "not starting it" is the only way to stop it - and that should cost a word on the command line. |
+| D2 | Does `docker compose up` start the engine? | **No.** Database, agent service and both migrations by default; the engine behind `--profile trade`. It is the only service that spends money and the kill switch does not arrive until stage 7, so until then "not starting it" is the only way to stop it - and that should cost a word on the command line. **Lifted in stage 7, PR 4** (2026-10-10, decided by Hampus 2026-10-09): Shadow as the default and the kill switch are the other ways, so a plain `up` now starts the engine, in Shadow. |
 | D3 | NSwag-generated client, or a drift check? | **A drift check, not generation.** Generating the engine's DTOs from Python's specification would make Python the contract's owner, which inverts contract-first and contradicts CLAUDE.md's *"Neither side generates the other"*; the generated types would also lose `[JsonUnmappedMemberHandling(Disallow)]` and the mappers' length caps, which are the engine's actual defences against a wrong answer. What the roadmap asks for - *"CI fails on drift"* - is obtainable without the inversion. **This is a deviation from the roadmap's text and was raised as one.** |
 | D4 | Where do compose's secrets live? | The root `.env` becomes its single source and gains two keys. Compose hands each container only the variables that are its business, so the rule that the agent service never sees the other two passwords survives. |
 
@@ -2570,7 +2597,7 @@ Seven, in this order (4b added 2026-10-10):
    **#65** (`stage-7-agent-tracing`), also taken before PR 4: logs are not exported. Approved
    by Hampus to merge once CI is green (2026-10-10).
 4. The engine leaves the profile (D2 lifted). **Decided by Hampus**, as its own PR after #63
-   merges.
+   merges. **Open** (`stage-7-engine-default`).
 4b. **Jaeger, and log export** (Hampus, 2026-10-10). Jaeger runs locally in compose as the trace
    backend, with **7-day retention**, behind the collector (which keeps its debug exporter or
    drops it, decided there), loopback-only and pinned like everything else. **Log export over
@@ -2980,6 +3007,59 @@ tests and the lock file, and the pieces only prove anything together.
   - Python: 585/585. .NET: 637/637.
 
 ---
+
+### PR 4 - the engine leaves `--profile trade` (`stage-7-engine-default`)
+
+- **What changes.** `docker-compose.yml` drops `profiles: ["trade"]` from the engine, so `docker
+  compose up -d` is the whole system. The mode default is unchanged, `${TRADING_MODE:-Shadow}`:
+  a plain `up` analyses, sizes, risk-gates and records, and places nothing. No engine or agent
+  code changes, no migration, no dependency, `team_version` untouched.
+- **Why D2 could go.** D2 (stage 6) kept the engine behind a profile because it is the only
+  service that spends money and "not starting it" was the only way to stop it. #63 added the
+  other two: Shadow as the default, and `trading.kill_switch` for a running engine's buying.
+  Hampus decided on 2026-10-09 that the profile goes in its own PR once #63 merged (E7).
+- **The cost of the default, on Hampus's machine.** Shadow places nothing, which includes the
+  stop-loss and time-limit sales on positions the account already holds. An account that was
+  paper-trading and is brought up with a plain `up` and no `TRADING_MODE=Paper` stops having its
+  positions closed. What says so:
+  - the engine's startup warning naming the holdings (unchanged from #63, and still covered by
+    the Testcontainers test in `TradingWorkerPersistenceTests`);
+  - `.env.example`'s mode block, which now leads with it and whose commented example is
+    `TRADING_MODE=Paper`, with a line telling an account that paper-traded before stage 7 to
+    uncomment it;
+  - CLAUDE.md's commands and compose section, the compose file's header, and the post-pull note
+    at the top of *Resume here*, extended with the two things specific to compose: **the
+    container's mode comes from `.env`, not user secrets**, and **one engine per database**.
+  Making it impossible rather than loud - refusing to start in Shadow with holdings unless told
+  to, or requiring `TRADING_MODE` with no default - was considered and not done: the first is an
+  engine behaviour change outside this PR's scope, the second would make a plain `up` fail,
+  which is the opposite of what this PR is for. Both are listed as open.
+- **Two engines on one database.** Nothing prevents a host-run engine and the container from
+  running at once; before this PR the profile meant that took a deliberate word, now it is the
+  default whenever the engine runs on the host. Two engines double the decisions and LLM load,
+  and two in Paper both trade one account (the daily cap reads the ledger, so it bounds the sum,
+  but sizing races). Documented, with `docker compose stop engine` as the remedy. **Open:** a
+  startup guard (a Postgres advisory lock held for the process lifetime) would make it
+  impossible; it is engine code with real consequences, so it is left for Hampus.
+- **CI.** The compose job's cheap step, on every PR, asserted D2 (engine absent from a plain
+  `up`). It now asserts the inverse and the condition that makes it safe: the engine is in
+  `docker compose config --services`, and the `Trading__Mode` compose resolves for it with
+  `TRADING_MODE` removed from both the environment and a copy of `.env` is `Shadow` - so a
+  developer's own `.env` cannot decide the result. `if` blocks naming what they found, not
+  `! grep` (the lesson from #62). The heavy bring-up no longer runs its own `--profile trade
+  up`: the plain `up` starts the engine, and the engine step now also requires `Trading mode is
+  Shadow` in its startup log. The loopback, log and teardown steps lose the flag. The Python
+  suite gains `tests/test_compose_engine.py` (no service behind a profile; the engine's mode is
+  `${TRADING_MODE:-Shadow}`). No new required check.
+- **Deliberate breaks.** The CI step, run locally against the real compose file: defaulting the
+  mode to Paper fails it ("runs the engine in 'Paper' when no mode is chosen, not Shadow");
+  putting the engine back behind a profile fails it ("a plain 'up' does not start the engine");
+  `TRADING_MODE=Paper` in `.env` leaves it passing, as it should. The Python tests: the profile
+  back fails `test_no_service_is_behind_a_profile`, the default Paper fails the mode test.
+- **Local runs.** .NET 637/637 with Testcontainers, `-warnaserror`, `dotnet format` and
+  `has-pending-model-changes` clean. Python 587/587 (585 + 2), ruff, ruff format and mypy clean.
+  Containers cannot reach each other on this machine, so the compose file was validated
+  statically (`docker compose config`, and the CI step above); the bring-up is CI's.
 
 ## Lessons and gotchas
 
