@@ -2,6 +2,7 @@ using Engine.Application.UseCases;
 using Engine.Domain.Outcomes;
 using Engine.Domain.Risk;
 using Engine.Hosting;
+using Engine.Hosting.Lock;
 using Engine.Hosting.Options;
 using Engine.Hosting.Telemetry;
 using Engine.Hosting.Workers;
@@ -65,6 +66,12 @@ builder.Services.AddTransient<AnalysisDueCheck>();
 builder.Services.AddTransient<MeasureOutcomesUseCase>();
 builder.Services.AddTransient<ReportOutcomesUseCase>();
 
+// One engine per database. Before the workers, because the host starts hosted services one at a
+// time in registration order and stops at the first that throws: a second engine is refused
+// before either worker has run, and the lock is released last, after both have stopped.
+builder.Services.AddSingleton<EngineLockService>();
+builder.Services.AddHostedService(provider => provider.GetRequiredService<EngineLockService>());
+
 builder.Services.AddHostedService<TradingWorker>();
 builder.Services.AddHostedService<MeasurementWorker>();
 
@@ -79,4 +86,21 @@ host.Services.GetRequiredService<ILogger<Program>>().LogInformation(
 // against a database that is behind this build.
 await host.Services.EnsureTheSchemaIsCurrentAsync();
 
-await host.RunAsync();
+// Read before RunAsync, which disposes the container on the way out.
+var engineLock = host.Services.GetRequiredService<EngineLockService>();
+var startup = host.Services.GetRequiredService<ILogger<Program>>();
+
+try
+{
+    await host.RunAsync();
+}
+catch (EngineAlreadyRunningException refused)
+{
+    // A distinct exit code and one sentence, rather than a stack trace: this is an operator's
+    // mistake with a clear remedy, not a fault in the engine.
+    startup.LogCritical("{Refusal}", refused.Message);
+    return EngineLockService.AnotherEngineExitCode;
+}
+
+// Non-zero after losing the lock, so compose's on-failure restarts it - through the lock again.
+return engineLock.Lost ? EngineLockService.LostLockExitCode : 0;
