@@ -64,3 +64,12 @@ def test_the_mode_is_read_by_meaning_not_spelling(value, expected):
 def test_a_mode_without_a_default_is_refused(value):
     with pytest.raises(pytest.fail.Exception):
         _variable_and_default(value)
+
+
+def test_the_engines_log_is_capped():
+    # A refused engine is restarted, and logs its refusal, for as long as the other one runs.
+    logging = _services()["engine"]["logging"]
+
+    assert logging["driver"] == "json-file"
+    assert logging["options"]["max-size"] == "10m"
+    assert logging["options"]["max-file"] == "3"

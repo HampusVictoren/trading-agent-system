@@ -251,6 +251,14 @@ services:
     # keeps the bet cheap; a clean exit stays exited. After exit 4 the restart goes back through
     # the lock, so it either holds it again or is refused.
     restart: on-failure
+    # Capped like the collector's: a refused container is restarted with Docker's backoff for as
+    # long as the other engine runs, and logs its refusal each time, on top of a cycle's own
+    # lines every few minutes. Three files of 10 MB keep days of a running engine's log.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   trading-db-data:
