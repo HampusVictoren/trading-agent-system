@@ -262,12 +262,32 @@ configuration.
   request (the engine is in a plain `up`; its mode resolves to Shadow with `TRADING_MODE` unset).
   **The default has a cost on an account that already holds positions**: Shadow does not place
   their exits either, so `TRADING_MODE=Paper` in the root `.env` is what keeps managing them, and
-  the engine warns at startup, naming the holdings, when it is in Shadow with any. **And nothing
-  enforces one engine per database**: a host-run engine and the container against the same
-  database are two engines recording, and in Paper trading, one account - `docker compose stop
-  engine` before `dotnet run`. Both migration steps run **by default**,
+  the engine warns at startup, naming the holdings, when it is in Shadow with any. **One engine
+  per database is enforced** (stage 7, `stage-7-engine-lock`): see *The engine lock* below. A
+  refused engine **stays stopped** - it never takes over when the other one stops - so the host
+  engine and the container are whichever started first; `docker compose stop engine` before
+  `dotnet run` to choose the host. Both migration steps run **by default**,
   because a provisioned database is not trading: after a plain `up` the schemas are current and
   a host-run engine can point at the same database (with the container's engine stopped).
+- **The engine lock** (stage 7). `EngineLockService` (`Hosting/Lock/`), registered before both
+  workers, takes `EngineInstanceLock` - `pg_try_advisory_lock(0x54415345, 1)`, session-level, on
+  an unpooled connection of its own named `tas-engine (instance lock)` - before any cycle, and
+  holds it for the process lifetime; Program.cs takes it after the schema check and before the
+  host runs. **A second engine against the same database is refused** before either worker
+  starts: one critical line naming the holder (application name, address, backend pid, since
+  when), no stack trace, and **exit code 0** - so compose's `restart: on-failure` leaves it
+  **stopped**, and it never takes over when the other engine stops (Hampus, 2026-10-10; Docker
+  cannot exempt one exit code from a restart policy, and `on-failure` must keep restarting real
+  failures). The line, not the code, is what says "refused"; CI and the tests read it. **Fail closed**: every 5 s the lock's own
+  connection is asked whether this session still holds it, and anything but yes (dropped
+  connection, terminated backend, 5 s timeout, restarted database) stops the application with
+  **exit code 4** rather than trading unlocked - restarted by `on-failure`, through the lock
+  again; it never re-takes the lock in-process. A normal stop (SIGTERM) exits 0 and is never
+  reported as a lost lock. Postgres
+  releases the lock when the session ends however it ends, so a crash cannot strand it. Not
+  blocked: the migrator and efbundle (EF's migration lock is `LOCK TABLE`), ordinary queries, and
+  tests that do not start the host. Find the holder with `SELECT a.* FROM pg_locks l JOIN
+  pg_stat_activity a USING (pid) WHERE l.locktype = 'advisory' AND l.classid = 1413567301`.
 - **The collector is minimal on purpose** (stage 7). `otel-collector` is the core image pinned
   by version and digest, with one OTLP/HTTP receiver, the batch processor and the debug
   exporter (`otel/collector.yaml`): it prints what it receives and keeps nothing, because where
