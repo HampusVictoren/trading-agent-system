@@ -1,5 +1,6 @@
 namespace Engine.Hosting.Workers;
 
+using System.Diagnostics;
 using Engine.Application.Persistence;
 using Engine.Application.UseCases;
 using Engine.Domain.Aggregates.Portfolio;
@@ -8,24 +9,37 @@ using Engine.Domain.Signals;
 using Engine.Domain.Trading;
 using Engine.Domain.ValueObjects;
 using Engine.Hosting.Options;
+using Engine.Hosting.Telemetry;
 using Microsoft.Extensions.Options;
 
 public class TradingWorker : BackgroundService
 {
+    /// <summary>The span names a cycle's trace is made of, public so a test can hold them.</summary>
+    public const string CycleSpan = "trading.cycle";
+    public const string ExitsSpan = "trading.exits";
+    public const string SelectSpan = "trading.select";
+    public const string AnalysisSpan = "trading.analysis";
+
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly TradingOptions _options;
     private readonly TimeProvider _clock;
+    private readonly EngineTelemetry _telemetry;
+    private readonly CycleHeartbeat _heartbeat;
     private readonly ILogger<TradingWorker> _logger;
 
     public TradingWorker(
         IServiceScopeFactory scopeFactory,
         IOptions<TradingOptions> options,
         TimeProvider clock,
+        EngineTelemetry telemetry,
+        CycleHeartbeat heartbeat,
         ILogger<TradingWorker> logger)
     {
         _scopeFactory = scopeFactory;
         _options = options.Value;
         _clock = clock;
+        _telemetry = telemetry;
+        _heartbeat = heartbeat;
         _logger = logger;
     }
 
@@ -42,102 +56,174 @@ public class TradingWorker : BackgroundService
         // all on a day when nothing was due.
         _logger.LogInformation(
             "Trading mode is {Mode}: {Meaning}",
-            _options.Mode,
-            _options.Mode == TradingMode.Paper
+            _options.EffectiveMode,
+            _options.EffectiveMode == TradingMode.Paper
                 ? "approved orders are executed against the simulated portfolio."
                 : "every decision is recorded and no order is placed.");
 
-        if (_options.Mode != TradingMode.Paper)
+        if (_options.EffectiveMode != TradingMode.Paper)
             await WarnAboutHoldingsNobodyIsManagingAsync(stoppingToken);
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            // First, before anything is asked of anyone. The switch stops new buys only, so an
-            // engaged one does not stop the cycle: the exits still run, and the holdings are still
-            // analysed, because the agents' SELL on a holding is a sale the switch lets through.
-            // What it skips is the screen and every candidate, since the only order a candidate
-            // can lead to is a buy, and an analysis of one would be LLM time spent on an order
-            // that could not be placed.
-            var buyingHalted = await IsBuyingHaltedAsync(stoppingToken);
-
-            // Before the analyses, not after. A cycle's buying should see the cash and the
-            // position headroom the exits have just released, and a position the rules say to
-            // close should not survive because an analysis of it happened to come first.
-            await RunExitsAsync(stoppingToken);
-
-            var today = DateOnly.FromDateTime(_clock.GetUtcNow().UtcDateTime);
-            var selection = buyingHalted
-                ? await HoldingsOnlyAsync(stoppingToken)
-                : await SelectAsync(today, stoppingToken);
-            var verdicts = new Dictionary<AnalysisVerdict, int>();
-            var candidatesNotAnalysed = 0;
-
-            foreach (var selected in selection)
-            {
-                if (stoppingToken.IsCancellationRequested)
-                    return;
-
-                // Read again before every candidate, so a switch pulled mid-cycle costs at most the
-                // analysis already under way - and that one's buy is stopped by the gate, which
-                // reads it again after the agents have answered. A holding is analysed whatever
-                // the switch says; holdings come first in the selection anyway.
-                if (selected.Source != SelectionSource.Holding && await KillSwitchStateAsync(stoppingToken) is { Engaged: true })
-                {
-                    candidatesNotAnalysed++;
-                    continue;
-                }
-
-                // One scope per analysis, so one change tracker and one transaction per decision.
-                using var scope = _scopeFactory.CreateScope();
-
-                // One id per analysis, generated here and logged before the call, so a line in
-                // this log can be found in the agent service's - it echoes the id and puts
-                // it in every line it writes while handling the request.
-                var correlationId = Guid.NewGuid().ToString();
-
-                try
-                {
-                    var verdict = await RunCycleAsync(
-                        scope.ServiceProvider, selected, today, correlationId, stoppingToken);
-
-                    verdicts[verdict] = verdicts.GetValueOrDefault(verdict) + 1;
-                }
-                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-                {
-                    return;
-                }
-                catch (ConcurrentChangeException ex)
-                {
-                    // An expected outcome rather than a bug, so no stack trace. Nothing was
-                    // traded either: the buy is in the same transaction as the decision, so a
-                    // commit that fails costs an LLM call and nothing else. The next cycle
-                    // reads the portfolio again.
-                    _logger.LogError(
-                        "Cycle {CorrelationId} for {Ticker} was not stored: {Reason}",
-                        correlationId, selected.Ticker.Value, ex.Message);
-                }
-                catch (Exception ex)
-                {
-                    // Only a bug, or an outage, reaches this point: every expected outcome of
-                    // the analysis itself is a result rather than an exception.
-                    _logger.LogError(
-                        ex, "Unexpected failure in the trading cycle for {Ticker}.", selected.Ticker.Value);
-                }
-            }
-
-            LogWhatTheCycleDid(selection.Count, verdicts);
-
-            if (candidatesNotAnalysed > 0)
-            {
-                _logger.LogWarning(
-                    "The kill switch was engaged during the cycle: {Count} candidate(s) were not analysed, "
-                    + "because the only order they could lead to is a buy.",
-                    candidatesNotAnalysed);
-            }
+            if (!await RunOneCycleAsync(stoppingToken))
+                return;
 
             if (!await WaitForTheNextCycleAsync(stoppingToken))
                 return;
         }
+    }
+
+    /// <summary>
+    /// One cycle - the switch, the exits, the selection and every analysis - as one trace.
+    /// </summary>
+    /// <returns>False when the worker is shutting down.</returns>
+    /// <remarks>
+    /// <para>
+    /// The cycle's activity is the root of its trace, and everything the cycle does is a child of
+    /// it: the exits, the selection, and one span per instrument analysed. HttpClient puts the
+    /// current activity in a <c>traceparent</c> header on every call it makes, so each call to
+    /// the agent service carries this cycle's trace id - which is what lets the agent service
+    /// continue the same trace rather than start one per request.
+    /// </para>
+    /// <para>
+    /// It ends here, before the wait, so a trace is the fifteen seconds or five minutes of work
+    /// and not a quarter of an hour of mostly sleeping. And it is a root on purpose:
+    /// <c>Activity.Current</c> is cleared first, so a cycle can never become a child of whatever
+    /// happened to be current when the worker started. Changing it here does not leak to the
+    /// caller, because an async method's changes to an AsyncLocal stay inside it.
+    /// </para>
+    /// <para>
+    /// What goes on a span is a closed set plus the ticker and the correlation id - the id is what
+    /// joins a trace to this log's lines. Never a reason, a thesis, or anything else the agents
+    /// wrote: those are in the database, and a trace is not a second copy of them.
+    /// </para>
+    /// </remarks>
+    private async Task<bool> RunOneCycleAsync(CancellationToken stoppingToken)
+    {
+        // First of all. The first cycle starts as the worker does, so this is also the engine's
+        // first beat: one that has not finished a cycle yet is starting, not stuck, and it is
+        // healthy for one whole lease from here.
+        _heartbeat.Beat();
+
+        Activity.Current = null;
+        using var cycle = EngineTelemetry.ActivitySource.StartActivity(CycleSpan);
+        cycle?.SetTag("trading.mode", _options.EffectiveMode.ToString());
+
+        // First, before anything is asked of anyone. The switch stops new buys only, so an engaged
+        // one does not stop the cycle: the exits still run, and the holdings are still analysed,
+        // because the agents' SELL on a holding is a sale the switch lets through. What it skips is
+        // the screen and every candidate, since the only order a candidate can lead to is a buy,
+        // and an analysis of one would be LLM time spent on an order that could not be placed.
+        var buyingHalted = await IsBuyingHaltedAsync(stoppingToken);
+        cycle?.SetTag("trading.kill_switch.engaged", buyingHalted);
+
+        // Before the analyses, not after. A cycle's buying should see the cash and the position
+        // headroom the exits have just released, and a position the rules say to close should not
+        // survive because an analysis of it happened to come first.
+        await RunExitsAsync(stoppingToken);
+        _heartbeat.Beat();
+
+        var today = DateOnly.FromDateTime(_clock.GetUtcNow().UtcDateTime);
+        var selection = buyingHalted
+            ? await HoldingsOnlyAsync(stoppingToken)
+            : await SelectAsync(today, stoppingToken);
+        _heartbeat.Beat();
+        var verdicts = new Dictionary<AnalysisVerdict, int>();
+        var candidatesNotAnalysed = 0;
+
+        foreach (var selected in selection)
+        {
+            if (stoppingToken.IsCancellationRequested)
+                return false;
+
+            _heartbeat.Beat();
+
+            // Read again before every candidate, so a switch pulled mid-cycle costs at most the
+            // analysis already under way - and that one's buy is stopped by the gate, which reads
+            // it again after the agents have answered. A holding is analysed whatever the switch
+            // says; holdings come first in the selection anyway.
+            if (selected.Source != SelectionSource.Holding && await KillSwitchStateAsync(stoppingToken) is { Engaged: true })
+            {
+                candidatesNotAnalysed++;
+                continue;
+            }
+
+            // One scope per analysis, so one change tracker and one transaction per decision.
+            using var scope = _scopeFactory.CreateScope();
+
+            // One id per analysis, generated here and logged before the call, so a line in this log
+            // can be found in the agent service's - it echoes the id and puts it in every line it
+            // writes while handling the request.
+            var correlationId = Guid.NewGuid().ToString();
+
+            using var analysis = EngineTelemetry.ActivitySource.StartActivity(AnalysisSpan);
+            analysis?.SetTag("trading.ticker", selected.Ticker.Value);
+            analysis?.SetTag("trading.selection", selected.Source.ToString());
+            analysis?.SetTag("trading.correlation_id", correlationId);
+
+            try
+            {
+                var verdict = await RunCycleAsync(
+                    scope.ServiceProvider, selected, today, correlationId, stoppingToken);
+
+                verdicts[verdict] = verdicts.GetValueOrDefault(verdict) + 1;
+                analysis?.SetTag("trading.verdict", verdict.ToString());
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                return false;
+            }
+            catch (ConcurrentChangeException ex)
+            {
+                // An expected outcome rather than a bug, so no stack trace. Nothing was traded
+                // either: the buy is in the same transaction as the decision, so a commit that
+                // fails costs an LLM call and nothing else. The next cycle reads the portfolio
+                // again.
+                _logger.LogError(
+                    "Cycle {CorrelationId} for {Ticker} was not stored: {Reason}",
+                    correlationId, selected.Ticker.Value, ex.Message);
+                Failed(analysis, ex);
+            }
+            catch (Exception ex)
+            {
+                // Only a bug, or an outage, reaches this point: every expected outcome of the
+                // analysis itself is a result rather than an exception.
+                _logger.LogError(
+                    ex, "Unexpected failure in the trading cycle for {Ticker}.", selected.Ticker.Value);
+                Failed(analysis, ex);
+            }
+        }
+
+        cycle?.SetTag("trading.selected", selection.Count);
+        cycle?.SetTag("trading.analysed", verdicts.GetValueOrDefault(AnalysisVerdict.Due));
+        cycle?.SetTag("trading.candidates_skipped", candidatesNotAnalysed);
+
+        // The last before the sleep, so the lease covers the whole wait for the next cycle.
+        _heartbeat.Beat();
+
+        LogWhatTheCycleDid(selection.Count, verdicts);
+
+        if (candidatesNotAnalysed > 0)
+        {
+            _logger.LogWarning(
+                "The kill switch was engaged during the cycle: {Count} candidate(s) were not analysed, "
+                + "because the only order they could lead to is a buy.",
+                candidatesNotAnalysed);
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Marks a span as failed with the exception's type and nothing else. Not the message: an
+    /// exception's message can carry what the agent service answered, and the log line written
+    /// beside this already has it in full.
+    /// </summary>
+    private static void Failed(Activity? span, Exception ex)
+    {
+        span?.SetStatus(ActivityStatusCode.Error, ex.GetType().Name);
+        span?.SetTag("error.type", ex.GetType().FullName);
     }
 
     /// <summary>
@@ -168,7 +254,7 @@ public class TradingWorker : BackgroundService
                 "Trading mode is {Mode} and the portfolio holds {Count} position(s): {Tickers}. Their "
                 + "stop-loss and time-limit exits will be logged but NOT placed, so nothing will close "
                 + "them. Set Trading:Mode to Paper (TRADING_MODE=Paper under compose) to keep managing them.",
-                _options.Mode,
+                _options.EffectiveMode,
                 portfolio.Positions.Count,
                 string.Join(", ", portfolio.Positions.Select(held => held.Ticker.Value).Order(StringComparer.Ordinal)));
         }
@@ -249,6 +335,9 @@ public class TradingWorker : BackgroundService
 
         var correlationId = Guid.NewGuid().ToString();
 
+        using var span = EngineTelemetry.ActivitySource.StartActivity(ExitsSpan);
+        span?.SetTag("trading.correlation_id", correlationId);
+
         try
         {
             var portfolios = services.GetRequiredService<IPortfolioRepository>();
@@ -263,6 +352,7 @@ public class TradingWorker : BackgroundService
             var placed = await exits.ExecuteAsync(portfolio, correlationId, cancellationToken);
 
             await unitOfWork.SaveChangesAsync(cancellationToken);
+            span?.SetTag("trading.exits.sold", placed.Count);
 
             // After the commit, like every other outcome in this worker: a line here means a
             // row. The use case logs each sale as it happens; this is the count that survived.
@@ -284,6 +374,7 @@ public class TradingWorker : BackgroundService
             // stop-loss that should have fired still should.
             _logger.LogError(
                 "The exits were not stored under {CorrelationId}: {Reason}", correlationId, ex.Message);
+            Failed(span, ex);
         }
         catch (Exception ex)
         {
@@ -291,6 +382,7 @@ public class TradingWorker : BackgroundService
             // the exits could not, and the alternative is a market data outage that blocks all
             // trading rather than the half of it that needed prices.
             _logger.LogError(ex, "Unexpected failure while applying the exits.");
+            Failed(span, ex);
         }
     }
 
@@ -337,7 +429,18 @@ public class TradingWorker : BackgroundService
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
+        // After the commit, like the line below: the counter counts rows, not intentions. The mode
+        // is the one OrderGate decided under and the row records - both read EffectiveMode.
+        _telemetry.DecisionStored(
+            result.Outcome,
+            _options.EffectiveMode,
+            (result as TradeDecisionResult.RejectedByRisk)?.Side);
+
         LogOutcome(result, portfolio);
+
+        // On the analysis span this runs inside. The outcome and nothing more: its reason can
+        // quote the agents, and the row holds it.
+        Activity.Current?.SetTag("trading.outcome", result.Outcome.ToString());
 
         return verdict;
     }
@@ -391,6 +494,9 @@ public class TradingWorker : BackgroundService
 
         var correlationId = Guid.NewGuid().ToString();
 
+        using var span = EngineTelemetry.ActivitySource.StartActivity(SelectSpan);
+        span?.SetTag("trading.correlation_id", correlationId);
+
         try
         {
             var portfolios = services.GetRequiredService<IPortfolioRepository>();
@@ -415,6 +521,7 @@ public class TradingWorker : BackgroundService
             // candidates, which is a worse cycle than usual - but the holdings still need
             // looking at, and reaching them needs the portfolio rather than the screen.
             _logger.LogError(ex, "Could not select a shortlist, so only the holdings will be analysed.");
+            Failed(span, ex);
 
             return await HoldingsOnlyAsync(cancellationToken);
         }

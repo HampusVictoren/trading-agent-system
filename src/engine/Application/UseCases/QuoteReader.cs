@@ -30,13 +30,15 @@ public sealed class QuoteReader
 {
     private readonly IAgentClient _agentClient;
     private readonly RiskPolicy _policy;
+    private readonly ICycleProgress _progress;
     private readonly ILogger<QuoteReader> _logger;
 
     public QuoteReader(
-        IAgentClient agentClient, RiskPolicy policy, ILogger<QuoteReader> logger)
+        IAgentClient agentClient, RiskPolicy policy, ICycleProgress progress, ILogger<QuoteReader> logger)
     {
         _agentClient = agentClient;
         _policy = policy;
+        _progress = progress;
         _logger = logger;
     }
 
@@ -112,6 +114,15 @@ public sealed class QuoteReader
         {
             _logger.LogWarning(ex, "No usable quote for {Ticker} this cycle.", ticker.Value);
             return null;
+        }
+        finally
+        {
+            // After every quote, answered or not. The exits and the sizing of a buy both read one
+            // quote per holding, one at a time, and each can take a whole agent call's timeout - so
+            // a portfolio of a handful of holdings and a hanging agent service would otherwise be a
+            // single step longer than the heartbeat's allowance, and a falsely unhealthy engine.
+            // With a beat here, the longest gap between two beats is one call, whatever is held.
+            _progress.Beat();
         }
     }
 }

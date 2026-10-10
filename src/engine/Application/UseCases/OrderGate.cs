@@ -54,9 +54,8 @@ public abstract record OrderPermission
 /// Shadow places nothing to stop.
 /// </para>
 /// <para>
-/// A mode that is missing reads as Shadow. Validation at startup makes that unreachable in a
-/// running engine; the fallback is for anything that constructs the options by hand, and it goes
-/// the safe way because the other direction places orders.
+/// A mode that is missing reads as Shadow - see <see cref="TradingOptions.EffectiveMode"/>, which is
+/// where that fallback lives.
 /// </para>
 /// </remarks>
 public sealed class OrderGate
@@ -65,7 +64,7 @@ public sealed class OrderGate
 
     public OrderGate(IOptions<TradingOptions> trading, IKillSwitch killSwitch)
     {
-        Mode = trading.Value.Mode ?? TradingMode.Shadow;
+        Mode = trading.Value.EffectiveMode;
         _killSwitch = killSwitch;
     }
 

@@ -9,10 +9,12 @@ using Engine.Domain.Trading;
 using Engine.Domain.ValueObjects;
 using Engine.Hosting;
 using Engine.Hosting.Options;
+using Engine.Hosting.Telemetry;
 using Engine.Hosting.Workers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Diagnostics.Metrics.Testing;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NSubstitute;
@@ -132,7 +134,8 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
         IAgentClient agents,
         DateTimeOffset? clock = null,
         TradingMode mode = TradingMode.Paper,
-        string? alsoInTheUniverse = null)
+        string? alsoInTheUniverse = null,
+        string? heartbeatFile = null)
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -156,6 +159,9 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
                 ["Trading:Mode"] = mode.ToString(),
                 ["Database:ConnectionString"] = _database.ConnectionString,
             })
+            .AddInMemoryCollection(heartbeatFile is null
+                ? []
+                : new Dictionary<string, string?> { ["Health:HeartbeatFile"] = heartbeatFile })
             .AddInMemoryCollection(alsoInTheUniverse is null
                 ? []
                 : new Dictionary<string, string?> { ["Trading:Universe:1"] = alsoInTheUniverse })
@@ -167,6 +173,7 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
         services.AddSingleton<RiskEngine>();
         services.AddSingleton(sp => sp.GetRequiredService<IOptions<RiskPolicyOptions>>().Value.ToRiskPolicy());
         services.AddSingleton<PositionSizer>();
+        services.AddEngineTelemetry();
         services.AddSingleton<TimeProvider>(new FixedClock(clock ?? Now));
         services.AddSingleton(agents);
         services.AddTradingDatabase();
@@ -188,6 +195,8 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
             engine.GetRequiredService<IServiceScopeFactory>(),
             engine.GetRequiredService<IOptions<TradingOptions>>(),
             engine.GetRequiredService<TimeProvider>(),
+            engine.GetRequiredService<EngineTelemetry>(),
+            engine.GetRequiredService<CycleHeartbeat>(),
             engine.GetRequiredService<ILogger<TradingWorker>>());
 
         await worker.StartAsync(TestContext.Current.CancellationToken);
@@ -209,6 +218,8 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
             engine.GetRequiredService<IServiceScopeFactory>(),
             engine.GetRequiredService<IOptions<TradingOptions>>(),
             engine.GetRequiredService<TimeProvider>(),
+            engine.GetRequiredService<EngineTelemetry>(),
+            engine.GetRequiredService<CycleHeartbeat>(),
             engine.GetRequiredService<ILogger<TradingWorker>>());
 
         await worker.StartAsync(TestContext.Current.CancellationToken);
@@ -387,6 +398,124 @@ public class TradingWorkerPersistenceTests : IAsyncLifetime
 
         portfolio.CashBalance.Amount.ShouldBe(10_000m);
         portfolio.Positions.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task A_stored_decision_is_counted_by_its_outcome_and_the_engines_mode()
+    {
+        // decisions_total, read the way an exporter reads it, from the real worker against a real
+        // database. Shadow rather than Paper so that both labels are something a default would not
+        // produce by accident.
+        await using var engine = AnEngine(AnAgentServiceThatAnswers(ABuy(conviction: 0.9)), mode: TradingMode.Shadow);
+        using var decisions = new MetricCollector<long>(
+            engine.GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>(),
+            EngineTelemetry.Name,
+            EngineTelemetry.DecisionsName);
+
+        await RunOneCycleAsync(engine, expectedDecisionsAfterwards: 1);
+
+        // Recorded just after the commit the test waited for, so it is waited for in turn.
+        await decisions.WaitForMeasurementsAsync(1, TimeSpan.FromSeconds(10));
+
+        var measured = decisions.GetMeasurementSnapshot().ShouldHaveSingleItem();
+        measured.Value.ShouldBe(1);
+        measured.Tags["outcome"].ShouldBe(nameof(DecisionOutcome.Shadowed));
+        measured.Tags["mode"].ShouldBe(nameof(TradingMode.Shadow));
+    }
+
+    [Fact]
+    public async Task A_cycle_is_one_trace_with_the_exits_the_selection_and_each_analysis_inside_it()
+    {
+        // Listened to the way an OpenTelemetry exporter listens: by source name, sampling
+        // everything. Other tests may emit activities on the same source at the same time, so
+        // everything below is filtered down to the one trace this cycle started.
+        var stopped = new System.Collections.Concurrent.ConcurrentQueue<System.Diagnostics.Activity>();
+        using var listener = new System.Diagnostics.ActivityListener
+        {
+            ShouldListenTo = source => source.Name == EngineTelemetry.Name,
+            Sample = (ref System.Diagnostics.ActivityCreationOptions<System.Diagnostics.ActivityContext> _) =>
+                System.Diagnostics.ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = stopped.Enqueue,
+        };
+        System.Diagnostics.ActivitySource.AddActivityListener(listener);
+
+        // An empty account and a buy for the screen's one pick. The exits still get a span: they
+        // ran, and found nothing to look at, which is worth seeing in a trace too.
+        await using (var engine = AnEngine(AnAgentServiceThatAnswers(ABuy(conviction: 0.9), AQuote(100m, Now))))
+        {
+            await RunOneCycleAsync(engine, expectedDecisionsAfterwards: 1);
+        }
+
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
+        while (!stopped.Any(span => span.OperationName == TradingWorker.CycleSpan) && DateTimeOffset.UtcNow < deadline)
+            await Task.Delay(25, TestContext.Current.CancellationToken);
+
+        var cycle = stopped.Single(span => span.OperationName == TradingWorker.CycleSpan);
+        cycle.Parent.ShouldBeNull();
+        cycle.ParentSpanId.ShouldBe(default);
+        cycle.GetTagItem("trading.mode").ShouldBe(nameof(TradingMode.Paper));
+        cycle.GetTagItem("trading.kill_switch.engaged").ShouldBe(false);
+        cycle.GetTagItem("trading.analysed").ShouldBe(1);
+
+        var inside = stopped.Where(span => span.TraceId == cycle.TraceId && span != cycle).ToList();
+        inside.Select(span => span.OperationName).Order().ShouldBe(
+            [TradingWorker.AnalysisSpan, TradingWorker.ExitsSpan, TradingWorker.SelectSpan]);
+        inside.ShouldAllBe(span => span.ParentSpanId == cycle.SpanId);
+
+        var analysis = inside.Single(span => span.OperationName == TradingWorker.AnalysisSpan);
+        analysis.GetTagItem("trading.ticker").ShouldBe(Symbol);
+        analysis.GetTagItem("trading.outcome").ShouldBe(nameof(DecisionOutcome.Executed));
+
+        // The correlation id on the span is the one on the row, which is what joins a trace to
+        // the database and to both services' logs.
+        await using var context = _database.NewContext();
+        var decision = await context.Decisions.SingleAsync(TestContext.Current.CancellationToken);
+        analysis.GetTagItem("trading.correlation_id").ShouldBe(decision.CorrelationId);
+
+        // Nothing the agents wrote reaches a span: not the thesis, not a risk, not a reason.
+        var everyValue = stopped.Where(span => span.TraceId == cycle.TraceId)
+            .SelectMany(span => span.TagObjects)
+            .Select(tag => Convert.ToString(tag.Value, System.Globalization.CultureInfo.InvariantCulture) ?? "")
+            .ToList();
+        everyValue.ShouldNotContain(value => value.Contains("Momentum", StringComparison.Ordinal));
+        everyValue.ShouldNotContain(value => value.Contains("Multipel", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task An_engine_whose_first_cycle_has_not_finished_is_already_healthy()
+    {
+        // The healthcheck's grace: the agents never answer, so not one cycle completes, and the
+        // heartbeat still holds a deadline a whole lease beyond the clock. A container is not
+        // unhealthy for having started recently, or for waiting on a slow analysis.
+        var directory = Directory.CreateTempSubdirectory("heartbeat-").FullName;
+        var path = Path.Combine(directory, "engine.heartbeat");
+
+        try
+        {
+            var agents = ThatShortlists(Substitute.For<IAgentClient>(), Symbol);
+            agents.GetSignalAsync(Arg.Any<TradeSignalRequestDto>(), Arg.Any<CancellationToken>())
+                .Returns<Task<TradeSignalDto?>>(async call =>
+                {
+                    await Task.Delay(Timeout.Infinite, call.Arg<CancellationToken>());
+                    return null;
+                });
+
+            await using var engine = AnEngine(agents, heartbeatFile: path);
+            await RunUntilItLogsAsync(engine, "Requesting analysis for");
+
+            var deadline = DateTimeOffset.FromUnixTimeSeconds(long.Parse(
+                await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken),
+                System.Globalization.CultureInfo.InvariantCulture));
+
+            // An hour's interval in this harness, plus 2 × (2 × 30 + 5) s, floored at five minutes.
+            deadline.ShouldBe(Now + TimeSpan.FromMinutes(60) + TimeSpan.FromMinutes(5));
+            await using var db = _database.NewContext();
+            (await db.Decisions.CountAsync(TestContext.Current.CancellationToken)).ShouldBe(0);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
     }
 
     [Fact]

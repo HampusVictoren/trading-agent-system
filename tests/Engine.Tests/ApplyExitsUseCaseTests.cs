@@ -123,7 +123,7 @@ public class ApplyExitsUseCaseTests
                 .Returns(Quote(ticker, price, now));
         }
 
-        var reader = new QuoteReader(client, Policy, NullLogger<QuoteReader>.Instance);
+        var reader = new QuoteReader(client, Policy, NoCycleProgress.Instance, NullLogger<QuoteReader>.Instance);
         var log = new CapturedLog();
 
         return (new ApplyExitsUseCase(reader, new RiskEngine(), Policy, gate, notices ?? new ShadowExitNotices(), new FixedClock(now), log), log);
@@ -301,7 +301,7 @@ public class ApplyExitsUseCaseTests
             .Returns(Quote(Eric, 85m, now.AddMinutes(-6)));
 
         var sut = new ApplyExitsUseCase(
-            new QuoteReader(client, Policy, NullLogger<QuoteReader>.Instance),
+            new QuoteReader(client, Policy, NoCycleProgress.Instance, NullLogger<QuoteReader>.Instance),
             new RiskEngine(),
             Policy,
             AGate(TradingMode.Paper),

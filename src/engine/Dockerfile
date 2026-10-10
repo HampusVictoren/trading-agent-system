@@ -81,11 +81,28 @@ ENV DOTNET_ENVIRONMENT=Production
 # file, so it stays right if Microsoft moves it.
 USER $APP_UID
 
-# There is no HEALTHCHECK, and that is a decision rather than an omission. Nothing is gated
-# on this container - it is the last link in the chain, so there is nothing for compose to
-# hold back. And what a useful check would ask is not "is the process alive", which Docker
-# already knows from the process exiting, but "did a cycle finish in the last fifteen
-# minutes" - which needs the engine to publish that somewhere. It will, in stage 7.
+# The healthcheck reads a heartbeat rather than asking a port: the engine is a Worker with no
+# inbound surface, and giving it one for this would be its first. The trading loop writes a deadline
+# in Unix seconds to this file at every step of a cycle, after every quote and before it sleeps; the
+# check is healthy while that deadline is in the future. The deadline is the cycle interval plus
+# twice the longest agent call, worked out by the engine from its own settings, so nothing here has
+# to change when they do. See Hosting/Telemetry/CycleHeartbeat.cs.
+#
+# Healthy means the loop is making progress, not that the agent service or the database is up: the
+# loop survives both being down and says so in the log. What it catches is a loop that has hung, or
+# a worker that has died while the process lives on - which Docker cannot see, because the process
+# has not exited.
+#
+# The grace before the first cycle is two things. The first cycle starts with the worker, and its
+# first act is a beat that lasts a whole deadline - so an engine whose first analysis is slow, or
+# never answers, is healthy. The seconds before that - configuration, the schema check - are the
+# start period: a failing check inside it does not count, and the first passing one ends it. A
+# heartbeat left over from this container's previous run is deleted before anything else at startup,
+# so a restart into a crash is never healthy on the strength of the run before. `cat` failing reads
+# as 0, which is unhealthy.
+ENV Health__HeartbeatFile=/tmp/engine.heartbeat
+HEALTHCHECK --interval=30s --timeout=5s --start-period=2m --retries=3 \
+    CMD ["/bin/sh", "-c", "test \"$(cat \"$Health__HeartbeatFile\" 2>/dev/null || echo 0)\" -gt \"$(date +%s)\""]
 
 ENTRYPOINT ["dotnet", "engine.dll"]
 

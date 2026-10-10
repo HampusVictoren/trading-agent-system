@@ -40,6 +40,11 @@ public static class EngineOptionsExtensions
             .ValidateDataAnnotations()
             .ValidateOnStart();
 
+        // Not validated: the one setting is optional, and a heartbeat that cannot be written is
+        // reported by CycleHeartbeat rather than refused here - it is not a reason to stop trading.
+        services.AddOptions<HealthOptions>()
+            .Bind(configuration.GetSection(HealthOptions.SectionName));
+
         return services;
     }
 }

@@ -3,6 +3,7 @@ using Engine.Domain.Outcomes;
 using Engine.Domain.Risk;
 using Engine.Hosting;
 using Engine.Hosting.Options;
+using Engine.Hosting.Telemetry;
 using Engine.Hosting.Workers;
 using Microsoft.Extensions.Options;
 using Polly.Telemetry;
@@ -13,6 +14,10 @@ var builder = Host.CreateApplicationBuilder(args);
 // lives in the user secrets store, outside the repository; in a container it comes from
 // the environment, where this line is simply a no-op because the store is not there.
 builder.Configuration.AddUserSecrets<Program>(optional: true);
+
+// Before anything else that could fail: a heartbeat left by this container's previous run must
+// not report a process healthy that has not yet written one of its own.
+CycleHeartbeat.ClearLeftovers(builder.Configuration);
 
 builder.Services.AddEngineOptions(builder.Configuration);
 
@@ -33,6 +38,13 @@ builder.Services.AddSingleton<OutcomeCalculator>();
 // Injected rather than read from DateTimeOffset.UtcNow, so the quote-age rule is testable
 // without waiting for time to pass.
 builder.Services.AddSingleton(TimeProvider.System);
+
+// The engine's own metrics and the cycle's ActivitySource. Always registered and always
+// recorded, because both cost next to nothing when nobody listens.
+builder.Services.AddEngineTelemetry();
+
+// And whether anything leaves the process: only when OTEL_EXPORTER_OTLP_ENDPOINT is set.
+builder.Services.AddTelemetryExport(builder.Configuration);
 
 builder.Services.AddAgentClient();
 builder.Services.AddTradingDatabase();
@@ -57,6 +69,11 @@ builder.Services.AddHostedService<TradingWorker>();
 builder.Services.AddHostedService<MeasurementWorker>();
 
 var host = builder.Build();
+
+// Once, at startup, in the same place the mode is said: whether this engine's metrics and
+// traces go anywhere is the first thing to check when a dashboard is empty.
+host.Services.GetRequiredService<ILogger<Program>>().LogInformation(
+    "Telemetry is {Export}.", host.Services.GetRequiredService<TelemetryExport>().Description);
 
 // Before anything runs a cycle: the engine never migrates itself, but it will not start
 // against a database that is behind this build.

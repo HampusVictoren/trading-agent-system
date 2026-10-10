@@ -111,5 +111,17 @@ public sealed class TradingOptions
     [Required]
     public TradingMode? Mode { get; init; }
 
+    /// <summary>
+    /// The mode the engine runs in: <see cref="Mode"/>, or <see cref="TradingMode.Shadow"/> when it
+    /// is missing. The one place that fallback lives - the order gate, the logs, the cycle's trace
+    /// and the decision counter all read this, so they cannot disagree about a missing mode.
+    /// </summary>
+    /// <remarks>
+    /// Validation at startup makes a missing mode unreachable in a running engine; the fallback is
+    /// for anything that constructs the options by hand, and it goes the safe way because the other
+    /// direction places orders.
+    /// </remarks>
+    public TradingMode EffectiveMode => Mode ?? TradingMode.Shadow;
+
     public TimeSpan CycleInterval => TimeSpan.FromMinutes(CycleIntervalMinutes);
 }

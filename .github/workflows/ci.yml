@@ -382,6 +382,28 @@ jobs:
           started || { echo "the engine never logged 'Application started'"; exit 1; }
           test "$(docker inspect -f "{{.State.Status}}" "$(docker compose ps -aq engine)")" = "running"
 
+      # The image's HEALTHCHECK reads the heartbeat the trading loop writes, and this is the check
+      # that it does: healthy with no LLM on the runner, so every cycle's analyses fail, because
+      # healthy means the loop is making progress rather than that its answers are good. The check
+      # runs every 30 s and the first pass ends the start period, so a minute or so is normal; three
+      # is the ceiling. "unhealthy" fails at once rather than waiting.
+      - name: The engine's heartbeat makes it healthy
+        if: github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          health() { docker inspect -f "{{.State.Health.Status}}" "$(docker compose ps -aq engine)"; }
+          for _ in $(seq 1 90); do
+            case "$(health)" in
+              healthy) break ;;
+              unhealthy) echo "the engine is unhealthy"; break ;;
+            esac
+            sleep 2
+          done
+          test "$(health)" = "healthy" || { echo "the engine is $(health)"; exit 1; }
+          deadline=$(docker compose exec -T engine cat /tmp/engine.heartbeat)
+          test "$deadline" -gt "$(date +%s)"
+          echo "healthy, with a heartbeat good for $(( deadline - $(date +%s) )) s"
+
       - name: What the system said, for whoever reads a failed run
         if: always() && github.event_name != 'pull_request'
         run: docker compose --profile trade logs --tail 40 || true

@@ -176,7 +176,7 @@ public class ProcessProposalUseCaseTests
             Mode = mode
         });
 
-        var quotes = new QuoteReader(client, inForce, NullLogger<QuoteReader>.Instance);
+        var quotes = new QuoteReader(client, inForce, NoCycleProgress.Instance, NullLogger<QuoteReader>.Instance);
 
         return (
             new ProcessProposalUseCase(
@@ -588,8 +588,11 @@ public class ProcessProposalUseCaseTests
 
             var result = await Run(sut, portfolio);
 
-            result.ShouldBeOfType<TradeDecisionResult.RejectedByRisk>()
-                .Reason.ShouldContain("minimum holding period");
+            var rejected = result.ShouldBeOfType<TradeDecisionResult.RejectedByRisk>();
+            rejected.Reason.ShouldContain("minimum holding period");
+
+            // Carried for risk_rejections_total, which counts refused sales apart from refused buys.
+            rejected.Side.ShouldBe(OrderSide.Sell);
 
             portfolio.Positions.ShouldHaveSingleItem().Quantity.ShouldBe(10m);
         }
@@ -753,8 +756,9 @@ public class ProcessProposalUseCaseTests
 
             var result = await Run(Build(Signal(quoteAsOf: stale)).Sut, NewPortfolio());
 
-            result.ShouldBeOfType<TradeDecisionResult.RejectedByRisk>()
-                .Reason.ShouldContain("old");
+            var rejected = result.ShouldBeOfType<TradeDecisionResult.RejectedByRisk>();
+            rejected.Reason.ShouldContain("old");
+            rejected.Side.ShouldBe(OrderSide.Buy);
         }
 
         [Fact]

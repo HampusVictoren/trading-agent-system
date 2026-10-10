@@ -1,0 +1,24 @@
+namespace Engine.Hosting.Telemetry;
+
+using Engine.Application.Interfaces;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+
+public static class EngineTelemetryExtensions
+{
+    /// <summary>
+    /// The engine's instruments and its heartbeat, and nothing that exports them. Idempotent,
+    /// because both <c>Program.cs</c> and <see cref="AgentClientExtensions.AddAgentClient"/> need
+    /// them and neither should have to know whether the other ran first.
+    /// </summary>
+    public static IServiceCollection AddEngineTelemetry(this IServiceCollection services)
+    {
+        services.AddMetrics();
+        services.TryAddSingleton(TimeProvider.System);
+        services.TryAddSingleton<EngineTelemetry>();
+        services.TryAddTransient<AgentLatencyHandler>();
+        services.TryAddSingleton<CycleHeartbeat>();
+        services.TryAddSingleton<ICycleProgress>(sp => sp.GetRequiredService<CycleHeartbeat>());
+
+        return services;
+    }
+}

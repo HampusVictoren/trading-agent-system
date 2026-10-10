@@ -51,7 +51,7 @@ public class AnalysisDueCheckTests
         client.GetQuoteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(quote);
 
-        var quotes = new QuoteReader(client, Policy, NullLogger<QuoteReader>.Instance);
+        var quotes = new QuoteReader(client, Policy, NoCycleProgress.Instance, NullLogger<QuoteReader>.Instance);
 
         return (new AnalysisDueCheck(decisions, quotes), client);
     }
