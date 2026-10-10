@@ -170,6 +170,16 @@ services:
       # export to it (OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318, and for the engine
       # OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf). OTLP/HTTP only; gRPC is not opened.
       - "127.0.0.1:${OTLP_HTTP_PORT:-4318}:4318"
+    # The debug exporter writes every span and every metric export to stdout, at the detailed
+    # verbosity the trace check needs (it reads parent ids), and the service restarts unless
+    # stopped - so without a cap its log would grow for as long as the stack runs. Three files of
+    # 10 MB keep hours of a running engine's telemetry, which is what reading a recent trace
+    # needs; anything older belongs in a backend, which this is not.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
 
   engine:

@@ -262,6 +262,8 @@ configuration.
   exporter (`otel/collector.yaml`): it prints what it receives and keeps nothing, because where
   traces are stored, for how long and for whom is a decision of its own. It is published on
   127.0.0.1 only, nothing depends on it, and it has no healthcheck (the image is distroless).
+  Its log is capped at three files of 10 MB, because the debug exporter prints every span at
+  detailed verbosity and the service restarts unless stopped.
   Both services export to it by default; an empty `OTEL_EXPORTER_OTLP_ENDPOINT=` or
   `OTEL_SDK_DISABLED=true` in the root `.env` turns that off.
 - **Each schema is applied by a container of its own**, and whatever needs it waits on
