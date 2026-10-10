@@ -41,6 +41,7 @@ cd src/agents && uv run python -m app.openapi_snapshot > ../../contracts/openapi
 # from a clean volume - runs on master and nightly, because it builds four images.
 docker compose config --quiet
 docker compose --profile trade config --services
+# ...and every published port is on 127.0.0.1 (a python one-liner over `config --format json`)
 ```
 
 **CI has seven jobs:** `Engine (.NET)`, `Agents (Python)`, `Agents (image)`,
@@ -48,7 +49,9 @@ docker compose --profile trade config --services
 purpose, so a new CVE in an untouched transitive dependency does not stop unrelated work;
 everything else fails the run. `Compose` validates the compose file on every pull request and
 brings the whole system up on master, nightly and by dispatch - including the engine, which it
-waits on until its heartbeat makes it healthy - and the nightly trigger exists for it, because
+waits on until its heartbeat makes it healthy, and then reads the collector's output until one
+engine cycle and the agents' work are found in one trace (stage 7's own check, through
+`otel/check_one_trace.py`) - and the nightly trigger exists for it, because
 it is the only check that starts the system and therefore the only one that would notice a
 base image moving or a published port being taken on a day when nothing was pushed.
 
@@ -102,7 +105,7 @@ one of them goes red.
 ```bash
 # The system. Compose owns every container, trading-db included. Needs .env in the repo root
 # (see .env.example); compose reads that file itself and never hands it to a container.
-docker compose up -d                      # database, both schemas, agent service on :8000
+docker compose up -d                      # database, both schemas, agent service on :8000, collector
 docker compose --profile trade up -d      # and the engine, which places orders
 docker compose logs -f engine             # what a cycle did
 docker compose down                       # stop; the volume and its decisions stay
@@ -117,12 +120,17 @@ docker exec -it trading-db psql -U postgres -d tradingdb -c "INSERT INTO trading
 docker exec -it trading-db psql -U postgres -d tradingdb -c "INSERT INTO trading.kill_switch (engaged, reason) VALUES (false, '<why>')"
 docker exec -it trading-db psql -U postgres -d tradingdb -c "SELECT * FROM trading.kill_switch ORDER BY id DESC LIMIT 5"
 
-# The engine's health and telemetry. Healthy means the trading loop is making progress; the
-# heartbeat holds the Unix second after which it would not be. Metrics and traces leave the
-# process only when OTEL_EXPORTER_OTLP_ENDPOINT is set (root .env under compose); without it
-# the counters can still be read live, with dotnet-counters installed as a global tool.
+# Health and telemetry. Healthy means the engine's trading loop is making progress; the
+# heartbeat holds the Unix second after which it would not be. Under compose both services send
+# telemetry to the otel-collector service, which prints it and keeps nothing (there is no
+# backend yet): the engine its metrics and its cycle traces, the agent service its traces. Off
+# with OTEL_EXPORTER_OTLP_ENDPOINT= or OTEL_SDK_DISABLED=true in the root .env. Logs are never
+# exported; they stay on stdout. A host-run engine's counters can also be read live, with
+# dotnet-counters installed as a global tool.
 docker compose ps engine                                  # (healthy) once a cycle has begun
 docker compose exec engine cat /tmp/engine.heartbeat      # the deadline, in Unix seconds
+docker compose logs otel-collector                        # every span and metric, as received
+docker compose logs --no-log-prefix otel-collector | python3 otel/check_one_trace.py  # a cycle's trace, engine to agents
 dotnet-counters monitor --counters Engine -n engine       # a host-run engine's own counters
 
 # Python agent service — run from src/agents (Python 3.12, managed with uv)
@@ -237,7 +245,7 @@ docker run --rm tas-engine-migrate --version
   off the migration files rather than holding it, because this file and the worklog have both
   had it wrong.
 
-**`docker-compose.yml` is the whole system**, and two things in it are decisions rather than
+**`docker-compose.yml` is the whole system**, and three things in it are decisions rather than
 configuration.
 
 - **The engine is behind a profile.** `docker compose up -d` brings up the database, both
@@ -249,6 +257,13 @@ configuration.
   until #63 has merged: lifting D2 is decided (Hampus, 2026-10-09) and is its own follow-up PR. Both migration steps run **by default**,
   because a provisioned database is not trading: after a plain `up` the schemas are current and
   a host-run engine can point at the same database.
+- **The collector is minimal on purpose** (stage 7). `otel-collector` is the core image pinned
+  by version and digest, with one OTLP/HTTP receiver, the batch processor and the debug
+  exporter (`otel/collector.yaml`): it prints what it receives and keeps nothing, because where
+  traces are stored, for how long and for whom is a decision of its own. It is published on
+  127.0.0.1 only, nothing depends on it, and it has no healthcheck (the image is distroless).
+  Both services export to it by default; an empty `OTEL_EXPORTER_OTLP_ENDPOINT=` or
+  `OTEL_SDK_DISABLED=true` in the root `.env` turns that off.
 - **Each schema is applied by a container of its own**, and whatever needs it waits on
   `service_completed_successfully` rather than on a port. Neither service can migrate its own
   schema from inside itself - already true of the engine, which refuses to - and these two
@@ -285,13 +300,17 @@ about four minutes for a first full cycle - screen, account opened, ten analyses
 
 **Everything is prefixed `TAS_`** because `OPENAI_API_KEY` is what openai's own SDK reads, and a shell value beats `.env` - without the prefix, a real cloud key in your shell would quietly become this service's.
 
+**The one exception is tracing**, which reads the standard OpenTelemetry variables from the process environment (not from `src/agents/.env`), because they are the names every SDK reads and the engine gets the same values: `OTEL_EXPORTER_OTLP_ENDPOINT` (unset or blank: nothing is built at all), `OTEL_SDK_DISABLED` (`true` turns it off whatever the endpoint says), `OTEL_EXPORTER_OTLP_PROTOCOL` (only `http/protobuf`; `grpc` is reported and ignored, since it would pull grpcio into the image), `OTEL_SERVICE_NAME` (default `agents`) and `OTEL_EXPORTER_OTLP_TIMEOUT` (default 3 s). The per-signal endpoints are not supported: setting one turns tracing off with a line saying to use the general one. A setting it cannot use is logged and ignored, never a refusal to start. The startup line `Tracing is ...` says which, with the endpoint cut to scheme, host and port. See `app/observability/tracing.py`.
+
 **Shared resources are built once**, in the FastAPI `lifespan` in `app/main.py`: the `httpx2` client, the `AsyncOpenAI` embeddings client, one AG2 model configuration per role, an `asyncpg` pool, and the whole `SignalPipeline` - every team validated, every prompt file read, every `team_version` hashed and every agent constructed. They reach a route as `Resources` through `app/dependencies.py`. Nothing creates a client at import time, so no client is bound to the wrong event loop. The pool opens a connection at startup, which means **`docker compose up -d` has to have run before `uvicorn`**.
 
 **Every route requires `X-Api-Key`**, compared with `hmac.compare_digest` so the comparison takes the same time whichever byte differs first. The dependency sits on the **router**, not on the routes, so a route added later is closed by default; per-route scopes then narrow which key may call which door. A missing key, a wrong key and a key without the scope all answer 401 `unauthorized`, saying nothing about which it was. `POST /v1/outcomes` needs its HMAC signature on top. `/health` and `/ready` are defined outside the router and stay open, because a load balancer has to be able to ask whether the service is up.
 
+**Every request can continue the engine's trace** (stage 7). With tracing on, `TraceContextMiddleware` (`app/observability/trace_context.py`) reads the request's W3C `traceparent` - nothing else, no `tracestate` and no baggage - and opens the request's server span as the engine's call's child, current for the whole request, named by the route template and carrying the method, path, status and correlation id. Each AG2 agent gets AG2's `TelemetryMiddleware` writing to the same provider, so its `invoke_agent` and `chat` spans nest inside the server span and **an engine cycle and the agents' work are one trace**. `/health` and `/ready` are not traced. **No prompt, fact sheet, thesis or answer ever leaves the process**: the middleware runs with `capture_content=False`, which is a constant and not a setting, and every span then passes `ContentFreeExporter`, an allowlist of attributes that also cuts exception events to their type and statuses to their code - because AG2 records `str(exc)` as a status even without content capture, and a pydantic error quotes the answer it refused. The global tracer provider is never set, so no library traces by accident. Middleware is not part of `team_version`. `tests/test_one_trace.py` proves the chain in process and with marker text in every fact and answer; CI proves it across the containers.
+
 **Every request carries a correlation id.** `CorrelationIdMiddleware` reads `X-Correlation-Id`, or invents one, echoes it on the response and puts it in every log line. Logs are JSON, configured in the lifespan, so uvicorn's own lines are formatted too - except the two banner lines it prints before startup. `/health` is liveness and checks nothing else on purpose; `/ready` checks the database and the LLM backend and answers 503 until both do, with the dependency names in the body only when `TAS_READY_DETAIL` is set.
 
-The engine reads `AgentService:BaseUrl`, `RequestTimeoutSeconds`, `RiskPolicy` and `Trading` (including `OpeningBalance`, the balance the account is opened with on the very first cycle) from `appsettings.json`, all validated at startup. It also **refuses to start when the database is behind the build**, naming the pending migrations and the command that applies them - and it never migrates itself, because applying at startup would move the schema before anyone could decide to. That check is its first connection, so an unreachable database fails there too. `Trading` holds `Mode` (required: `Shadow`, the shipped default, or `Paper`; `Live` is refused, and compose sets it from `TRADING_MODE`), `Universe` (31 OMXS30 symbols), `ShortlistSize`, `MinDollarVolume`, `CycleIntervalMinutes` and `TeamId`; `TradingOptionsValidator` refuses a universe entry that is not a ticker, or one named twice. `Health:HeartbeatFile` is optional and unset in `appsettings.json`; the image sets it. **`OTEL_EXPORTER_OTLP_ENDPOINT`** (with the SDK's protocol, headers, timeout and service-name variables) decides whether metrics and traces are exported: unset or empty registers no exporter at all, `OTEL_SDK_DISABLED=true` turns it off whatever the endpoint says, and the per-signal endpoints (`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` and the like) are not supported - setting one turns export off and the log says to use the general endpoint instead, and a value the exporter cannot use is logged and ignored rather than refused, because telemetry is no reason to stop the process whose exits close losing positions. Startup logs one line saying which, with the endpoint cut to scheme, host and port. **`AgentService:ApiKey`, `AgentService:OutcomesHmacSecret` and `Database:ConnectionString` are not there**, because all three are secrets: locally they live in the user secrets store, outside the repository, and elsewhere they come from the environment. `AgentService:SignalsApiKey`, `ScreenApiKey`, `OutcomesApiKey` and `MarketApiKey` are optional scoped overrides in the same store, and `ApiKeyFor(scope)` falls back to `ApiKey` for any scope without one. Neither has a default - an engine that cannot reach its database refuses to start, because from stage 4 a cycle it cannot store is a cycle whose evidence is lost.
+The engine reads `AgentService:BaseUrl`, `RequestTimeoutSeconds`, `RiskPolicy` and `Trading` (including `OpeningBalance`, the balance the account is opened with on the very first cycle) from `appsettings.json`, all validated at startup. It also **refuses to start when the database is behind the build**, naming the pending migrations and the command that applies them - and it never migrates itself, because applying at startup would move the schema before anyone could decide to. That check is its first connection, so an unreachable database fails there too. `Trading` holds `Mode` (required: `Shadow`, the shipped default, or `Paper`; `Live` is refused, and compose sets it from `TRADING_MODE`), `Universe` (31 OMXS30 symbols), `ShortlistSize`, `MinDollarVolume`, `CycleIntervalMinutes` and `TeamId`; `TradingOptionsValidator` refuses a universe entry that is not a ticker, or one named twice. `Health:HeartbeatFile` is optional and unset in `appsettings.json`; the image sets it. **`OTEL_EXPORTER_OTLP_ENDPOINT`** (with the SDK's protocol, headers, timeout and service-name variables) decides whether metrics and traces are exported: unset or empty registers no exporter at all, `OTEL_SDK_DISABLED=true` turns it off whatever the endpoint says, and the per-signal endpoints (`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` and the like) are not supported - setting one turns export off and the log says to use the general endpoint instead, and a value the exporter cannot use is logged and ignored rather than refused (compose points it at the `otel-collector` service with `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf`, the protocol the agent service speaks, so one port takes both), because telemetry is no reason to stop the process whose exits close losing positions. Startup logs one line saying which, with the endpoint cut to scheme, host and port. **`AgentService:ApiKey`, `AgentService:OutcomesHmacSecret` and `Database:ConnectionString` are not there**, because all three are secrets: locally they live in the user secrets store, outside the repository, and elsewhere they come from the environment. `AgentService:SignalsApiKey`, `ScreenApiKey`, `OutcomesApiKey` and `MarketApiKey` are optional scoped overrides in the same store, and `ApiKeyFor(scope)` falls back to `ApiKey` for any scope without one. Neither has a default - an engine that cannot reach its database refuses to start, because from stage 4 a cycle it cannot store is a cycle whose evidence is lost.
 
 ```bash
 # Both sides need the same value. Generate one, then give it to each:
@@ -383,7 +402,7 @@ idempotent on the other side.
    - **The selection**, through `SelectShortlistUseCase`. `POST /v1/screen` ranks `Trading:Universe` (31 OMXS30 names) with no LLM call and returns the best `Trading:ShortlistSize` (10); the result is stored in `trading.shortlists` and **read back on every later cycle that day**, because the factors come from daily bars so two screens on one day rank identically. `CycleSelection` then makes the cycle **everything the portfolio holds, plus that shortlist** - holdings first, by symbol, so a sale frees cash before a buy is sized, and a held instrument that was also ranked appears once, as a holding.
    - **One analysis per selected instrument**, each in a scope of its own, through `ProcessProposalUseCase`. First `AnalysisDueCheck` asks whether it is worth three LLM calls: `FactSheetChange` skips an instrument that was already analysed today, or whose price is where the last analysis left it. Together that is **at most one analysis per instrument per trading day, and none on a day that is not one** - a market that is shut cannot move a price, so the engine waits for the open without a calendar. The gate sits above the use case because that use case records every cycle it runs, so a skip decided inside it would write a row.
 
-   **One cycle is one trace.** The cycle is the root activity on the `Engine` ActivitySource, with the exits, the selection and each analysis as child spans, and HttpClient writes it into a W3C `traceparent` header on every call to the agent service - so the agent service can continue the same trace (stage 7, PR 3). Spans carry closed sets plus the ticker and the correlation id, never anything the agents wrote; a failure records the exception's type, not its message. The `Engine` meter has `decisions_total{outcome,mode}` and `risk_rejections_total{mode,side}`, both recorded after the commit, and `agent_latency_seconds{operation,outcome}`, timed outside the resilience handler so a retried call is one measurement. Exported over OTLP only when an endpoint is configured (see the configuration paragraph above); logs are not exported, they stay on stdout.
+   **One cycle is one trace.** The cycle is the root activity on the `Engine` ActivitySource, with the exits, the selection and each analysis as child spans, and HttpClient writes it into a W3C `traceparent` header on every call to the agent service, which continues it: its server span is the engine call's child and the agents' spans are inside that, so a cycle is one trace across both services (see *Every request can continue the engine's trace* above). Spans carry closed sets plus the ticker and the correlation id, never anything the agents wrote; a failure records the exception's type, not its message. The `Engine` meter has `decisions_total{outcome,mode}` and `risk_rejections_total{mode,side}`, both recorded after the commit, and `agent_latency_seconds{operation,outcome}`, timed outside the resilience handler so a retried call is one measurement. Exported over OTLP only when an endpoint is configured (see the configuration paragraph above) - under compose, to the `otel-collector` service over OTLP/HTTP; logs are not exported by either service, they stay on stdout.
 
    The account is opened at `Trading:OpeningBalance` only when nothing is stored. A correlation id is generated and logged before each call, and every outcome is logged *after* the commit, so a line in the log means a row in the database. A failed commit is an error line and the loop carries on: a buy is in the same transaction as its decision, so nothing was traded. One summary line per cycle names what was analysed and what was skipped, because fourteen of fifteen cycles now do nothing and silence would otherwise mean both "nothing changed" and "the worker stopped".
 2. `PythonAgentClient` posts a `TradeSignalRequestDto` to `POST /v1/signals`. Before sizing a buy, it also asks `GET /v1/quotes/{symbol}` for every *other* holding, carrying the same correlation id; the analysed instrument's price always comes from the signal, so an order is never sized against a quote the agents never saw. A **sale** needs no valuation and makes no quote call at all, which is what keeps a holding the engine cannot price from standing between the agents and a position they have argued should be closed. The instrument travels in the body as a typed object, so nothing is interpolated into a path. The correlation id goes on the `X-Correlation-Id` header, taken from the body so the two cannot disagree. Every call carries `X-Api-Key` **per request** rather than once on the client, so each endpoint can present its own scoped key - see *Configuration*.
