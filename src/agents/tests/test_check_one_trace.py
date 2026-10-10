@@ -107,3 +107,35 @@ def test_spans_from_any_other_service_fail_at_once(monkeypatch, capsys):
 
     assert check.main() == 2
     assert "unknown_service:python" in capsys.readouterr().out
+
+
+def nameless(spans: str) -> str:
+    """A resource with no service.name, as an SDK configured without one would send."""
+    return f"""ResourceSpans #0
+Resource attributes:
+     -> telemetry.sdk.language: Str(python)
+ScopeSpans #0
+{spans}"""
+
+
+def test_a_resource_without_a_service_name_does_not_inherit_the_one_before():
+    spans = check.parse(AGENTS + nameless(span(0, "GET", "f000000000000001", kind="Server")))
+
+    assert [s.service for s in spans] == ["agents", "agents", ""]
+
+
+def test_the_first_resource_of_a_batch_is_found_behind_the_log_prefix():
+    # The collector prints "<time>\tinfo\tResourceSpans #0" on one line.
+    prefixed = "2026-10-10T18:38:56.399Z\tinfo\t" + nameless(span(0, "GET", "f000000000000001"))
+
+    assert [s.service for s in check.parse(ENGINE + prefixed)][-1] == ""
+
+
+def test_a_nameless_sender_fails_at_once(monkeypatch, capsys):
+    import io
+
+    stranger = nameless(span(0, "GET", "f000000000000001", kind="Server"))
+    monkeypatch.setattr("sys.stdin", io.StringIO(AGENTS + ENGINE + stranger))
+
+    assert check.main() == 2
+    assert "(no service.name)" in capsys.readouterr().out

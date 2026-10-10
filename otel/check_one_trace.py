@@ -5,7 +5,8 @@ agent chain. The collector in compose prints every span it receives (otel/collec
 this reads that output and looks for an agent-service server span whose ancestry, followed
 parent by parent, runs through the engine's spans to the root of the engine's cycle,
 `trading.cycle`, all in one trace id. It prints that chain and every span of the trace by
-service, and exits 1 if there is no such chain yet.
+service, and exits 1 if there is no such chain yet - or 2, at once, if any span came from a
+service other than the engine and the agents.
 
     docker compose logs --no-log-prefix otel-collector | python3 otel/check_one_trace.py
 
@@ -35,17 +36,30 @@ class Span:
     kind: str = ""
 
 
+# The first resource of each batch shares its line with the collector's log prefix
+# ("<time>\tinfo\tResourceSpans #0"), so the header is searched for, not matched at the start.
+_RESOURCE = re.compile(r"\bResource(Spans|Metrics) #\d+")
+
+
 def parse(text: str) -> list[Span]:
+    """Every span in the output, each with the service.name of its resource.
+
+    A resource that names no service gives its spans "" - never the name of the
+    resource before it, which would pass a nameless sender off as a known one.
+    """
     spans: list[Span] = []
     service = ""
     in_resource = False
     current: Span | None = None
     for line in text.splitlines():
         stripped = line.strip()
+        if _RESOURCE.search(line):
+            service, in_resource, current = "", False, None
+            continue
         if stripped.startswith("Resource attributes:"):
             in_resource = True
             continue
-        if stripped.startswith(("ScopeSpans #", "ScopeMetrics #", "ResourceSpans #")):
+        if stripped.startswith(("ScopeSpans #", "ScopeMetrics #")):
             in_resource = False
         if in_resource and (match := _SERVICE.match(line)):
             service = match.group(1)
@@ -100,9 +114,11 @@ def main() -> int:
     # Only the two services export spans, each through its own content-stripping setup. A span
     # from anything else - FastAPI's built-in telemetry once shipped as unknown_service:python -
     # is a tracer nobody configured, and no amount of waiting makes that right: exit 2, not 1.
+    # A resource without a service.name counts as a stranger too ("").
     strangers = sorted(set(services) - {ENGINE, AGENTS})
     if strangers:
-        print(f"spans from a service that should not export: {', '.join(strangers)}")
+        named = ", ".join(s or "(no service.name)" for s in strangers)
+        print(f"spans from a service that should not export: {named}")
         return 2
 
     chain = chain_to_cycle(spans)
