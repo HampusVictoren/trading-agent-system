@@ -1,12 +1,16 @@
+import asyncio
 import logging
-from collections.abc import AsyncIterator
+import os
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from typing import Annotated
 
 import asyncpg
 import httpx2
+from ag2.middleware.base import MiddlewareFactory
 from fastapi import Depends, FastAPI
 from fastapi.responses import JSONResponse
+from fastapi.telemetry import TelemetryConfig
 from openai import AsyncOpenAI
 from pgvector.asyncpg import register_vector
 
@@ -29,6 +33,8 @@ from app.infrastructure.market_data.yfinance_source import (
 )
 from app.observability.correlation import CorrelationIdMiddleware
 from app.observability.logging import configure_logging
+from app.observability.trace_context import TraceContextMiddleware, TracingSlot
+from app.observability.tracing import Tracing, configure_tracing
 from app.settings import DocsSwitch, Settings, get_settings
 
 logger = logging.getLogger(__name__)
@@ -37,6 +43,20 @@ logger = logging.getLogger(__name__)
 # hangs rather than refusing, so a database that is simply not running would hold startup
 # for a full minute and then raise a TimeoutError with no message.
 DATABASE_CONNECT_TIMEOUT_SECONDS = 10
+
+# FastAPI's own OpenTelemetry, switched off entirely. Since 0.142 it configures itself from the
+# same OTEL_EXPORTER_OTLP_ENDPOINT this service reads, the moment the SDK and the OTLP exporter
+# are importable - which ag2[tracing] makes them - and then installs *global* providers and
+# exports traces, metrics **and logs** with spans of its own that record the raw path and the
+# query string, outside ContentFreeExporter. That would undo both the log decision and the
+# content guard. This service's tracing is app/observability/tracing.py and nothing else.
+FASTAPI_TELEMETRY_OFF: TelemetryConfig = {
+    "auto_configure": False,
+    "tracing": False,
+    "metrics": False,
+    "logs": False,
+    "operation_spans": False,
+}
 
 # A readiness probe answers a load balancer, so it may not wait as long as a real call.
 READINESS_TIMEOUT_SECONDS = 5
@@ -85,6 +105,7 @@ def _build_pipeline(
     market: CachingMarketData,
     journal: PostgresJournal,
     memory: AnalysisMemory,
+    tracing: Tracing,
 ) -> SignalPipeline:
     """Every team, validated and ready, before the service reports itself up.
 
@@ -94,13 +115,19 @@ def _build_pipeline(
     """
     teams: dict[str, TeamRuntime] = {}
 
+    def middleware_for(role: str) -> Sequence[MiddlewareFactory]:
+        model = settings.llm.for_role(role)
+        return tracing.agent_middleware(
+            role, provider_name=model.provider.value, model_name=model.model
+        )
+
     for team_id, spec in TEAMS.items():
         prompts = load_prompts(spec)
         version = compute_team_version(spec, prompts, settings.llm)
         teams[team_id] = TeamRuntime(
             spec=spec,
             version=version,
-            runner=Ag2StepRunner(build_agents(spec, prompts, models)),
+            runner=Ag2StepRunner(build_agents(spec, prompts, models, middleware_for)),
         )
         logger.info("Team '%s' is version %s with steps %s", team_id, version, spec.roles)
 
@@ -141,6 +168,32 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     _warn_if_bound_broadly(settings)
 
+    # The standard OTEL_* variables, read from the process environment rather than through
+    # Settings: they are the names every OpenTelemetry SDK reads - the engine's included - so
+    # one value in compose serves both services. The one that can hold a credential,
+    # OTEL_EXPORTER_OTLP_HEADERS, is read by the exporter itself and never logged here. See
+    # app/observability/tracing.py.
+    slot: TracingSlot = app.state.tracing_slot
+    tracing = slot.preset or configure_tracing(os.environ)
+    logger.info("Tracing is %s.", tracing.description)
+    slot.current = tracing
+    try:
+        async with _serve(app, settings, tracing):
+            yield
+    finally:
+        slot.current = None
+        # Only what this lifespan built; a preset belongs to whoever passed it in. In a worker
+        # thread, because the flush is a blocking HTTP call that can take the exporter's whole
+        # timeout against a collector that is gone, and on the event loop it would freeze
+        # every other shutdown step - and any request still draining - for that long.
+        if slot.preset is None:
+            await asyncio.to_thread(tracing.shutdown)
+
+
+@asynccontextmanager
+async def _serve(app: FastAPI, settings: Settings, tracing: Tracing) -> AsyncIterator[None]:
+    """Every resource the routes use, open for as long as the service is."""
+
     # trust_env=False forces the client to ignore any system proxy and connect straight to
     # 127.0.0.1. openai 3.x types http_client as httpx2.AsyncClient, which is what this is.
     async with httpx2.AsyncClient(trust_env=False) as http_client:
@@ -176,7 +229,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
             app.state.resources = Resources(
                 models=models,
-                pipeline=_build_pipeline(settings, models, market, PostgresJournal(pool), memory),
+                pipeline=_build_pipeline(
+                    settings, models, market, PostgresJournal(pool), memory, tracing
+                ),
                 market=market,
                 memory=memory,
                 outcomes=PostgresOutcomeStore(pool),
@@ -192,7 +247,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             yield
 
 
-def create_app(*, enable_docs: bool | None = None) -> FastAPI:
+def create_app(*, enable_docs: bool | None = None, tracing: Tracing | None = None) -> FastAPI:
     """Builds the service. Docs stay off unless explicitly enabled for local exploration.
 
     FastAPI registers /docs, /redoc and /openapi.json on the app itself, outside the
@@ -203,6 +258,8 @@ def create_app(*, enable_docs: bool | None = None) -> FastAPI:
 
     The flag controls the routes, not the document: create_app().openapi() returns the whole
     specification either way, which is what contracts/openapi.json is generated from.
+
+    `tracing` is for tests: the service decides its own from the environment at startup.
     """
     if enable_docs is None:
         enable_docs = DocsSwitch().enable_docs
@@ -215,7 +272,11 @@ def create_app(*, enable_docs: bool | None = None) -> FastAPI:
         docs_url="/docs" if enable_docs else None,
         redoc_url="/redoc" if enable_docs else None,
         openapi_url="/openapi.json" if enable_docs else None,
+        telemetry=FASTAPI_TELEMETRY_OFF,
     )
+    # Added first, so it runs inside CorrelationIdMiddleware and the span can carry the id.
+    application.state.tracing_slot = TracingSlot(preset=tracing)
+    application.add_middleware(TraceContextMiddleware, slot=application.state.tracing_slot)
     application.add_middleware(CorrelationIdMiddleware)
     register_error_handlers(application)
     application.include_router(router)

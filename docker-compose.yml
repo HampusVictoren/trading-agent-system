@@ -1,7 +1,7 @@
 # The whole system, on one host. Compose owns every container here - trading-db included, and
 # it is still never created by hand.
 #
-#   docker compose up -d                   # database, both schemas, agent service
+#   docker compose up -d                   # database, both schemas, agent service, collector
 #   docker compose --profile trade up -d   # and the engine, which places orders
 #
 # The split is deliberate. The engine is the only service here that spends money, and the
@@ -135,6 +135,15 @@ services:
       # Not TAS_BIND_HOST: the image sets 0.0.0.0, because a container's loopback reaches only
       # the container. Overriding it here would bind a socket the published port cannot find.
       TAS_ENVIRONMENT: ${TAS_ENVIRONMENT:-development}
+
+      # Traces, to the collector below, over OTLP/HTTP - the standard variables rather than
+      # TAS_ ones, because they are what every OpenTelemetry SDK reads and the engine gets the
+      # same values. `-` rather than `:-`, so OTEL_EXPORTER_OTLP_ENDPOINT= (set and empty) in
+      # the root .env turns export off instead of falling back to the collector; so does
+      # OTEL_SDK_DISABLED=true. No prompt, answer or fact sheet is ever on a span - see
+      # src/agents/app/observability/tracing.py. Logs are not exported; they stay on stdout.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT-http://otel-collector:4318}
+      OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-false}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
@@ -142,6 +151,35 @@ services:
       # the containerised agent service - which also means this collides with `uv run python
       # -m app` on the same port, and the collision is a clear error rather than a surprise.
       - "127.0.0.1:${AGENTS_PORT:-8000}:8000"
+    restart: unless-stopped
+
+  # Receives the engine's metrics and traces and the agent service's traces, and prints them:
+  # there is no backend yet, so `docker compose logs otel-collector` is where a trace is read.
+  # See otel/collector.yaml. Nothing depends on it - telemetry is not a reason for a service
+  # not to start - and it has no healthcheck, because the image is distroless and has no shell
+  # to run one in.
+  otel-collector:
+    # A version and the digest of that version's multi-arch index, so a re-pushed tag cannot
+    # change what runs. The core distribution rather than contrib: it has the OTLP receiver,
+    # the batch processor and the debug exporter, which is all this uses.
+    image: otel/opentelemetry-collector:0.162.0@sha256:310a800ad69ee430e7c541796852a242c9c7db97aaad4daa5ccf843c525fbdb2
+    volumes:
+      - ./otel/collector.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      # Loopback only, like everything else here, so a host-run engine or agent service can
+      # export to it (OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318, and for the engine
+      # OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf). OTLP/HTTP only; gRPC is not opened.
+      - "127.0.0.1:${OTLP_HTTP_PORT:-4318}:4318"
+    # The debug exporter writes every span and every metric export to stdout, at the detailed
+    # verbosity the trace check needs (it reads parent ids), and the service restarts unless
+    # stopped - so without a cap its log would grow for as long as the stack runs. Three files of
+    # 10 MB keep hours of a running engine's telemetry, which is what reading a recent trace
+    # needs; anything older belongs in a backend, which this is not.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
 
   engine:
@@ -173,11 +211,14 @@ services:
       # spelled out here so that the mode a container runs in is readable in this file. Paper
       # executes against the simulated portfolio; Live is refused at startup (there is no broker).
       Trading__Mode: ${TRADING_MODE:-Shadow}
-      # Where the engine's metrics and traces go, over OTLP. Empty unless the root .env sets it,
-      # and empty means nothing is exported and nothing retries: the engine registers no exporter
-      # at all. The collector that would receive them arrives with stage 7's next pull request.
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
-      # true turns export off without unsetting the endpoint above.
+      # Where the engine's metrics and traces go: the collector below, over OTLP/HTTP like the
+      # agent service's, so one collector port takes both and the engine's cycle trace and the
+      # agents' spans meet there. As for the agent service, OTEL_EXPORTER_OTLP_ENDPOINT= (set and
+      # empty) in the root .env turns export off - the engine then registers no exporter at all
+      # - and so does OTEL_SDK_DISABLED=true. Not a dependency: a collector that is down costs
+      # telemetry, never a cycle.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT-http://otel-collector:4318}
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-false}
     # The healthcheck is the image's own (src/engine/Dockerfile): the trading loop writes a
     # deadline to /tmp/engine.heartbeat at every step of a cycle and after every quote, and the

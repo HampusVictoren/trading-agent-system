@@ -7,10 +7,11 @@ reason, one service over.
 """
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 
 from ag2 import Agent
 from ag2.exceptions import AG2Error
+from ag2.middleware.base import MiddlewareFactory
 from openai import APIConnectionError, APIStatusError, APITimeoutError
 from pydantic import BaseModel, ValidationError
 
@@ -31,8 +32,15 @@ logger = logging.getLogger(__name__)
 SCHEMA_RETRIES = 2
 
 
+def _no_middleware(role: str) -> Sequence[MiddlewareFactory]:
+    return ()
+
+
 def build_agents(
-    spec: TeamSpec, prompts: Mapping[str, str], models: ModelConfigs
+    spec: TeamSpec,
+    prompts: Mapping[str, str],
+    models: ModelConfigs,
+    middleware_for: Callable[[str], Sequence[MiddlewareFactory]] = _no_middleware,
 ) -> dict[str, Agent]:
     """One agent per step, built once at startup.
 
@@ -44,6 +52,10 @@ def build_agents(
             step.role,
             prompt=prompts[step.role],
             config=models.for_role(step.role),
+            # Tracing, when it is on - see app/observability/tracing.py. Middleware changes how
+            # a turn is observed, not what the model is sent, so it is not part of the
+            # team_version.
+            middleware=middleware_for(step.role),
         )
         for step in spec.steps
     }
