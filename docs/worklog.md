@@ -7,10 +7,11 @@ A running record of what has been done, what was learned along the way, and what
 
 This file answers "where are we, how did we get here, and what is next". When resuming, read *Current state* and *Next steps* first, then the roadmap section for the next stage.
 
-**Last updated:** 2026-10-09. **Stage 6 is done**, with all five pull requests merged (#58-#62).
-**Stage 7 has started.** Its first pull request is `stage-7-trading-mode`, which adds
-`Trading:Mode` (Shadow by default) and a kill switch in `trading.kill_switch`. *Current state* and
-*Next steps* are current. The paragraphs directly below are the 2026-10-01 record of stage 5 and
+**Last updated:** 2026-10-10. **Stage 6 is done**, with all five pull requests merged (#58-#62).
+**Stage 7 is in progress**: PR 1 (`Trading:Mode` and the kill switch) is merged as #63, PR 2 (the
+engine's metrics, cycle trace and heartbeat) as #64, and PR 3 (`stage-7-agent-tracing`, the agent
+service's tracing and a collector in compose) is open as #65. *Current state* and *Next steps* are
+current. The paragraphs directly below are the 2026-10-01 record of stage 5 and
 are kept as they were written.
 
 **2026-10-01: Stage 5's fourth pull request is merged as #51, and verified
@@ -90,11 +91,11 @@ Two things that are easy to misread as broken:
 
 ## Current state
 
-- **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21, **stage 3 done** 2026-09-23. **Stage 4 started** 2026-09-23. PR 5 and PR 6 were each split in two, so the stage is eight pull requests, and **all eight are merged** as of 2026-09-25. **Stage 5 is merged in full** - #42 to #51, the shortlist edge as #54 and the daily deployment cap as #56. **Stage 6 is done**: all five PRs are merged (#58-#62). **Stage 7 is in progress**: PR 1 (`stage-7-trading-mode`) is merged as #63, and PR 2 (`stage-7-engine-telemetry`, the engine's metrics, the cycle trace and the heartbeat) is open. See the stage 7 log. Stage 8 exists only as a plan.
-- **`master` is at PR #63** (Trading:Mode and the kill switch, merged 2026-10-09), after #62 (the compose bring-up in CI). All five of stage 6's pull requests are on it, plus Dependabot's seven Python bumps as #57 - which merged *after* #58. Stage 4's eight pull requests and all five of stage 5's are on it, plus the live-run record as #53, the security hardening as #52 and the `CLAUDE.md` levelling as #55. **Which CI jobs block a merge is branch protection**, and three were added during stage 6 - `Agents (image)`, `Engine (image)` and `Compose`. This file has twice assumed the required list keeps up with the workflow; it does not, and nobody here can read that setting. Check it under *Settings - Branches*.
+- **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21, **stage 3 done** 2026-09-23. **Stage 4 started** 2026-09-23. PR 5 and PR 6 were each split in two, so the stage is eight pull requests, and **all eight are merged** as of 2026-09-25. **Stage 5 is merged in full** - #42 to #51, the shortlist edge as #54 and the daily deployment cap as #56. **Stage 6 is done**: all five PRs are merged (#58-#62). **Stage 7 is in progress**: PR 1 (`stage-7-trading-mode`) is merged as #63, PR 2 (`stage-7-engine-telemetry`, the engine's metrics, the cycle trace and the heartbeat) as #64, and PR 3 (`stage-7-agent-tracing`, the agent service's tracing and the collector) is open as #65. See the stage 7 log. Stage 8 exists only as a plan.
+- **`master` is at PR #64** (the engine's metrics, one trace per cycle and the heartbeat, merged 2026-10-10 as `9babe5f`), after #63 (Trading:Mode and the kill switch) and #62 (the compose bring-up in CI). All five of stage 6's pull requests are on it, plus Dependabot's seven Python bumps as #57 - which merged *after* #58. Stage 4's eight pull requests and all five of stage 5's are on it, plus the live-run record as #53, the security hardening as #52 and the `CLAUDE.md` levelling as #55. **Which CI jobs block a merge is branch protection**, and three were added during stage 6 - `Agents (image)`, `Engine (image)` and `Compose`. This file has twice assumed the required list keeps up with the workflow; it does not, and nobody here can read that setting. Check it under *Settings - Branches*.
 - **Dependabot's bumps are in.** #46 (setup-uv) and #47 (six Python packages) merged to `master` on 2026-09-26 and were merged *into* `stage-5-selling` rather than rebased onto, because the branch was already pushed and a rebase would need a force-push. Two of the six matter behaviourally - **ag2 1.0.5 to 1.0.6** and **openai 3.16.1 to 3.19.1** - and the lock also *downgraded* SQLAlchemy from 2.1.1 to 2.0.54, which the Alembic fixture exercises on every database test. 476 Python tests green on all of it.
 - **Stage 5's merge history:** `stage-5-model-and-horizon` as #42, `stage-5-screening` as #43, `stage-5-sek` as #44, `stage-5-symbol-columns` as #45 - the last of those repairing #44, which merged four of its six commits and left `master` with the widened pattern and the old columns for a few minutes - `stage-5-selling` as #48 and `stage-5-cycle` as #51.
-- **Two pull requests are open as of 2026-10-09:** stage 7's PR 2 (`stage-7-engine-telemetry`) and #50, `plan/jev-placement` - a docs-only branch adding `docs/arkitektur-jev-roadmap.md`, **not reviewed here, and left to the owner** - nothing in this repository's work merges, rebases or pushes to it. **Four** remote branches are stale and can go, all merged or superseded: `security/hardening-f01-f14` (the superseded first attempt at #52), `docs/pr4-live-run` (#53), `stage-5-shortlist-edge` (#54) and `stage-5-cycle` (#51). The previous version of this sentence said five and named `security/hardening-master-bdf5bf1`, which was deleted long ago - checked against `git ls-remote` this time, because the one thing the list promises is that deleting them is a reading exercise rather than a search.
+- **Two pull requests are open as of 2026-10-10:** stage 7's PR 3 (#65, `stage-7-agent-tracing`) and #50, `plan/jev-placement` - a docs-only branch adding `docs/arkitektur-jev-roadmap.md`, **not reviewed here, and left to the owner** - nothing in this repository's work merges, rebases or pushes to it. **Four** remote branches are stale and can go, all merged or superseded: `security/hardening-f01-f14` (the superseded first attempt at #52), `docs/pr4-live-run` (#53), `stage-5-shortlist-edge` (#54) and `stage-5-cycle` (#51). The previous version of this sentence said five and named `security/hardening-master-bdf5bf1`, which was deleted long ago - checked against `git ls-remote` this time, because the one thing the list promises is that deleting them is a reading exercise rather than a search.
 - **The security hardening is merged as #52 and verified live** on 2026-10-01: `POST /v1/outcomes` accepted its HMAC signature end to end (`Delivery 8097ab0f: sent 1 outcomes`), 25 market-scope calls answered 200, `/openapi.json` and `/docs` both answer 404, `/ready` returns `{"status":"ready"}` with no dependency detail, and an unauthenticated signal is refused with 401. Nothing was rate-limited. **Both of its required secrets had to be created first** - neither existed after the merge, so neither service would start.
 - **Two of its paths are not verified live:** `POST /v1/signals` and `POST /v1/screen` with their scope keys, because the verification ran on the same trading day as the live run, so no analysis was due and the shortlist was read from the database. All five call sites go through the same `AddApiKey`/`ApiKeyFor` code and no scoped keys are configured, so all five resolve to the legacy key that the 25 successful calls used - but the first new trading day is what proves it, and that is where the blocker found in review would have shown.
 - **The portfolio holds five instruments as of 2026-10-01**, up from one: ERIC-B.ST (26 at 94.96, from 2026-09-26) plus HEXA-B.ST (25 at 99.02), SEB-A.ST (10 at 229.20), EVO.ST (3 at 791.80) and KINV-B.ST (40 at 61.70), all four bought by the engine's own first screened cycle. Cash is 87 920.14 kr. Every one of the four is a *measurable* decision with `selection = Shortlist`, which is what stage 5 existed to produce.
@@ -121,7 +122,7 @@ Two things that are easy to misread as broken:
 
 ## Next steps
 
-### Resume here — stage 7, PR 2 of 6 (2026-10-09)
+### Resume here — stage 7, PR 3 of 6 (2026-10-10)
 
 > **After pulling master with #63 in it, do these two things on the machine that runs the
 > engine, before starting it again** (#63 was merged before they were done there):
@@ -135,8 +136,37 @@ Two things that are easy to misread as broken:
 >
 > Remove this note once both are done.
 
-Stage 7's PR 1 is merged as #63. **PR 2 is the branch in hand**: `stage-7-engine-telemetry`.
-Read the stage in the roadmap (*Etapp 7*) and the stage 7 log below before continuing.
+Stage 7's PR 1 is merged as #63 and PR 2 as #64. **PR 3 is the branch in hand**:
+`stage-7-agent-tracing`, open as #65 and not merged. Read the stage in the roadmap (*Etapp 7*)
+and the stage 7 log below before continuing.
+
+1. **`stage-7-agent-tracing`** makes an engine cycle and the agents' work **one trace**, which is
+   the stage's own check:
+   - the agent service continues the engine's `traceparent` in a server span, and each AG2
+     agent's `TelemetryMiddleware` writes its `invoke_agent` and `chat` spans inside it;
+   - **no prompt, fact sheet, thesis or answer reaches a span**: `capture_content=False` as a
+     constant, and an allowlisting exporter behind it that also drops exception messages;
+   - an **OpenTelemetry collector** in compose (core image, pinned by version and digest,
+     loopback-only, one OTLP/HTTP receiver, debug exporter, no backend), and both services
+     pointed at it by default;
+   - **logs stay on stdout** in both services - the decision Hampus deferred to this PR;
+   - the compose job proves the trace across both containers, and every PR now checks that
+     every published port is loopback-only.
+
+   **After this merges, a compose stack exports traces and the engine's metrics to the
+   collector**, which prints them and keeps nothing: `docker compose logs otel-collector`.
+   `OTEL_EXPORTER_OTLP_ENDPOINT=` (empty) or `OTEL_SDK_DISABLED=true` in the root `.env` turns
+   that off. No migration, no change to what is traded, and `team_version` does not move.
+2. **Next: PR 4, the engine leaves `--profile trade`** (decided by Hampus). Then PR 5, the
+   runbook. The open questions in #65's description - which backend keeps traces, and whether
+   export should be on by default under compose - wait for Hampus.
+
+Hampus's six answers from 2026-10-09 and his two on PR 2 still stand - see *Hampus's decisions*
+in the stage 7 log.
+
+### Resume here — stage 7, PR 2 of 6 (2026-10-09) (superseded)
+
+*Superseded when #64 merged. Its post-pull note moved to the top of PR 3's section above.*
 
 1. **`stage-7-engine-telemetry`** gives the engine three things, none of which changes what it
    trades:
@@ -161,8 +191,6 @@ Read the stage in the roadmap (*Etapp 7*) and the stage 7 log below before conti
    *Decisions taken by Hampus (2026-10-09)* in the PR 2 entry: **logs are not exported over
    OTLP in PR 2** (log export is decided with PR 3, when the collector arrives), and **the
    heartbeat does not go stale when the database is unreachable**. Nothing in PR 2 is open.
-
-Hampus's six answers from 2026-10-09 still stand - see *Hampus's decisions* in the stage 7 log.
 
 ### Resume here — stage 7, PR 1 of 6 (2026-10-09) (superseded)
 
@@ -2531,13 +2559,14 @@ Six, in this order:
 1. `TradingMode` and the kill switch.
 2. Engine metrics (`decisions_total{outcome,mode}`, `risk_rejections_total`,
    `agent_latency_seconds`), plus an `ActivitySource` per cycle so that `HttpClient` carries
-   `traceparent`, plus the cycle heartbeat and the engine's healthcheck. **In progress** as
-   `stage-7-engine-telemetry`, taken before PR 4 at Hampus's request.
+   `traceparent`, plus the cycle heartbeat and the engine's healthcheck. **Merged as #64**
+   (2026-10-10), taken before PR 4 at Hampus's request.
 3. Python tracing: `ag2[tracing]`, `TelemetryMiddleware`, `traceparent` extraction,
    `capture_content=False`, and a collector in compose. This is the PR the stage's check reads.
    **Also in scope: whether, and which, logs are exported over OTLP** (Hampus, 2026-10-09).
    The engine's lines carry risk reasons and the agents' stances, so it is decided with the
    collector that would receive them, for both services at once, not as a side effect of PR 2.
+   **Open as #65** (`stage-7-agent-tracing`), also taken before PR 4: logs are not exported.
 4. The engine leaves the profile (D2 lifted). **Decided by Hampus**, as its own PR after #63
    merges.
 5. `docs/runbook.md`: restarting, where the logs are, and how to stop trading (the kill switch),
@@ -2800,6 +2829,91 @@ is still behind its profile here.
     `OTEL_SDK_DISABLED` through. Ignoring either fails its tests (3 and 5).
   - Ragged comments rewrapped, including those the cycle's extraction left.
   - .NET after the review: 637/637.
+- **Merged as #64** on 2026-10-10 (`9babe5f`).
+
+### PR 3 - the agent service's tracing and a collector in compose (`stage-7-agent-tracing`)
+
+Started 2026-10-10, from `master` at #64, and opened as #65. Taken before PR 4, like PR 2, so
+the engine is still behind its profile. Not split: about 1 500 lines, of which roughly half are
+tests and the lock file, and the pieces only prove anything together.
+
+- **Dependencies.** `ag2[openai,tracing]` (which brings `opentelemetry-sdk`) and
+  `opentelemetry-exporter-otlp-proto-http`. HTTP rather than gRPC, because the gRPC exporter
+  brings grpcio for nothing else. The lock gains nine OpenTelemetry/protobuf packages and moves
+  `opentelemetry-api` by a patch; **ag2, openai, pydantic and pydantic-core do not move**, so
+  `team_version` cannot. Checked anyway, from compose's model settings before and after:
+  `default` `5926c629dcbe` and `default-memory` `b856e3edf611`, both unchanged.
+- **Export, only when asked** (`app/observability/tracing.py`), on the engine's rules and the
+  same standard variables: no endpoint means no provider at all; `OTEL_SDK_DISABLED=true` and
+  any per-signal endpoint turn it off; a URL or protocol it cannot use (anything but
+  `http/protobuf`) is logged and ignored. 3 s per export. *Found on the way:* the batch
+  processor's `export_timeout_millis` is accepted and **unused** by this SDK, and its shutdown
+  waits up to 30 s for an export in flight - so the exporter's own timeout is the only bound on a
+  stop. A first version set the unused knob and claimed it bounded shutdown; a deliberate break
+  that removed it changed nothing, which is how it was found. Against a refusing and a silent
+  collector, a stop takes about 3 s.
+- **One trace with the engine.** `TraceContextMiddleware` reads `traceparent` (nothing else:
+  no `tracestate`, no baggage) and opens the request's server span as the engine call's child,
+  current for the whole request; AG2's `TelemetryMiddleware` on each agent writes to the same
+  provider, so `invoke_agent` and `chat` nest inside it. `/health` and `/ready` are not traced.
+  The global provider is never set. Decided in the lifespan, from the process environment.
+- **No content in a span, twice over.** `capture_content=False` is a constant, not a setting.
+  Behind it, `ContentFreeExporter` keeps an allowlist of attributes, cuts exception events to
+  their type and statuses to their code - because AG2 sets `str(exc)` as a span's status even
+  with content capture off. The tests carry marker text in the fact sheet and in every answer;
+  marker text rather than a real thesis, since putting a thesis on a span was blocked by the
+  auto-reviewer in PR 2.
+- **The collector** (`otel/collector.yaml`): `otel/opentelemetry-collector:0.162.0` pinned to
+  its index digest, one OTLP/HTTP receiver, `batch`, the `debug` exporter for traces and
+  metrics, no logs pipeline and no backend. Published on `127.0.0.1:4318` only; not a
+  dependency of anything; no healthcheck, because the image is distroless. Both services point
+  at it by default (`${OTEL_EXPORTER_OTLP_ENDPOINT-...}`, so an explicitly empty value still
+  means off); the engine is told `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf`.
+- **Logs are not exported over OTLP, by either service** - the question Hampus deferred to this
+  PR, answered conservatively. The engine's lines carry the risk rules' reasons and the agents'
+  stances, and the agent service's carry exception text, which for a refused answer quotes the
+  model (`AgentResponseInvalid` includes the pydantic error). Exporting them would ship exactly
+  what the span guards exist to keep in. They stay on stdout and compose's log driver; the
+  collector has no logs pipeline, Python builds no `LoggerProvider`, and the engine still
+  registers no log exporter. Revisit with a backend that has retention and access rules.
+- **The proof.** In process, `tests/test_one_trace.py`: a request with the engine's
+  `traceparent` through the real route, pipeline and AG2 agents over a scripted model - every
+  span is in the engine's trace, the server span's remote parent is the engine's span, the three
+  agents are inside it in order and each model call inside its agent. Locally against the real
+  collector image: a stand-in engine span (`trading.cycle` > `trading.analysis` > `POST`) and
+  the agent service exporting over OTLP, read back by `otel/check_one_trace.py`, which printed
+  the chain `engine: trading.cycle` > `engine: trading.analysis` > `engine: POST` >
+  `agents: POST /v1/signals`, with three `invoke_agent` and three `chat` spans in the same
+  trace and no marker text anywhere in the collector's output. **Across both real containers**:
+  the compose job's new step, after the engine is healthy, polls the collector for the same
+  chain from the engine's real `trading.cycle`.
+- **CI.** Two steps in the existing `Compose` job, no new job: *Every published port is
+  loopback-only* on every pull request (making the collector's port `"4318:4318"` fails it,
+  naming the service), and *One engine cycle and the agents' work are one trace* outside pull
+  requests. The checker is standard library only and tested in the agents suite, including its
+  near misses.
+- *Deliberate breaks* (each restored, full Python suite each time):
+  - `capture_content` on: 1 test fails (the constant's own) - the exporter still strips
+    everything, which is the second guard working. Content capture on **and** the exporter
+    passing spans through: 4 fail, including both marker-text runs;
+  - the exporter passing spans through, keeping the status description, keeping exception
+    events whole, or allowing every attribute: 1 fails each (the exception test);
+  - `traceparent` ignored: the one-trace test fails; the server span not made current: 2 fail;
+    no agent middleware: the one-trace test fails; a global provider installed: 3 fail;
+  - `OTEL_SDK_DISABLED` ignored: 4 fail; per-signal endpoints ignored: 3; `grpc` accepted: 1;
+    credentials echoed in the startup line: 3;
+  - the probes traced: 1 fails; the SDK's 10 s export timeout: the silent-collector test fails;
+  - the lifespan never setting the tracing: 3 fail; never shutting it down: 1 fails;
+  - the checker accepting any chain: 5 fail;
+  - one break survived and changed the code: the batch processor's export timeout, above.
+- **Local runs:**
+  - Python: 560/560, up from 515, with ruff and mypy clean, from a clean worktree with
+    `uv sync --locked`.
+  - .NET: 637/637, including Testcontainers. The `-warnaserror` build, `dotnet format` and
+    `has-pending-model-changes` are clean; the engine's code is untouched.
+- **Open, for Hampus** (also in #65's description): which backend keeps traces and for how long;
+  whether export should stay on by default under compose (it goes to a local process that keeps
+  nothing); and log export, when there is a backend.
 
 ---
 
