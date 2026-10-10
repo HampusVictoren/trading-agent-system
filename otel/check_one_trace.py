@@ -5,8 +5,8 @@ agent chain. The collector in compose prints every span it receives (otel/collec
 this reads that output and looks for an agent-service server span whose ancestry, followed
 parent by parent, runs through the engine's spans to the root of the engine's cycle,
 `trading.cycle`, all in one trace id. It prints that chain and every span of the trace by
-service, and exits 1 if there is no such chain yet - or 2, at once, if any span came from a
-service other than the engine and the agents.
+service, and exits 1 if there is no such chain yet - or 2, at once, if any span or metric
+came from a service other than the engine and the agents.
 
     docker compose logs --no-log-prefix otel-collector | python3 otel/check_one_trace.py
 
@@ -39,22 +39,35 @@ class Span:
 # The first resource of each batch shares its line with the collector's log prefix
 # ("<time>\tinfo\tResourceSpans #0"), so the header is searched for, not matched at the start.
 _RESOURCE = re.compile(r"\bResource(Spans|Metrics) #\d+")
+_METRIC_NAME = re.compile(r"^\s*-> Name: (.*)$")
+
+
+@dataclass
+class Metric:
+    service: str
+    name: str = ""
 
 
 def parse(text: str) -> list[Span]:
-    """Every span in the output, each with the service.name of its resource.
+    return read(text)[0]
 
-    A resource that names no service gives its spans "" - never the name of the
+
+def read(text: str) -> tuple[list[Span], list[Metric]]:
+    """Every span and every metric in the output, each with the service.name of its resource.
+
+    A resource that names no service gives its spans and metrics "" - never the name of the
     resource before it, which would pass a nameless sender off as a known one.
     """
     spans: list[Span] = []
+    metrics: list[Metric] = []
     service = ""
     in_resource = False
     current: Span | None = None
+    metric: Metric | None = None
     for line in text.splitlines():
         stripped = line.strip()
         if _RESOURCE.search(line):
-            service, in_resource, current = "", False, None
+            service, in_resource, current, metric = "", False, None, None
             continue
         if stripped.startswith("Resource attributes:"):
             in_resource = True
@@ -65,8 +78,15 @@ def parse(text: str) -> list[Span]:
             service = match.group(1)
             continue
         if re.match(r"^Span #\d+", stripped):
-            current = Span(service=service)
+            current, metric = Span(service=service), None
             spans.append(current)
+            continue
+        if re.match(r"^Metric #\d+", stripped):
+            current, metric = None, Metric(service=service)
+            metrics.append(metric)
+            continue
+        if metric is not None and not metric.name and (match := _METRIC_NAME.match(line)):
+            metric.name = match.group(1).strip()
             continue
         if current is not None and (match := _FIELD.match(line)):
             key, value = match.group(1), match.group(2).strip()
@@ -80,7 +100,7 @@ def parse(text: str) -> list[Span]:
                 current.name = value
             elif key == "Kind":
                 current.kind = value
-    return spans
+    return spans, metrics
 
 
 def chain_to_cycle(spans: list[Span]) -> list[Span] | None:
@@ -107,18 +127,20 @@ def chain_to_cycle(spans: list[Span]) -> list[Span] | None:
 
 
 def main() -> int:
-    spans = parse(sys.stdin.read())
+    spans, metrics = read(sys.stdin.read())
     services = Counter(span.service for span in spans)
     print(f"{len(spans)} spans read: " + ", ".join(f"{n} from {s}" for s, n in services.items()))
+    metered = Counter(metric.service for metric in metrics)
+    print(f"{len(metrics)} metrics read: " + ", ".join(f"{n} from {s}" for s, n in metered.items()))
 
-    # Only the two services export spans, each through its own content-stripping setup. A span
-    # from anything else - FastAPI's built-in telemetry once shipped as unknown_service:python -
-    # is a tracer nobody configured, and no amount of waiting makes that right: exit 2, not 1.
+    # Only the two services export, each through a setup of its own. A span or a metric from
+    # anything else - FastAPI's built-in telemetry once shipped both as unknown_service:python -
+    # is a provider nobody configured, and no amount of waiting makes that right: exit 2, not 1.
     # A resource without a service.name counts as a stranger too ("").
-    strangers = sorted(set(services) - {ENGINE, AGENTS})
+    strangers = sorted((set(services) | set(metered)) - {ENGINE, AGENTS})
     if strangers:
         named = ", ".join(s or "(no service.name)" for s in strangers)
-        print(f"spans from a service that should not export: {named}")
+        print(f"spans or metrics from a service that should not export: {named}")
         return 2
 
     chain = chain_to_cycle(spans)

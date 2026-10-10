@@ -139,3 +139,51 @@ def test_a_nameless_sender_fails_at_once(monkeypatch, capsys):
 
     assert check.main() == 2
     assert "(no service.name)" in capsys.readouterr().out
+
+
+def metrics(service: str, *names: str) -> str:
+    listed = "".join(
+        f"""Metric #{index}
+Descriptor:
+     -> Name: {name}
+     -> DataType: Sum
+NumberDataPoints #0
+Value: 1
+"""
+        for index, name in enumerate(names)
+    )
+    return f"""2026-10-10T18:38:56.399Z\tinfo\tResourceMetrics #0
+Resource attributes:
+     -> service.name: Str({service})
+ScopeMetrics #0
+InstrumentationScope m
+{listed}"""
+
+
+def test_metrics_are_read_with_their_service():
+    spans, read = check.read(ENGINE + metrics("engine", "trading.cycles", "trading.orders"))
+
+    assert len(spans) == 3
+    assert [(m.service, m.name) for m in read] == [
+        ("engine", "trading.cycles"),
+        ("engine", "trading.orders"),
+    ]
+
+
+def test_metrics_from_the_two_services_pass(monkeypatch):
+    import io
+
+    text = AGENTS + ENGINE + metrics("engine", "trading.cycles") + metrics("agents", "x")
+    monkeypatch.setattr("sys.stdin", io.StringIO(text))
+
+    assert check.main() == 0
+
+
+def test_metrics_from_any_other_service_fail_at_once(monkeypatch, capsys):
+    import io
+
+    stranger = metrics("unknown_service:python", "http.server.request.duration")
+    monkeypatch.setattr("sys.stdin", io.StringIO(AGENTS + ENGINE + stranger))
+
+    assert check.main() == 2
+    assert "unknown_service:python" in capsys.readouterr().out

@@ -25,7 +25,8 @@ processors:
 exporters:
   debug:
     # Detailed, because the trace id, the parent span id and the resource's service.name are
-    # what reading a trace in this log needs. The spans carry no content: the engine's carry
+    # what reading a trace in this log needs - and service.name on metrics is how the same
+    # check refuses metrics from anything but the engine and the agents. The spans carry no content: the engine's carry
     # closed sets, a ticker and a correlation id, and the agent service strips everything else
     # before export (src/agents/app/observability/tracing.py).
     verbosity: detailed
