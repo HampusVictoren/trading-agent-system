@@ -88,6 +88,23 @@ class TracingDecision:
     enabled: bool
     description: str
     traces_endpoint: str | None = None
+    timeout_s: float = DEFAULT_TIMEOUT_S
+
+
+def _timeout_s(environ: Mapping[str, str]) -> float:
+    """OTEL_EXPORTER_OTLP_TIMEOUT in **milliseconds**, as the specification and the engine read it.
+
+    The Python exporter reads the same variable as seconds, so left to itself the value that
+    gives the engine a 3 s timeout would give this service fifty minutes. It is parsed here and
+    passed in explicitly instead, so one value means one thing in both services. Anything that is
+    not a positive number falls back to the default rather than stopping startup.
+    """
+    raw = environ.get(TIMEOUT_KEY, "").strip()
+    try:
+        milliseconds = float(raw)
+    except ValueError:
+        return DEFAULT_TIMEOUT_S
+    return milliseconds / 1000 if milliseconds > 0 else DEFAULT_TIMEOUT_S
 
 
 def decide(environ: Mapping[str, str]) -> TracingDecision:
@@ -131,6 +148,7 @@ def decide(environ: Mapping[str, str]) -> TracingDecision:
         True,
         f"exported over OTLP ({protocol}) to {parts.scheme}://{parts.hostname}:{port}",
         traces_endpoint=endpoint.rstrip("/") + TRACES_PATH,
+        timeout_s=_timeout_s(environ),
     )
 
 
@@ -287,8 +305,8 @@ def configure_tracing(environ: Mapping[str, str]) -> Tracing:
         return Tracing.disabled(decision.description)
 
     service_name = environ.get(SERVICE_NAME_KEY, "").strip() or DEFAULT_SERVICE_NAME
-    # The endpoint is passed rather than left to the exporter, so what is used is what the
-    # startup line names; headers and compression it still reads from the environment itself.
-    timeout = None if environ.get(TIMEOUT_KEY, "").strip() else DEFAULT_TIMEOUT_S
-    exporter = OTLPSpanExporter(endpoint=decision.traces_endpoint, timeout=timeout)
+    # The endpoint and the timeout are passed rather than left to the exporter, so what is used
+    # is what the startup line names and the timeout is in the engine's unit (see _timeout_s);
+    # headers and compression it still reads from the environment itself.
+    exporter = OTLPSpanExporter(endpoint=decision.traces_endpoint, timeout=decision.timeout_s)
     return Tracing.to(exporter, description=decision.description, service_name=service_name)

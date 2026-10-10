@@ -125,6 +125,25 @@ class TestOffUnlessAskedFor:
         assert decision.traces_endpoint == "http://collector:4318/v1/traces"
         assert decision.description == "exported over OTLP (http/protobuf) to http://collector:4318"
 
+    @pytest.mark.parametrize(
+        ("value", "seconds"),
+        [
+            (None, 3.0),
+            ("3000", 3.0),  # milliseconds, as the engine and the specification read it
+            ("10000", 10.0),
+            ("250", 0.25),
+            ("0", 3.0),
+            ("-5", 3.0),
+            ("soon", 3.0),
+        ],
+    )
+    def test_the_export_timeout_is_read_in_milliseconds_like_the_engines(self, value, seconds):
+        environ = {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4318"}
+        if value is not None:
+            environ["OTEL_EXPORTER_OTLP_TIMEOUT"] = value
+
+        assert decide(environ).timeout_s == seconds
+
     def test_the_startup_line_never_repeats_credentials_from_the_url(self):
         decision = decide(
             {"OTEL_EXPORTER_OTLP_ENDPOINT": "https://someone:hunter2@collector.example/"}
