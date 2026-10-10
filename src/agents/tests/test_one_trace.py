@@ -214,6 +214,18 @@ class TestOneTraceWithTheEngine:
         (server,) = [s for s in exported.get_finished_spans() if s.kind is SpanKind.SERVER]
         assert server.parent is None
 
+    def test_a_path_that_matches_no_route_is_not_recorded(self, traced_service, exported):
+        response = traced_service().get(
+            "/v1/MARKER-PATH-3e1d/../etc", headers={"traceparent": TRACEPARENT}
+        )
+
+        assert response.status_code == 404
+        (server,) = [s for s in exported.get_finished_spans() if s.kind is SpanKind.SERVER]
+        assert server.name == "GET"
+        assert "http.route" not in server.attributes
+        assert server.attributes["http.response.status_code"] == 404
+        assert "MARKER-PATH" not in everything_in(server)
+
     def test_the_probes_are_not_traced(self, traced_service, exported):
         client = traced_service()
         client.get("/health")

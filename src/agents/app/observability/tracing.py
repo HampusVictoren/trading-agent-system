@@ -155,7 +155,6 @@ _ALLOWED_ATTRIBUTES: Final = frozenset(
         "http.request.method",
         "http.route",
         "http.response.status_code",
-        "url.path",
         "error.type",
         "trading.correlation_id",
     }

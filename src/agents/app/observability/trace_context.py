@@ -14,7 +14,10 @@ and baggage is caller-chosen key-value data this service would otherwise carry o
 `traceparent` from a caller that is not the engine names a parent span and nothing more; it
 cannot make the service do anything, and the request is authenticated after this as before.
 
-No headers, no query string and no body are recorded. The probes `/health` and `/ready` get
+No headers, no query string, no body and no raw path are recorded: the route template once
+FastAPI has matched one, and for a path that matched nothing (a 404, a scanner) only the method -
+an unmatched path is whatever the caller typed, and it would otherwise be copied into a trace
+verbatim. The probes `/health` and `/ready` get
 no span: a container healthcheck calls them every few seconds, and a trace of each would bury
 the ones that matter.
 """
@@ -83,7 +86,6 @@ class TraceContextMiddleware:
             set_status_on_exception=False,
         ) as span:
             span.set_attribute("http.request.method", method)
-            span.set_attribute("url.path", scope["path"])
             span.set_attribute("trading.correlation_id", current_correlation_id())
             try:
                 await self.app(scope, receive, send_recording_status)
