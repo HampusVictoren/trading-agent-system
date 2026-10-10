@@ -1,0 +1,42 @@
+# The OpenTelemetry collector compose runs beside the services: it receives the engine's
+# metrics and traces and the agent service's traces, over OTLP/HTTP, and prints them.
+#
+# Deliberately minimal. One receiver, one processor, one exporter, and no backend: where
+# traces are kept, for how long and who can read them is a decision of its own, and until it
+# is taken the collector's log is the only place they go. `docker compose logs otel-collector`
+# shows each span with its trace id and the service that sent it, which is how the compose job
+# in CI proves that one engine cycle and the agents' work are one trace.
+#
+# Nothing here receives logs. Both services' logs stay on stdout (stage 7, PR 3).
+
+receivers:
+  otlp:
+    protocols:
+      # HTTP only. The agent service's exporter speaks HTTP/protobuf, the engine is configured
+      # to as well, and a gRPC listener nothing uses is a port with no reason to be open.
+      # 0.0.0.0 inside the container is what lets the other containers reach it; compose
+      # publishes it on the host's loopback only.
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch: {}
+
+exporters:
+  debug:
+    # Detailed, because the trace id, the parent span id and the resource's service.name are
+    # what reading a trace in this log needs. The spans carry no content: the engine's carry
+    # closed sets, a ticker and a correlation id, and the agent service strips everything else
+    # before export (src/agents/app/observability/tracing.py).
+    verbosity: detailed
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug]
