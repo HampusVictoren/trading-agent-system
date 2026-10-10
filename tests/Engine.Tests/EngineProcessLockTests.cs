@@ -65,6 +65,19 @@ public sealed class EngineProcessLockTests : IAsyncLifetime
         next.HasExited.ShouldBeFalse();
     }
 
+    [Fact]
+    public async Task A_normal_shutdown_exits_zero_not_as_a_lost_lock()
+    {
+        var engine = Start();
+        await engine.WaitForLineAsync("Took the engine lock", Patience);
+
+        engine.Terminate(); // SIGTERM, as `docker compose stop` sends it
+        var exitCode = await engine.WaitForExitAsync(Patience);
+
+        exitCode.ShouldBe(0);
+        engine.Output.ShouldNotContain("Lost the engine lock");
+    }
+
     private EngineProcess Start()
     {
         var engine = new EngineProcess(new ProcessStartInfo("dotnet", Path.Combine(AppContext.BaseDirectory, "engine.dll"))
@@ -144,6 +157,13 @@ public sealed class EngineProcessLockTests : IAsyncLifetime
 
             _process.WaitForExit(); // drains the redirected streams
             return _process.ExitCode;
+        }
+
+        /// <summary>SIGTERM, the signal `docker compose stop` sends and the host shuts down on.</summary>
+        public void Terminate()
+        {
+            using var kill = Process.Start("kill", ["-TERM", _process.Id.ToString(System.Globalization.CultureInfo.InvariantCulture)]);
+            kill.WaitForExit();
         }
 
         public void Kill()

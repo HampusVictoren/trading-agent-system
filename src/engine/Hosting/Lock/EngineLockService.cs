@@ -81,6 +81,8 @@ public sealed class EngineLockService : IHostedService, IAsyncDisposable
     {
         await _stopping.CancelAsync();
 
+        // The watch first, the connection after: closing it under a check in flight would make
+        // that check fail, and Npgsql does not support a connection used from two places at once.
         if (_watch is not null)
             await _watch.WaitAsync(cancellationToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
@@ -114,8 +116,18 @@ public sealed class EngineLockService : IHostedService, IAsyncDisposable
             {
                 await Task.Delay(CheckInterval, stopping);
 
-                if (await held.IsStillHeldAsync(stopping))
+                // Not cancelled by the stop: cancelling an in-flight Npgsql command sends a cancel
+                // request that races the reply, which is a failure mode a stop does not need. The
+                // check is bounded by the lock connection's 5 s command timeout instead, and the
+                // stop is looked at after it.
+                if (await held.IsStillHeldAsync(CancellationToken.None))
                     continue;
+
+                // A check that failed because the host is stopping - the connection going away as
+                // part of a normal shutdown - is not a lost lock, and must not turn a clean stop
+                // into exit 4.
+                if (stopping.IsCancellationRequested)
+                    return;
 
                 Lost = true;
                 _logger.LogCritical(

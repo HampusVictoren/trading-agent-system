@@ -150,6 +150,33 @@ public class EngineLockTests
         next.ShouldNotBeNull();
     }
 
+    [Fact]
+    public async Task A_normal_shutdown_is_never_reported_as_a_lost_lock()
+    {
+        // Checking as often as possible, so stops land while a check is in flight; repeated,
+        // because that is a race and one pass would prove little.
+        for (var attempt = 0; attempt < 25; attempt++)
+        {
+            var lifetime = Substitute.For<IHostApplicationLifetime>();
+            await using var service = new EngineLockService(
+                Microsoft.Extensions.Options.Options.Create(new DatabaseOptions { ConnectionString = _database.ConnectionString }),
+                lifetime,
+                NullLogger<EngineLockService>.Instance)
+            {
+                CheckInterval = TimeSpan.FromMilliseconds(1),
+            };
+
+            // Bounded, so a stop that hangs - as one that closes the connection under a check in
+            // flight can - fails here rather than holding the run.
+            await service.StartAsync(Token).WaitAsync(TimeSpan.FromSeconds(15), Token);
+            await Task.Delay(TimeSpan.FromMilliseconds(attempt % 5 * 3), Token);
+            await service.StopAsync(Token).WaitAsync(TimeSpan.FromSeconds(15), Token);
+
+            service.Lost.ShouldBeFalse($"attempt {attempt}");
+            lifetime.DidNotReceive().StopApplication();
+        }
+    }
+
     private async Task<int> HolderBackendAsync()
     {
         await using var connection = new NpgsqlConnection(_database.ConnectionString);
