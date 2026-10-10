@@ -133,7 +133,9 @@ class TestOffUnlessAskedFor:
         assert decision.enabled
         assert "hunter2" not in decision.description
         assert "someone" not in decision.description
-        assert decision.description.endswith("https://collector.example:443")
+        assert decision.description == (
+            "exported over OTLP (http/protobuf) to https://collector.example:443"
+        )
 
 
 class TestContentFree:
