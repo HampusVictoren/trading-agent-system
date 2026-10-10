@@ -40,7 +40,8 @@ cd src/agents && uv run python -m app.openapi_snapshot > ../../contracts/openapi
 # The compose checks. The cheap half runs on every pull request; the rest - the whole system
 # from a clean volume - runs on master and nightly, because it builds four images.
 docker compose config --quiet
-docker compose --profile trade config --services
+docker compose config --services             # the engine is among them (D2 lifted, stage 7)
+# ...and the engine's Trading__Mode resolves to Shadow when TRADING_MODE is unset
 # ...and every published port is on 127.0.0.1 (a python one-liner over `config --format json`)
 ```
 
@@ -105,8 +106,12 @@ one of them goes red.
 ```bash
 # The system. Compose owns every container, trading-db included. Needs .env in the repo root
 # (see .env.example); compose reads that file itself and never hands it to a container.
-docker compose up -d                      # database, both schemas, agent service on :8000, collector
-docker compose --profile trade up -d      # and the engine, which places orders
+docker compose up -d                      # the whole system: database, both schemas, agent service
+                                          # on :8000, collector - and the engine, in Shadow unless
+                                          # TRADING_MODE=Paper is in .env. **An account with real
+                                          # paper positions needs Paper**: Shadow places nothing,
+                                          # not even their stop-loss and time-limit sales.
+docker compose stop engine                # stop only the engine (e.g. to run it on the host instead)
 docker compose logs -f engine             # what a cycle did
 docker compose down                       # stop; the volume and its decisions stay
 docker exec -it trading-db psql -U postgres -d tradingdb   # superuser, via the container's local socket
@@ -248,15 +253,21 @@ docker run --rm tas-engine-migrate --version
 **`docker-compose.yml` is the whole system**, and three things in it are decisions rather than
 configuration.
 
-- **The engine is behind a profile.** `docker compose up -d` brings up the database, both
-  schemas and the agent service; `--profile trade` adds the engine. The engine is the only
-  service here that spends money. When this was decided (D2), "not starting it" was the only way
-  to stop it, and that should cost a word on the command line rather than being what `up`
-  happens to do. **Stage 7 has added the other ways**: `Trading:Mode` defaults to Shadow, which
-  places nothing, and `trading.kill_switch` stops a running engine's buying. The profile is kept anyway,
-  until #63 has merged: lifting D2 is decided (Hampus, 2026-10-09) and is its own follow-up PR. Both migration steps run **by default**,
+- **A plain `up` starts the engine, in Shadow.** Until stage 7 the engine was behind a `trade`
+  profile (D2): it is the only service here that spends money, and "not starting it" was then the
+  only way to stop it. **Stage 7 added the other ways** - `Trading:Mode` defaults to Shadow, which
+  places nothing, and `trading.kill_switch` stops a running engine's buying - so D2 is lifted
+  (Hampus, 2026-10-09; stage 7 PR 4) and `docker compose up -d` is the whole system.
+  `${TRADING_MODE:-Shadow}` keeps the default safe, and CI asserts both halves on every pull
+  request (the engine is in a plain `up`; its mode resolves to Shadow with `TRADING_MODE` unset).
+  **The default has a cost on an account that already holds positions**: Shadow does not place
+  their exits either, so `TRADING_MODE=Paper` in the root `.env` is what keeps managing them, and
+  the engine warns at startup, naming the holdings, when it is in Shadow with any. **And nothing
+  enforces one engine per database**: a host-run engine and the container against the same
+  database are two engines recording, and in Paper trading, one account - `docker compose stop
+  engine` before `dotnet run`. Both migration steps run **by default**,
   because a provisioned database is not trading: after a plain `up` the schemas are current and
-  a host-run engine can point at the same database.
+  a host-run engine can point at the same database (with the container's engine stopped).
 - **The collector is minimal on purpose** (stage 7). `otel-collector` is the core image pinned
   by version and digest, with one OTLP/HTTP receiver, the batch processor and the debug
   exporter (`otel/collector.yaml`): it prints what it receives and keeps nothing, because where
