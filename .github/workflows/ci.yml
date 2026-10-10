@@ -312,6 +312,21 @@ jobs:
             exit 1
           fi
 
+      # Every port compose publishes is on the host's loopback. Three services publish one -
+      # the database, the agent service and the collector - and a bare "4318:4318" would put
+      # the next one on the network without anything else looking different.
+      - name: Every published port is loopback-only
+        run: |
+          set -euo pipefail
+          docker compose --profile trade config --format json | python3 -c '
+          import json, sys
+          services = json.load(sys.stdin)["services"]
+          published = [(name, port) for name, service in services.items() for port in service.get("ports", [])]
+          broad = [f"{name}: {port}" for name, port in published if port.get("host_ip") != "127.0.0.1"]
+          print(f"{len(published)} published ports")
+          sys.exit("published beyond loopback: " + "; ".join(broad) if broad else 0)
+          '
+
       # Everything below is the stage's own success criterion, and it is slow: four images
       # and a database from nothing. On master, nightly and by hand (workflow_dispatch) rather
       # than on every pull request, where the two image jobs already prove what each half
@@ -403,6 +418,30 @@ jobs:
           deadline=$(docker compose exec -T engine cat /tmp/engine.heartbeat)
           test "$deadline" -gt "$(date +%s)"
           echo "healthy, with a heartbeat good for $(( deadline - $(date +%s) )) s"
+
+      # Stage 7's own criterion: an analysis cycle is one trace from the engine through the
+      # agent chain. Both services export to the collector compose runs, which prints every
+      # span; otel/check_one_trace.py reads that and looks for an agent-service server span
+      # whose ancestry, parent by parent, runs through the engine's spans to the root of its
+      # cycle, trading.cycle - one trace id across two processes. With no LLM on the runner
+      # every analysis fails at the model call, which is fine: the request, its agent and its
+      # failed model call are still the agents' work, inside the engine's trace. The root
+      # arrives when the cycle ends, which without an LLM is seconds after the first analysis.
+      - name: One engine cycle and the agents' work are one trace
+        if: github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 60); do
+            log=$(docker compose logs --no-log-prefix otel-collector 2>&1)
+            if python3 otel/check_one_trace.py <<<"$log" > one-trace.txt; then
+              cat one-trace.txt
+              exit 0
+            fi
+            sleep 5
+          done
+          cat one-trace.txt
+          echo "no trace reached from the engine's cycle into the agent service in five minutes"
+          exit 1
 
       - name: What the system said, for whoever reads a failed run
         if: always() && github.event_name != 'pull_request'
