@@ -310,7 +310,9 @@ jobs:
             exit 1
           fi
           unset_env="${RUNNER_TEMP:-/tmp}/without-trading-mode.env"
-          grep -v '^[[:space:]]*TRADING_MODE[[:space:]]*=' .env > "$unset_env" || true
+          # Every spelling compose's .env reader accepts: leading whitespace, an `export `
+          # prefix with any spacing, and whitespace around the `=`.
+          grep -Ev '^[[:space:]]*(export[[:space:]]+)?TRADING_MODE[[:space:]]*=' .env > "$unset_env" || true
           mode=$(env -u TRADING_MODE docker compose --env-file "$unset_env" config --format json \
             | python3 -c 'import json, sys; print(json.load(sys.stdin)["services"]["engine"]["environment"].get("Trading__Mode", ""))')
           if [ "$mode" != "Shadow" ]; then
