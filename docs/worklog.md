@@ -2964,6 +2964,20 @@ tests and the lock file, and the pieces only prove anything together.
   service but `engine` and `agents` (tolerating them fails its test). The lifespan tests had called
   the lifespan directly, past the ASGI wrapper where FastAPI hooks in, which is why they missed it.
   - Python after all of it: 573/573. .NET: 637/637, untouched.
+- **Second review (Review Bot: approved at 152d844, four nits)**, one commit each:
+  - **fastapi had no upper bound**, so a release adding a telemetry switch that defaults to on
+    would export past `FASTAPI_TELEMETRY_OFF`. Capped `<0.143` (the lock changes only in the
+    recorded specifier; still 0.142.2; `team_version` unchanged), and a test requires every
+    key of the config FastAPI resolves to be `False`, providers and `exclude` `None`.
+  - **The check refused stranger spans but not stranger metrics.** It now reads every metric
+    with its resource's service and fails on either. Checked against the pinned collector's
+    real output.
+  - **`_timeout_s` accepted `inf`** (and NaN slipped past the sign check). Both fall back to
+    3 s.
+  - **`parse()` carried `service.name` from one resource to the next**, so a nameless sender
+    could pass as a known one. Reset at every resource header - searched for anywhere in the
+    line, because the collector prints the first of each batch behind its log prefix.
+  - Python: 585/585. .NET: 637/637.
 
 ---
 
