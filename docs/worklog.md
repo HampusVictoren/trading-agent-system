@@ -2937,7 +2937,19 @@ tests and the lock file, and the pieces only prove anything together.
     every pull request; removing the cap fails it.
   - **The one-trace step runs only outside pull requests**, so it was run by dispatch after the
     final push; its result is in #65.
-  - Python after the review: 571/571. .NET: 637/637, untouched.
+- **Found in the first dispatched compose run, not by the review: FastAPI was exporting too.** Of
+  108 spans in the collector, 52 came from `unknown_service:python`. FastAPI 0.142 has built-in
+  telemetry that, at ASGI lifespan startup, reads the same `OTEL_EXPORTER_OTLP_ENDPOINT` and - once
+  the SDK and OTLP exporter are importable, which `ag2[tracing]` made them - installs *global*
+  tracer, meter and logger providers and exports traces, metrics and logs, its spans carrying the
+  raw path and query outside `ContentFreeExporter`. The collector has no logs pipeline, so none of
+  its logs were received; its spans and metrics were (in CI only, with no real data). Fixed:
+  `create_app` turns all of it off, a test runs the real ASGI lifespan with an endpoint set and
+  requires all three global providers to stay proxies (leaving it on fails it), and
+  `otel/check_one_trace.py` now exits 2 - and the compose step stops at once - on spans from any
+  service but `engine` and `agents` (tolerating them fails its test). The lifespan tests had called
+  the lifespan directly, past the ASGI wrapper where FastAPI hooks in, which is why they missed it.
+  - Python after all of it: 573/573. .NET: 637/637, untouched.
 
 ---
 
