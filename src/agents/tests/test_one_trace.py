@@ -279,6 +279,36 @@ class TestTracingOff:
         assert app.state.tracing_slot.current is None
 
 
+class TestFastApisOwnTelemetryStaysOff:
+    """FastAPI 0.142 exports traces, metrics and logs by itself when it sees an OTLP endpoint and
+    the SDK. Run through the real ASGI lifespan, where it would do so, with an endpoint set."""
+
+    def test_an_endpoint_in_the_environment_installs_no_global_provider(self, monkeypatch):
+        from contextlib import asynccontextmanager
+
+        from opentelemetry import _logs, metrics
+
+        import app.main as main
+
+        @asynccontextmanager
+        async def no_resources(app, settings, tracing):
+            yield
+
+        monkeypatch.setattr(main, "get_settings", lambda: api_settings())
+        monkeypatch.setattr(main, "_serve", no_resources)
+        monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:9")
+        monkeypatch.delenv("OTEL_SDK_DISABLED", raising=False)
+
+        app = main.create_app()
+        with TestClient(app) as client:
+            assert app.state.tracing_slot.current.enabled
+            client.get("/health")
+
+        assert isinstance(trace.get_tracer_provider(), trace.ProxyTracerProvider)
+        assert type(metrics.get_meter_provider()).__name__ == "_ProxyMeterProvider"
+        assert type(_logs.get_logger_provider()).__name__ == "ProxyLoggerProvider"
+
+
 class TestTheLifespanDecides:
     """Startup reads the environment once, puts the result where the middleware looks, and
     shuts the provider down on the way out. Resources are stubbed: this is about tracing."""

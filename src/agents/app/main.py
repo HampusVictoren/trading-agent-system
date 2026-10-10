@@ -10,6 +10,7 @@ import httpx2
 from ag2.middleware.base import MiddlewareFactory
 from fastapi import Depends, FastAPI
 from fastapi.responses import JSONResponse
+from fastapi.telemetry import TelemetryConfig
 from openai import AsyncOpenAI
 from pgvector.asyncpg import register_vector
 
@@ -42,6 +43,20 @@ logger = logging.getLogger(__name__)
 # hangs rather than refusing, so a database that is simply not running would hold startup
 # for a full minute and then raise a TimeoutError with no message.
 DATABASE_CONNECT_TIMEOUT_SECONDS = 10
+
+# FastAPI's own OpenTelemetry, switched off entirely. Since 0.142 it configures itself from the
+# same OTEL_EXPORTER_OTLP_ENDPOINT this service reads, the moment the SDK and the OTLP exporter
+# are importable - which ag2[tracing] makes them - and then installs *global* providers and
+# exports traces, metrics **and logs** with spans of its own that record the raw path and the
+# query string, outside ContentFreeExporter. That would undo both the log decision and the
+# content guard. This service's tracing is app/observability/tracing.py and nothing else.
+FASTAPI_TELEMETRY_OFF: TelemetryConfig = {
+    "auto_configure": False,
+    "tracing": False,
+    "metrics": False,
+    "logs": False,
+    "operation_spans": False,
+}
 
 # A readiness probe answers a load balancer, so it may not wait as long as a real call.
 READINESS_TIMEOUT_SECONDS = 5
@@ -257,6 +272,7 @@ def create_app(*, enable_docs: bool | None = None, tracing: Tracing | None = Non
         docs_url="/docs" if enable_docs else None,
         redoc_url="/redoc" if enable_docs else None,
         openapi_url="/openapi.json" if enable_docs else None,
+        telemetry=FASTAPI_TELEMETRY_OFF,
     )
     # Added first, so it runs inside CorrelationIdMiddleware and the span can carry the id.
     application.state.tracing_slot = TracingSlot(preset=tracing)
