@@ -2,6 +2,7 @@ using Engine.Application.UseCases;
 using Engine.Domain.Outcomes;
 using Engine.Domain.Risk;
 using Engine.Hosting;
+using Engine.Hosting.Lock;
 using Engine.Hosting.Options;
 using Engine.Hosting.Telemetry;
 using Engine.Hosting.Workers;
@@ -65,6 +66,12 @@ builder.Services.AddTransient<AnalysisDueCheck>();
 builder.Services.AddTransient<MeasureOutcomesUseCase>();
 builder.Services.AddTransient<ReportOutcomesUseCase>();
 
+// One engine per database. Before the workers, because the host starts hosted services one at a
+// time in registration order and stops at the first that throws: a second engine is refused
+// before either worker has run, and the lock is released last, after both have stopped.
+builder.Services.AddSingleton<EngineLockService>();
+builder.Services.AddHostedService(provider => provider.GetRequiredService<EngineLockService>());
+
 builder.Services.AddHostedService<TradingWorker>();
 builder.Services.AddHostedService<MeasurementWorker>();
 
@@ -79,4 +86,26 @@ host.Services.GetRequiredService<ILogger<Program>>().LogInformation(
 // against a database that is behind this build.
 await host.Services.EnsureTheSchemaIsCurrentAsync();
 
+// Read before RunAsync, which disposes the container on the way out.
+var engineLock = host.Services.GetRequiredService<EngineLockService>();
+var startup = host.Services.GetRequiredService<ILogger<Program>>();
+
+// The lock before the host runs, not only inside it: a refusal thrown from a hosted service is
+// logged by the host as "Hosting failed to start" with a stack trace. Here it is one sentence - an
+// operator's mistake with a clear remedy, not a fault in the engine - and exit code 0, so that
+// compose's `restart: on-failure` leaves a refused engine stopped instead of retrying it until the
+// other engine stops and then taking over (Hampus, 2026-10-10). The line is what says "refused".
+try
+{
+    await engineLock.AcquireAsync();
+}
+catch (EngineAlreadyRunningException refused)
+{
+    startup.LogCritical("{Refusal}", refused.Message);
+    return EngineLockService.RefusedExitCode;
+}
+
 await host.RunAsync();
+
+// Non-zero after losing the lock, so compose's on-failure restarts it - through the lock again.
+return engineLock.Lost ? EngineLockService.LostLockExitCode : 0;

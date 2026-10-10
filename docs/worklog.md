@@ -10,8 +10,9 @@ This file answers "where are we, how did we get here, and what is next". When re
 **Last updated:** 2026-10-10. **Stage 6 is done**, with all five pull requests merged (#58-#62).
 **Stage 7 is in progress**: PR 1 (`Trading:Mode` and the kill switch) is merged as #63, PR 2 (the
 engine's metrics, cycle trace and heartbeat) as #64, PR 3 (the agent service's tracing and a
-collector in compose) as #65, and PR 4 (`stage-7-engine-default`, the engine leaves `--profile
-trade` - D2 lifted) is open. *Current state* and *Next steps* are
+collector in compose) as #65, PR 4 (the engine leaves `--profile trade` - D2 lifted) as #66, and
+PR 4a (`stage-7-engine-lock`, one engine per database, enforced) is open. *Current state* and
+*Next steps* are
 current. The paragraphs directly below are the 2026-10-01 record of stage 5 and
 are kept as they were written.
 
@@ -92,11 +93,11 @@ Two things that are easy to misread as broken:
 
 ## Current state
 
-- **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21, **stage 3 done** 2026-09-23. **Stage 4 started** 2026-09-23. PR 5 and PR 6 were each split in two, so the stage is eight pull requests, and **all eight are merged** as of 2026-09-25. **Stage 5 is merged in full** - #42 to #51, the shortlist edge as #54 and the daily deployment cap as #56. **Stage 6 is done**: all five PRs are merged (#58-#62). **Stage 7 is in progress**: PR 1 (`stage-7-trading-mode`) is merged as #63, PR 2 (`stage-7-engine-telemetry`, the engine's metrics, the cycle trace and the heartbeat) as #64, PR 3 (`stage-7-agent-tracing`, the agent service's tracing and the collector) as #65, and PR 4 (`stage-7-engine-default`, a plain `docker compose up` starts the engine, in Shadow - D2 lifted) is open. See the stage 7 log. Stage 8 exists only as a plan.
-- **`master` is at PR #65** (the agent service's tracing and the collector, merged 2026-10-10 as `d2d12da`), after #64 (the engine's metrics, one trace per cycle and the heartbeat, `9babe5f`), #63 (Trading:Mode and the kill switch) and #62 (the compose bring-up in CI). All five of stage 6's pull requests are on it, plus Dependabot's seven Python bumps as #57 - which merged *after* #58. Stage 4's eight pull requests and all five of stage 5's are on it, plus the live-run record as #53, the security hardening as #52 and the `CLAUDE.md` levelling as #55. **Which CI jobs block a merge is branch protection**, and three were added during stage 6 - `Agents (image)`, `Engine (image)` and `Compose`. This file has twice assumed the required list keeps up with the workflow; it does not, and nobody here can read that setting. Check it under *Settings - Branches*.
+- **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21, **stage 3 done** 2026-09-23. **Stage 4 started** 2026-09-23. PR 5 and PR 6 were each split in two, so the stage is eight pull requests, and **all eight are merged** as of 2026-09-25. **Stage 5 is merged in full** - #42 to #51, the shortlist edge as #54 and the daily deployment cap as #56. **Stage 6 is done**: all five PRs are merged (#58-#62). **Stage 7 is in progress**: PR 1 (`stage-7-trading-mode`) is merged as #63, PR 2 (`stage-7-engine-telemetry`, the engine's metrics, the cycle trace and the heartbeat) as #64, PR 3 (`stage-7-agent-tracing`, the agent service's tracing and the collector) as #65, PR 4 (`stage-7-engine-default`, a plain `docker compose up` starts the engine, in Shadow - D2 lifted) as #66, and PR 4a (`stage-7-engine-lock`, a Postgres advisory lock that refuses a second engine per database) is open. See the stage 7 log. Stage 8 exists only as a plan.
+- **`master` is at PR #66** (a plain `up` starts the engine, in Shadow; merged 2026-10-10 as `fbdeca2`), after #65 (the agent service's tracing and the collector, `d2d12da`), #64 (the engine's metrics, one trace per cycle and the heartbeat, `9babe5f`), #63 (Trading:Mode and the kill switch) and #62 (the compose bring-up in CI). All five of stage 6's pull requests are on it, plus Dependabot's seven Python bumps as #57 - which merged *after* #58. Stage 4's eight pull requests and all five of stage 5's are on it, plus the live-run record as #53, the security hardening as #52 and the `CLAUDE.md` levelling as #55. **Which CI jobs block a merge is branch protection**, and three were added during stage 6 - `Agents (image)`, `Engine (image)` and `Compose`. This file has twice assumed the required list keeps up with the workflow; it does not, and nobody here can read that setting. Check it under *Settings - Branches*.
 - **Dependabot's bumps are in.** #46 (setup-uv) and #47 (six Python packages) merged to `master` on 2026-09-26 and were merged *into* `stage-5-selling` rather than rebased onto, because the branch was already pushed and a rebase would need a force-push. Two of the six matter behaviourally - **ag2 1.0.5 to 1.0.6** and **openai 3.16.1 to 3.19.1** - and the lock also *downgraded* SQLAlchemy from 2.1.1 to 2.0.54, which the Alembic fixture exercises on every database test. 476 Python tests green on all of it.
 - **Stage 5's merge history:** `stage-5-model-and-horizon` as #42, `stage-5-screening` as #43, `stage-5-sek` as #44, `stage-5-symbol-columns` as #45 - the last of those repairing #44, which merged four of its six commits and left `master` with the widened pattern and the old columns for a few minutes - `stage-5-selling` as #48 and `stage-5-cycle` as #51.
-- **Two pull requests are open as of 2026-10-10:** stage 7's PR 3 (#65, `stage-7-agent-tracing`) and #50, `plan/jev-placement` - a docs-only branch adding `docs/arkitektur-jev-roadmap.md`, **not reviewed here, and left to the owner** - nothing in this repository's work merges, rebases or pushes to it. **Four** remote branches are stale and can go, all merged or superseded: `security/hardening-f01-f14` (the superseded first attempt at #52), `docs/pr4-live-run` (#53), `stage-5-shortlist-edge` (#54) and `stage-5-cycle` (#51). The previous version of this sentence said five and named `security/hardening-master-bdf5bf1`, which was deleted long ago - checked against `git ls-remote` this time, because the one thing the list promises is that deleting them is a reading exercise rather than a search.
+- **Two pull requests are open as of 2026-10-10:** stage 7's PR 4a (#67, `stage-7-engine-lock`) and #50, `plan/jev-placement` - a docs-only branch adding `docs/arkitektur-jev-roadmap.md`, **not reviewed here, and left to the owner** - nothing in this repository's work merges, rebases or pushes to it. **Nine** remote branches are stale and can go, all merged or superseded (checked against `git ls-remote` on 2026-10-10): `security/hardening-f01-f14` (the superseded first attempt at #52), `docs/pr4-live-run` (#53), `stage-5-shortlist-edge` (#54), `stage-5-cycle` (#51), `stage-6-compose-smoke` (#62), `stage-7-trading-mode` (#63), `stage-7-engine-telemetry` (#64), `stage-7-agent-tracing` (#65) and `stage-7-engine-default` (#66). An earlier version of this sentence named `security/hardening-master-bdf5bf1`, deleted long ago - the one thing the list promises is that deleting them is a reading exercise rather than a search.
 - **The security hardening is merged as #52 and verified live** on 2026-10-01: `POST /v1/outcomes` accepted its HMAC signature end to end (`Delivery 8097ab0f: sent 1 outcomes`), 25 market-scope calls answered 200, `/openapi.json` and `/docs` both answer 404, `/ready` returns `{"status":"ready"}` with no dependency detail, and an unauthenticated signal is refused with 401. Nothing was rate-limited. **Both of its required secrets had to be created first** - neither existed after the merge, so neither service would start.
 - **Two of its paths are not verified live:** `POST /v1/signals` and `POST /v1/screen` with their scope keys, because the verification ran on the same trading day as the live run, so no analysis was due and the shortlist was read from the database. All five call sites go through the same `AddApiKey`/`ApiKeyFor` code and no scoped keys are configured, so all five resolve to the legacy key that the 25 successful calls used - but the first new trading day is what proves it, and that is where the blocker found in review would have shown.
 - **The portfolio holds five instruments as of 2026-10-01**, up from one: ERIC-B.ST (26 at 94.96, from 2026-09-26) plus HEXA-B.ST (25 at 99.02), SEB-A.ST (10 at 229.20), EVO.ST (3 at 791.80) and KINV-B.ST (40 at 61.70), all four bought by the engine's own first screened cycle. Cash is 87 920.14 kr. Every one of the four is a *measurable* decision with `selection = Shortlist`, which is what stage 5 existed to produce.
@@ -123,7 +124,7 @@ Two things that are easy to misread as broken:
 
 ## Next steps
 
-### Resume here — stage 7, PR 4 of 7 (2026-10-10)
+### Resume here — stage 7, PR 4a (2026-10-10)
 
 > **After pulling master with #63 in it, do these two things on the machine that runs the
 > engine, before starting it again** (#63 was merged before they were done there):
@@ -135,24 +136,43 @@ Two things that are easy to misread as broken:
 > 2. **Apply the five new migrations**: `dotnet dotnet-ef database update --project src/engine`.
 >    Without them the engine refuses to start, loudly, because the schema is behind it.
 >
-> **Once PR 4 (`stage-7-engine-default`) is on master, a plain `docker compose up -d` also
-> starts the engine** - before, it took `--profile trade`. So, in addition:
+> **With #66 on master, a plain `docker compose up -d` also starts the engine** - before, it took
+> `--profile trade`. So, in addition:
 >
 > 3. **The container's mode comes from the root `.env` only.** `dotnet user-secrets` sets the
 >    host-run engine's mode and nothing else; a container started by `up` with no
 >    `TRADING_MODE=Paper` in `.env` runs in **Shadow**, and the startup warning naming the held
 >    positions is the only sign that nothing is closing them.
 > 4. **Run one engine.** If the engine runs on the host (`dotnet run --project src/engine`),
->    `docker compose stop engine` after every `up`, or the container and the host process are
->    two engines on one account - and with both in Paper, two engines trading it. Nothing in
->    the system prevents that yet.
+>    `docker compose stop engine` after every `up`. Until PR 4a (`stage-7-engine-lock`) merges,
+>    nothing prevents the container and the host process being two engines on one account.
+>    After it, the second to start refuses with one line naming the holder and **stays
+>    stopped** (Hampus, 2026-10-10) - it never takes over when the other one stops. So the host
+>    engine and the container are whichever started first: stop the container to run on the
+>    host, and `docker compose up -d` after stopping the host's to hand back.
 > 5. Under compose, step 2 happens by itself: `up` runs `engine-migrate` before the engine.
 >
 > Remove this note once all of it is done.
 
-Stage 7's PRs 1-3 are merged as #63, #64 and #65. **PR 4 is the branch in hand**:
-`stage-7-engine-default`, open and not merged. Read the stage in the roadmap (*Etapp 7*) and the
-stage 7 log below before continuing.
+Stage 7's PRs 1-4 are merged as #63-#66. **PR 4a is the branch in hand**: `stage-7-engine-lock`,
+open and not merged. Read the stage in the roadmap (*Etapp 7*) and the stage 7 log below before
+continuing.
+
+1. **`stage-7-engine-lock`** enforces **one engine per database** (Hampus, 2026-10-10): a
+   Postgres session-level advisory lock taken before either worker starts and held for the
+   process lifetime on an unpooled connection of its own. A second engine is refused with one
+   line naming the holder, no stack trace, and **exit code 0, so that it stays stopped** (Hampus,
+   2026-10-10); a lock that can no longer be confirmed (checked every 5 s) stops the engine with
+   **exit code 4**, which compose restarts through the lock - fail closed. The migrator and efbundle are
+   not blocked. Proven with Testcontainers - including two real `dotnet engine.dll` processes -
+   and in the compose job with a second replica of the engine service, which must stay exited
+   after the first is stopped. No migration, no schema
+   change, `team_version` untouched.
+2. **Next: PR 4b, Jaeger in compose with 7-day retention, and log export turned on with it**;
+   then PR 5, the runbook. Nothing on PR 4a is open; Review Bot's nits and Hampus's decision
+   are in its entry.
+
+The PR 4 summary, as it stood when #66 merged:
 
 1. **`stage-7-engine-default`** lifts D2: **`docker compose up -d` starts the engine**, which
    until now took `--profile trade`. The default mode stays **Shadow** (`${TRADING_MODE:-Shadow}`),
@@ -163,9 +183,7 @@ stage 7 log below before continuing.
    `.env.example` and CLAUDE.md say loudly that an account with real paper positions needs
    `TRADING_MODE=Paper`, and that only one engine may run per database. No engine code changes,
    no migration, `team_version` untouched.
-2. **Next: PR 4b, Jaeger in compose with 7-day retention, and log export turned on with it**;
-   then PR 5, the runbook. Open on PR 4: whether to enforce one engine per database (an advisory
-   lock at startup) - see the PR 4 entry.
+2. Open on PR 4, since decided: one engine per database is enforced (PR 4a).
 
 The PR 3 summary, as it stood when #65 merged:
 
@@ -2583,7 +2601,7 @@ through the agent chain").
 
 ### The pull requests
 
-Seven, in this order (4b added 2026-10-10):
+Eight, in this order (4a and 4b added 2026-10-10):
 1. `TradingMode` and the kill switch.
 2. Engine metrics (`decisions_total{outcome,mode}`, `risk_rejections_total`,
    `agent_latency_seconds`), plus an `ActivitySource` per cycle so that `HttpClient` carries
@@ -2594,10 +2612,13 @@ Seven, in this order (4b added 2026-10-10):
    **Also in scope: whether, and which, logs are exported over OTLP** (Hampus, 2026-10-09).
    The engine's lines carry risk reasons and the agents' stances, so it is decided with the
    collector that would receive them, for both services at once, not as a side effect of PR 2.
-   **#65** (`stage-7-agent-tracing`), also taken before PR 4: logs are not exported. Approved
-   by Hampus to merge once CI is green (2026-10-10).
+   **Merged as #65** (`stage-7-agent-tracing`, 2026-10-10), also taken before PR 4: logs are not
+   exported.
 4. The engine leaves the profile (D2 lifted). **Decided by Hampus**, as its own PR after #63
-   merges. **Open** (`stage-7-engine-default`).
+   merges. **Merged as #66** (2026-10-10).
+4a. **One engine per database, enforced** (Hampus, 2026-10-10, after #66 made a second engine the
+   default whenever one also runs on the host): a Postgres advisory lock at startup. **Open**
+   (`stage-7-engine-lock`).
 4b. **Jaeger, and log export** (Hampus, 2026-10-10). Jaeger runs locally in compose as the trace
    backend, with **7-day retention**, behind the collector (which keeps its debug exporter or
    drops it, decided there), loopback-only and pinned like everything else. **Log export over
@@ -3060,6 +3081,73 @@ tests and the lock file, and the pieces only prove anything together.
   `has-pending-model-changes` clean. Python 587/587 (585 + 2), ruff, ruff format and mypy clean.
   Containers cannot reach each other on this machine, so the compose file was validated
   statically (`docker compose config`, and the CI step above); the bring-up is CI's.
+
+### PR 4a - one engine per database (`stage-7-engine-lock`)
+
+- **Why.** #66 left it open; Hampus decided on 2026-10-10 to enforce it. Since #66 a plain `up`
+  starts an engine beside any already running on the host, and two engines on one database are
+  two engines recording - and in Paper trading - one account.
+- **The lock.** `EngineInstanceLock` (`Infrastructure/Persistence`) runs
+  `pg_try_advisory_lock(0x54415345, 1)` - "TASE", the engine - on an **unpooled** connection of
+  its own (`ApplicationName=tas-engine (instance lock)`, `CommandTimeout=5`), and holds it for the
+  process lifetime. Session-level, so Postgres releases it however the session ends: a crash or a
+  killed container cannot strand it. Per database, which is the scope wanted. Unpooled because a
+  pooled Dispose keeps the physical session (and the lock) alive.
+- **Startup.** `EngineLockService` is registered before both workers; the host starts hosted
+  services in order and stops at the first that throws, so a second engine is refused before
+  either worker runs. Program.cs takes the lock itself, before the host runs (inside a hosted
+  service the host would log "Hosting failed to start" with a stack trace first), logs one
+  critical line naming the holder (application name, address, backend pid, since when, from
+  `pg_locks` joined to `pg_stat_activity`) and returns **exit code 0** - see *Decisions* below. The schema check still runs first, so an unreachable database keeps its own
+  sentence. The lock is released last on shutdown, after both workers.
+- **Fail closed.** Every 5 s the lock's own connection is asked whether this backend still holds
+  the lock (`pg_locks` where `pid = pg_backend_pid()`). A dropped connection, a terminated
+  backend, a timeout or a restarted database (a new session holds nothing) all answer no, and the
+  service stops the application; the process exits **4**. It does not retake the lock
+  in-process: compose's `on-failure` restart goes back through startup, lock first. Exposure is
+  at most the interval plus the shutdown of the step in hand.
+- **Not blocked.** EF Core's migration lock (used by `MigrateAsync`, the migrator and the
+  efbundle) is a `LOCK TABLE` on the history table, a different lock; a test migrates while the
+  lock is held. Tests that construct workers directly never start the host, so never take it.
+- **A bug found on the way.** The container disposes `EngineLockService` once per registration
+  (the singleton and the hosted-service forward), and a second `DisposeAsync` hit a disposed
+  `CancellationTokenSource` - which, on a refused start, would have surfaced as an
+  `ObjectDisposedException` instead of the refusal. Disposal is idempotent.
+- **Tests** (Testcontainers, `EngineLockTests`, `EngineProcessLockTests`): refused while held and
+  admitted after; a terminated session releases it and reports lost; the holder is described;
+  migration not blocked; the service refuses before a worker starts; a lost lock stops the app;
+  no stop while held, and stopping releases. Plus **two real `dotnet engine.dll` processes**: the
+  second exits 0 with the sentence, no stack trace, and never logs its trading mode; after the
+  first is killed, the next starts; SIGTERM exits 0, never 4. CI's compose job (dispatch/master)
+  scales the engine service to two: the new replica - the stack's own image, configuration and
+  restart policy - must log the refusal, be exited with code 0 and zero restarts, and still be
+  exited 20 s after the first engine is stopped.
+- **Deliberate breaks.** Granting the lock unconditionally fails 6 tests; ignoring a lost lock
+  fails the loss test; registering the lock after the workers fails the process test (the second
+  engine logs its trading mode before refusing).
+- **Review Bot's nits (accept-with-nits), one commit each.** (1) `WatchAsync` returns, rather
+  than marking the lock lost, once stopping is requested, and the lock check runs with its own
+  timeout instead of the stopping token (an Npgsql cancellation mid-check could hang the stop);
+  `StopAsync` cancels the watch before closing the connection. A Testcontainers test and a
+  process test show a normal stop is never exit 4. (2) The refusal is one critical line with no
+  stack trace (above). (3) The engine's log is capped at three files of 10 MB, as the
+  collector's. (4) The worklog no longer lists #65 as open.
+- **Decisions taken by Hampus (2026-10-10).** **A refused engine stays stopped**: it must not be
+  retried until the other engine stops and then take over. Docker cannot exempt one exit code
+  from a restart policy, and `on-failure` must stay for real failures (a lost lock, exit 4,
+  goes back through the lock; a crash; a refused configuration). So a refusal is not a failure:
+  `RefusedExitCode` is **0** (was 3), and `on-failure` leaves it exited. Rejected: keeping exit 3
+  with `restart: "no"` (a lost lock would then stay down) or `on-failure:N` (gives up on lost
+  locks too, and still retries a refusal N times). What says "refused" is the line - which now
+  also says it stays stopped - and that is what the tests and CI read. Exit 4 stays restartable:
+  a lost lock most often means a restarted database or a dropped connection, and the restart
+  either holds the lock again or is refused and stays stopped, so it can never become a second
+  engine. Breaks: `RefusedExitCode = 3` fails the process test; `restart: unless-stopped` fails
+  `test_the_restart_policy_retries_failures_but_not_a_refusal`.
+- **Local runs** (after the review round and the decision). .NET 648/648 (637 + 11) with
+  Testcontainers, `-warnaserror`, `dotnet format` and `has-pending-model-changes` clean. Python
+  597/597, ruff, ruff format and mypy clean. Compose
+  validated statically; the bring-up, including the second-engine step, is CI's.
 
 ## Lessons and gotchas
 

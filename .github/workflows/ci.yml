@@ -467,6 +467,50 @@ jobs:
           echo "no trace reached from the engine's cycle into the agent service in five minutes"
           exit 1
 
+      # One engine per database, end to end, and Hampus's decision that a refused engine stays
+      # stopped (2026-10-10). A second replica of the engine service - the stack's own image,
+      # configuration, database and restart policy, which is what a host-run engine beside a
+      # plain `up` amounts to - must log the refusal, exit 0, and not be restarted; then, with
+      # the first engine stopped, it must still not come back and take over. The refusal is read
+      # from the log line, because exit 0 is what keeps `restart: on-failure` from retrying it.
+      # The first engine has to be running before and is stopped by this step, so it goes last.
+      - name: A second engine refuses to start, and stays stopped when the first one stops
+        if: github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          first=$(docker compose ps -q engine)
+          test "$(docker inspect -f "{{.State.Status}}" "$first")" = "running"
+          docker compose up -d --no-deps --no-recreate --scale engine=2 engine
+          second=$(docker compose ps -aq engine | grep -v "^${first:0:12}" | head -n 1 || true)
+          test -n "$second" || { echo "no second engine container was created"; exit 1; }
+          status() { docker inspect -f "{{.State.Status}} exit={{.State.ExitCode}} restarts={{.RestartCount}}" "$second"; }
+          for _ in $(seq 1 60); do
+            [ "$(docker inspect -f "{{.State.Status}}" "$second")" = "exited" ] && break
+            sleep 2
+          done
+          log=$(docker logs "$second" 2>&1)
+          tail -n 3 <<<"$log"
+          if ! grep -q "Another engine is already running against this database" <<<"$log"; then
+            echo "the second engine did not log the refusal ($(status))"
+            exit 1
+          fi
+          if grep -q "Trading mode is" <<<"$log"; then
+            echo "the second engine got as far as its trading worker before refusing"
+            exit 1
+          fi
+          if [ "$(status)" != "exited exit=0 restarts=0" ]; then
+            echo "the refused engine is not stopped for good: $(status)"
+            exit 1
+          fi
+          test "$(docker inspect -f "{{.State.Status}}" "$first")" = "running"
+          docker stop "$first" >/dev/null
+          sleep 20
+          if [ "$(status)" != "exited exit=0 restarts=0" ]; then
+            echo "the refused engine came back after the first one stopped: $(status)"
+            exit 1
+          fi
+          echo "refused, exit 0, not restarted - and still stopped 20 s after the first engine stopped"
+
       - name: What the system said, for whoever reads a failed run
         if: always() && github.event_name != 'pull_request'
         run: docker compose logs --tail 40 || true
