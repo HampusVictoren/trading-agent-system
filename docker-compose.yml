@@ -14,10 +14,13 @@
 # other ways - Shadow as the default, which places nothing, and trading.kill_switch, which stops
 # a running engine's buying - so D2 is lifted and the profile is gone (Hampus, 2026-10-09).
 #
-# **One engine per database.** Nothing stops a second one: an engine run on the host (`dotnet
-# run --project src/engine`) against this database while the container also runs is two
-# engines analysing, recording and - in Paper - trading the same account. Run one or the
-# other; `docker compose stop engine` stops the container's without touching the rest.
+# **One engine per database, enforced.** The engine takes a Postgres advisory lock at startup and
+# holds it for as long as it runs; a second engine against the same database - the container
+# beside one on the host (`dotnet run --project src/engine`), or the reverse - refuses to start,
+# naming the holder, and exits 3. Note what `restart: on-failure` below then does with a refused
+# container: it retries, with Docker's backoff, and **takes over when the other engine stops** -
+# in the mode .env gives it. To run the engine on the host, `docker compose stop engine` first;
+# a stopped container is not restarted until the next `up`.
 #
 # Secrets come from .env in the repository root; see .env.example. **Compose reads that file
 # itself**, for the ${...} below - it is never handed to a container. What each service gets
@@ -242,9 +245,11 @@ services:
     # stop takes as long as the worker's current step takes to notice the cancellation.
     stop_grace_period: 45s
     # on-failure rather than unless-stopped: the engine's own loop already survives a failed
-    # cycle, so a process that exits has hit something structural - a configuration it refuses
-    # or a schema behind the build. Restarting is a bet that an operator is fixing it, and
-    # Docker's backoff keeps the bet cheap; a clean exit stays exited.
+    # cycle, so a process that exits has hit something structural - a configuration it refuses,
+    # a schema behind the build, another engine holding the lock (exit 3) or the lock lost
+    # mid-run (exit 4). Restarting is a bet that an operator is fixing it, and Docker's backoff
+    # keeps the bet cheap; a clean exit stays exited. After exit 4 the restart goes back through
+    # the lock, so it either holds it again or is refused.
     restart: on-failure
 
 volumes:
