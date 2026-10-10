@@ -157,9 +157,10 @@ and the stage 7 log below before continuing.
    collector**, which prints them and keeps nothing: `docker compose logs otel-collector`.
    `OTEL_EXPORTER_OTLP_ENDPOINT=` (empty) or `OTEL_SDK_DISABLED=true` in the root `.env` turns
    that off. No migration, no change to what is traded, and `team_version` does not move.
-2. **Next: PR 4, the engine leaves `--profile trade`** (decided by Hampus). Then PR 5, the
-   runbook. The open questions in #65's description - which backend keeps traces, and whether
-   export should be on by default under compose - wait for Hampus.
+2. **Next: PR 4, the engine leaves `--profile trade`** (decided by Hampus). Then PR 4b,
+   **Jaeger in compose with 7-day retention, and log export turned on with it**; then PR 5, the
+   runbook. Hampus decided #65's three open questions on 2026-10-10 - see the PR 3 entry: Jaeger
+   locally, export on by default under compose, log export with the Jaeger PR.
 
 Hampus's six answers from 2026-10-09 and his two on PR 2 still stand - see *Hampus's decisions*
 in the stage 7 log.
@@ -2555,7 +2556,7 @@ through the agent chain").
 
 ### The pull requests
 
-Six, in this order:
+Seven, in this order (4b added 2026-10-10):
 1. `TradingMode` and the kill switch.
 2. Engine metrics (`decisions_total{outcome,mode}`, `risk_rejections_total`,
    `agent_latency_seconds`), plus an `ActivitySource` per cycle so that `HttpClient` carries
@@ -2566,9 +2567,15 @@ Six, in this order:
    **Also in scope: whether, and which, logs are exported over OTLP** (Hampus, 2026-10-09).
    The engine's lines carry risk reasons and the agents' stances, so it is decided with the
    collector that would receive them, for both services at once, not as a side effect of PR 2.
-   **Open as #65** (`stage-7-agent-tracing`), also taken before PR 4: logs are not exported.
+   **#65** (`stage-7-agent-tracing`), also taken before PR 4: logs are not exported. Approved
+   by Hampus to merge once CI is green (2026-10-10).
 4. The engine leaves the profile (D2 lifted). **Decided by Hampus**, as its own PR after #63
    merges.
+4b. **Jaeger, and log export** (Hampus, 2026-10-10). Jaeger runs locally in compose as the trace
+   backend, with **7-day retention**, behind the collector (which keeps its debug exporter or
+   drops it, decided there), loopback-only and pinned like everything else. **Log export over
+   OTLP is turned on in the same PR**, for both services, so logs get a backend with retention
+   from the day they leave stdout - and the compose job's checks extend to them.
 5. `docs/runbook.md`: restarting, where the logs are, and how to stop trading (the kill switch),
    with rate limiting described rather than built.
 6. The deploy. **Deferred, no target chosen** (Hampus, 2026-10-09): the engine runs on his
@@ -2911,9 +2918,16 @@ tests and the lock file, and the pieces only prove anything together.
     `uv sync --locked`.
   - .NET: 637/637, including Testcontainers. The `-warnaserror` build, `dotnet format` and
     `has-pending-model-changes` are clean; the engine's code is untouched.
-- **Open, for Hampus** (also in #65's description): which backend keeps traces and for how long;
-  whether export should stay on by default under compose (it goes to a local process that keeps
-  nothing); and log export, when there is a backend.
+- **Decisions taken by Hampus (2026-10-10)**, on the three questions this PR left open:
+  1. **Traces go to Jaeger, locally in compose, with 7-day retention**, in a follow-up PR of its
+     own - 4b in the plan. Until then the collector's log is where a trace is read.
+  2. **OTLP export stays on by default under compose.** It goes to a process on the same host,
+     and no span carries content; `OTEL_EXPORTER_OTLP_ENDPOINT=` or `OTEL_SDK_DISABLED=true`
+     turns it off.
+  3. **Log export is turned on together with the Jaeger PR**, not before: logs leave stdout only
+     once there is a backend with retention to receive them.
+  Still open, and not blocking: a `traceparent` is accepted before authentication (it names a
+  parent span and nothing more).
 - **Review (Review Bot: accept with nits) and CodeQL**, fixed on the branch, one commit each:
   - **CodeQL, "incomplete URL substring sanitization"** on a test's
     `description.endswith("https://collector.example:443")`. A false positive - it is an
