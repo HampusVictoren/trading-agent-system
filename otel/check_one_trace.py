@@ -97,6 +97,14 @@ def main() -> int:
     services = Counter(span.service for span in spans)
     print(f"{len(spans)} spans read: " + ", ".join(f"{n} from {s}" for s, n in services.items()))
 
+    # Only the two services export spans, each through its own content-stripping setup. A span
+    # from anything else - FastAPI's built-in telemetry once shipped as unknown_service:python -
+    # is a tracer nobody configured, and no amount of waiting makes that right: exit 2, not 1.
+    strangers = sorted(set(services) - {ENGINE, AGENTS})
+    if strangers:
+        print(f"spans from a service that should not export: {', '.join(strangers)}")
+        return 2
+
     chain = chain_to_cycle(spans)
     if chain is None:
         print("no agents server span whose ancestry reaches the engine's trading.cycle yet")

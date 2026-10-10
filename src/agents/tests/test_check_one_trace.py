@@ -97,3 +97,13 @@ def test_the_script_exits_non_zero_until_the_chain_exists(monkeypatch, capsys):
     monkeypatch.setattr("sys.stdin", io.StringIO(AGENTS + ENGINE))
     assert check.main() == 0
     assert TRACE in capsys.readouterr().out
+
+
+def test_spans_from_any_other_service_fail_at_once(monkeypatch, capsys):
+    import io
+
+    stranger = resource("unknown_service:python", span(0, "GET", "f000000000000001", kind="Server"))
+    monkeypatch.setattr("sys.stdin", io.StringIO(AGENTS + ENGINE + stranger))
+
+    assert check.main() == 2
+    assert "unknown_service:python" in capsys.readouterr().out

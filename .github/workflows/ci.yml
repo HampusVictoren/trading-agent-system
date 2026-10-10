@@ -433,9 +433,16 @@ jobs:
           set -euo pipefail
           for _ in $(seq 1 60); do
             log=$(docker compose logs --no-log-prefix otel-collector 2>&1)
-            if python3 otel/check_one_trace.py <<<"$log" > one-trace.txt; then
+            rc=0
+            python3 otel/check_one_trace.py <<<"$log" > one-trace.txt || rc=$?
+            if [ "$rc" -eq 0 ]; then
               cat one-trace.txt
               exit 0
+            fi
+            # 2: spans from a service other than the engine and the agents; waiting won't help.
+            if [ "$rc" -eq 2 ]; then
+              cat one-trace.txt
+              exit 1
             fi
             sleep 5
           done
