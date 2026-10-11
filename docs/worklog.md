@@ -7,12 +7,14 @@ A running record of what has been done, what was learned along the way, and what
 
 This file answers "where are we, how did we get here, and what is next". When resuming, read *Current state* and *Next steps* first, then the roadmap section for the next stage.
 
-**Last updated:** 2026-10-10. **Stage 6 is done**, with all five pull requests merged (#58-#62).
+**Last updated:** 2026-10-11. **Stage 6 is done**, with all five pull requests merged (#58-#62).
 **Stage 7 is in progress**: PR 1 (`Trading:Mode` and the kill switch) is merged as #63, PR 2 (the
 engine's metrics, cycle trace and heartbeat) as #64, PR 3 (the agent service's tracing and a
 collector in compose) as #65, PR 4 (the engine leaves `--profile trade` - D2 lifted) as #66, and
-PR 4a (`stage-7-engine-lock`, one engine per database, enforced) is open. *Current state* and
-*Next steps* are
+PR 4a (one engine per database, enforced) as #67. **The roadmap was reordered on 2026-10-11**
+after Alpha's investment review, approved by Hampus: stage 7 finishes small (PR 4b and PR 5),
+then a new stage 8 hardens measurement before any rule, screening or team changes - see
+*Alpha's review and the new order*. *Current state* and *Next steps* are
 current. The paragraphs directly below are the 2026-10-01 record of stage 5 and
 are kept as they were written.
 
@@ -93,11 +95,11 @@ Two things that are easy to misread as broken:
 
 ## Current state
 
-- **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21, **stage 3 done** 2026-09-23. **Stage 4 started** 2026-09-23. PR 5 and PR 6 were each split in two, so the stage is eight pull requests, and **all eight are merged** as of 2026-09-25. **Stage 5 is merged in full** - #42 to #51, the shortlist edge as #54 and the daily deployment cap as #56. **Stage 6 is done**: all five PRs are merged (#58-#62). **Stage 7 is in progress**: PR 1 (`stage-7-trading-mode`) is merged as #63, PR 2 (`stage-7-engine-telemetry`, the engine's metrics, the cycle trace and the heartbeat) as #64, PR 3 (`stage-7-agent-tracing`, the agent service's tracing and the collector) as #65, PR 4 (`stage-7-engine-default`, a plain `docker compose up` starts the engine, in Shadow - D2 lifted) as #66, and PR 4a (`stage-7-engine-lock`, a Postgres advisory lock that refuses a second engine per database) is open. See the stage 7 log. Stage 8 exists only as a plan.
-- **`master` is at PR #66** (a plain `up` starts the engine, in Shadow; merged 2026-10-10 as `fbdeca2`), after #65 (the agent service's tracing and the collector, `d2d12da`), #64 (the engine's metrics, one trace per cycle and the heartbeat, `9babe5f`), #63 (Trading:Mode and the kill switch) and #62 (the compose bring-up in CI). All five of stage 6's pull requests are on it, plus Dependabot's seven Python bumps as #57 - which merged *after* #58. Stage 4's eight pull requests and all five of stage 5's are on it, plus the live-run record as #53, the security hardening as #52 and the `CLAUDE.md` levelling as #55. **Which CI jobs block a merge is branch protection**, and three were added during stage 6 - `Agents (image)`, `Engine (image)` and `Compose`. This file has twice assumed the required list keeps up with the workflow; it does not, and nobody here can read that setting. Check it under *Settings - Branches*.
+- **Stage 0 done** 2026-09-19, **stage 1 done** 2026-09-20, **stage 2 done** 2026-09-21, **stage 3 done** 2026-09-23. **Stage 4 started** 2026-09-23. PR 5 and PR 6 were each split in two, so the stage is eight pull requests, and **all eight are merged** as of 2026-09-25. **Stage 5 is merged in full** - #42 to #51, the shortlist edge as #54 and the daily deployment cap as #56. **Stage 6 is done**: all five PRs are merged (#58-#62). **Stage 7 is in progress**: PR 1 (`stage-7-trading-mode`) is merged as #63, PR 2 (`stage-7-engine-telemetry`, the engine's metrics, the cycle trace and the heartbeat) as #64, PR 3 (`stage-7-agent-tracing`, the agent service's tracing and the collector) as #65, PR 4 (`stage-7-engine-default`, a plain `docker compose up` starts the engine, in Shadow - D2 lifted) as #66, and PR 4a (`stage-7-engine-lock`, a Postgres advisory lock that refuses a second engine per database) as #67. What is left of stage 7 is PR 4b (Jaeger and log export) and PR 5 (the runbook); the deploy stays deferred. See the stage 7 log. **After it, the order is new as of 2026-10-11** (Alpha's review, approved by Hampus): stage 8 measurement hardening, stage 9 risk rules and stage 10 screening switched on in one batch, stage 11 calibration then quarterly reports, and Jev (#50) and more specialists postponed. The old stage 8 is kept in the roadmap as history.
+- **`master` is at #69** (Dependabot's seven Python bumps, `f71ad94`), after #68 (two NuGet bumps) and **#67** (one engine per database, `dc06a6c`, merged 2026-10-10 23:54 Stockholm time). Before them: PR #66 (a plain `up` starts the engine, in Shadow; `fbdeca2`), #65 (the agent service's tracing and the collector, `d2d12da`), #64 (the engine's metrics, one trace per cycle and the heartbeat, `9babe5f`), #63 (Trading:Mode and the kill switch) and #62 (the compose bring-up in CI). All five of stage 6's pull requests are on it, plus Dependabot's seven Python bumps as #57 - which merged *after* #58. Stage 4's eight pull requests and all five of stage 5's are on it, plus the live-run record as #53, the security hardening as #52 and the `CLAUDE.md` levelling as #55. **Which CI jobs block a merge is branch protection**, and three were added during stage 6 - `Agents (image)`, `Engine (image)` and `Compose`. This file has twice assumed the required list keeps up with the workflow; it does not, and nobody here can read that setting. Check it under *Settings - Branches*.
 - **Dependabot's bumps are in.** #46 (setup-uv) and #47 (six Python packages) merged to `master` on 2026-09-26 and were merged *into* `stage-5-selling` rather than rebased onto, because the branch was already pushed and a rebase would need a force-push. Two of the six matter behaviourally - **ag2 1.0.5 to 1.0.6** and **openai 3.16.1 to 3.19.1** - and the lock also *downgraded* SQLAlchemy from 2.1.1 to 2.0.54, which the Alembic fixture exercises on every database test. 476 Python tests green on all of it.
 - **Stage 5's merge history:** `stage-5-model-and-horizon` as #42, `stage-5-screening` as #43, `stage-5-sek` as #44, `stage-5-symbol-columns` as #45 - the last of those repairing #44, which merged four of its six commits and left `master` with the widened pattern and the old columns for a few minutes - `stage-5-selling` as #48 and `stage-5-cycle` as #51.
-- **Two pull requests are open as of 2026-10-10:** stage 7's PR 4a (#67, `stage-7-engine-lock`) and #50, `plan/jev-placement` - a docs-only branch adding `docs/arkitektur-jev-roadmap.md`, **not reviewed here, and left to the owner** - nothing in this repository's work merges, rebases or pushes to it. **Nine** remote branches are stale and can go, all merged or superseded (checked against `git ls-remote` on 2026-10-10): `security/hardening-f01-f14` (the superseded first attempt at #52), `docs/pr4-live-run` (#53), `stage-5-shortlist-edge` (#54), `stage-5-cycle` (#51), `stage-6-compose-smoke` (#62), `stage-7-trading-mode` (#63), `stage-7-engine-telemetry` (#64), `stage-7-agent-tracing` (#65) and `stage-7-engine-default` (#66). An earlier version of this sentence named `security/hardening-master-bdf5bf1`, deleted long ago - the one thing the list promises is that deleting them is a reading exercise rather than a search.
+- **Two pull requests are open as of 2026-10-11:** this roadmap reordering (`docs/roadmap-after-alpha-review`) and #50, `plan/jev-placement` - a docs-only branch adding `docs/arkitektur-jev-roadmap.md`, **not reviewed here, and left to the owner**, and since 2026-10-11 **postponed** in the roadmap until calibration shows the chain adds value - nothing in this repository's work merges, rebases or pushes to it. **Ten** remote branches are stale and can go, all merged or superseded (checked against `git ls-remote` on 2026-10-11): `security/hardening-f01-f14` (the superseded first attempt at #52), `docs/pr4-live-run` (#53), `stage-5-shortlist-edge` (#54), `stage-5-cycle` (#51), `stage-6-compose-smoke` (#62), `stage-7-trading-mode` (#63), `stage-7-engine-telemetry` (#64), `stage-7-agent-tracing` (#65), `stage-7-engine-default` (#66) and `stage-7-engine-lock` (#67). An earlier version of this sentence named `security/hardening-master-bdf5bf1`, deleted long ago - the one thing the list promises is that deleting them is a reading exercise rather than a search.
 - **The security hardening is merged as #52 and verified live** on 2026-10-01: `POST /v1/outcomes` accepted its HMAC signature end to end (`Delivery 8097ab0f: sent 1 outcomes`), 25 market-scope calls answered 200, `/openapi.json` and `/docs` both answer 404, `/ready` returns `{"status":"ready"}` with no dependency detail, and an unauthenticated signal is refused with 401. Nothing was rate-limited. **Both of its required secrets had to be created first** - neither existed after the merge, so neither service would start.
 - **Two of its paths are not verified live:** `POST /v1/signals` and `POST /v1/screen` with their scope keys, because the verification ran on the same trading day as the live run, so no analysis was due and the shortlist was read from the database. All five call sites go through the same `AddApiKey`/`ApiKeyFor` code and no scoped keys are configured, so all five resolve to the legacy key that the 25 successful calls used - but the first new trading day is what proves it, and that is where the blocker found in review would have shown.
 - **The portfolio holds five instruments as of 2026-10-01**, up from one: ERIC-B.ST (26 at 94.96, from 2026-09-26) plus HEXA-B.ST (25 at 99.02), SEB-A.ST (10 at 229.20), EVO.ST (3 at 791.80) and KINV-B.ST (40 at 61.70), all four bought by the engine's own first screened cycle. Cash is 87 920.14 kr. Every one of the four is a *measurable* decision with `selection = Shortlist`, which is what stage 5 existed to produce.
@@ -124,7 +126,7 @@ Two things that are easy to misread as broken:
 
 ## Next steps
 
-### Resume here — stage 7, PR 4a (2026-10-10)
+### Resume here — stage 7's last two PRs, then the new stage 8 (2026-10-11)
 
 > **After pulling master with #63 in it, do these two things on the machine that runs the
 > engine, before starting it again** (#63 was merged before they were done there):
@@ -144,9 +146,8 @@ Two things that are easy to misread as broken:
 >    `TRADING_MODE=Paper` in `.env` runs in **Shadow**, and the startup warning naming the held
 >    positions is the only sign that nothing is closing them.
 > 4. **Run one engine.** If the engine runs on the host (`dotnet run --project src/engine`),
->    `docker compose stop engine` after every `up`. Until PR 4a (`stage-7-engine-lock`) merges,
->    nothing prevents the container and the host process being two engines on one account.
->    After it, the second to start refuses with one line naming the holder and **stays
+>    `docker compose stop engine` after every `up`. Since #67 (merged 2026-10-10), the second
+>    to start refuses with one line naming the holder and **stays
 >    stopped** (Hampus, 2026-10-10) - it never takes over when the other one stops. So the host
 >    engine and the container are whichever started first: stop the container to run on the
 >    host, and `docker compose up -d` after stopping the host's to hand back.
@@ -154,9 +155,27 @@ Two things that are easy to misread as broken:
 >
 > Remove this note once all of it is done.
 
-Stage 7's PRs 1-4 are merged as #63-#66. **PR 4a is the branch in hand**: `stage-7-engine-lock`,
-open and not merged. Read the stage in the roadmap (*Etapp 7*) and the stage 7 log below before
-continuing.
+**The roadmap was reordered on 2026-10-11** after Alpha's investment review, approved by Hampus
+the same day - see *Alpha's review and the new order (2026-10-11)* after the stage 7 log, and the
+roadmap's *Investeringsgranskningen*. Stage 7's PRs 1-4a are merged as #63-#67. In order, next:
+
+1. **Stage 7, PR 4b**: Jaeger in compose with 7-day retention, loopback-only and pinned, with log
+   export over OTLP turned on in the same PR. Then **PR 5**, `docs/runbook.md`. The deploy (PR 6)
+   stays deferred with no target, so PR 5 ends the stage. Keep both small.
+2. **Stage 8, measurement hardening.** First `screen_version` and `rules_version`, like
+   `team_version`, on every decision and shortlist; then the Shadow control portfolios
+   (equal-weight shortlist, seeded random pick), a daily valuation series, the new measures, a
+   volatility- and horizon-scaled HOLD band, and the **dividend fix** (the stock leg ignores
+   dividends today; the benchmark leg does not - see the review entry). **Before the window
+   starts, Hampus confirms the pre-registered success criterion**, proposed in the roadmap's
+   etapp 8 and in the review entry.
+3. **Stages 9 and 10 in one batch**: the sector cap, a volatility-scaled stop from the first buy
+   and the drawdown brake; Large Cap with about 100 names, 12-1 momentum, and value/quality as a
+   separate baseline. One new `rules_version` and one new `screen_version`, switched on together.
+4. **Stage 11**: calibration, then quarterly reports as the first new data source.
+5. **Postponed**: Jev (#50) and more specialists, until the criterion is met.
+
+The PR 4a summary, as it stood when #67 merged:
 
 1. **`stage-7-engine-lock`** enforces **one engine per database** (Hampus, 2026-10-10): a
    Postgres session-level advisory lock taken before either worker starts and held for the
@@ -2617,8 +2636,8 @@ Eight, in this order (4a and 4b added 2026-10-10):
 4. The engine leaves the profile (D2 lifted). **Decided by Hampus**, as its own PR after #63
    merges. **Merged as #66** (2026-10-10).
 4a. **One engine per database, enforced** (Hampus, 2026-10-10, after #66 made a second engine the
-   default whenever one also runs on the host): a Postgres advisory lock at startup. **Open**
-   (`stage-7-engine-lock`).
+   default whenever one also runs on the host): a Postgres advisory lock at startup. **Merged as #67**
+   (`stage-7-engine-lock`, 2026-10-10); a refused engine exits 0 and stays stopped.
 4b. **Jaeger, and log export** (Hampus, 2026-10-10). Jaeger runs locally in compose as the trace
    backend, with **7-day retention**, behind the collector (which keeps its debug exporter or
    drops it, decided there), loopback-only and pinned like everything else. **Log export over
@@ -2629,6 +2648,10 @@ Eight, in this order (4a and 4b added 2026-10-10):
 6. The deploy. **Deferred, no target chosen** (Hampus, 2026-10-09): the engine runs on his
    machine until he decides to move it to the cloud. The candidates remain a VPS with compose,
    Azure Container Apps, or Fly.io.
+
+**Since 2026-10-11 the stage finishes small** (Alpha's review, approved by Hampus): PR 4b and
+PR 5 are what remains, kept to their stated scope, and with the deploy deferred, PR 5 closes the
+stage. What comes after is the new stage 8, measurement hardening - not the old stage 8.
 
 ### PR 1 - Trading:Mode and the kill switch (`stage-7-trading-mode`)
 
@@ -3148,6 +3171,109 @@ tests and the lock file, and the pieces only prove anything together.
   Testcontainers, `-warnaserror`, `dotnet format` and `has-pending-model-changes` clean. Python
   597/597, ruff, ruff format and mypy clean. Compose
   validated statically; the bring-up, including the second-engine step, is CI's.
+
+## Alpha's review and the new order (2026-10-11)
+
+**Alpha**, an investment-expert agent, reviewed the system as an investment process rather than as
+code. **Hampus approved the reordering on 2026-10-11.** The roadmap carries it in Swedish under
+*Investeringsgranskningen* and etapp 8-11; this entry is the record, the code checks behind it, and
+what is still Hampus's to decide. Docs only: no code, no migration, `team_version` untouched.
+
+**The verdict.** The foundation is sound. **The biggest risk is that the measurement series stays
+too small and too correlated to ever answer the main question** - do the agents' buys beat the
+shortlist they were handed? Thirty names from one index move together, so a month of decisions is
+few independent observations, and every rule change mixed into the series shrinks it further.
+
+**The findings, checked against the code on 2026-10-11:**
+
+| Finding | What the code does today |
+|---|---|
+| 3-month momentum is short; 12-1 or 6-1 is the classic form, keep the volatility adjustment | `MOMENTUM_DAYS = 90`, divided by 30-bar volatility (`app/domain/screening.py`) |
+| Value and quality should be a separate baseline, not mixed into the ranking | The ranking is **momentum only** already - `fetch_histories_from_yfinance` asks for no fundamentals. The roadmap's stage 5 text said "momentum + värdering"; the code never did. So the change is a new baseline, not a removal |
+| A fixed 10 % stop treats volatile names like banks; scale by volatility, measure from the first buy | `StopLossPercentage: 0.10`, against the **average** purchase price |
+| Sector cap (2-3 holdings or ~25 %) and a drawdown brake (pause buys at a 10-15 % fall) | Neither exists. `MaxPositionPercentage: 0.05` is per holding; the kill switch is manual. There is **no daily portfolio valuation** to measure a drawdown from - only decisions and orders |
+| Dividends on both sides | **Not on the stock side** - see below |
+| The fixed ±2 % HOLD band is arbitrary | `Outcome:HoldBandPct: 0.02`, the same at 1, 5 and 20 trading days and for every name |
+| Hit rate is weak; add excess return per decision, risk-adjusted, drawdown, turnover, cost | `trading.hit_rate`, and `trading.shortlist_edge` (mean excess return of buys against the shortlist). The rest needs the valuation series |
+| 31 names is narrow; Large Cap, ~100, with a liquidity filter | 31 OMXS30 names; a liquidity filter exists. 50 names screened in 2.0 s in stage 5 |
+| Calibration, then screening and controls, then quarterly reports before news/macro/sentiment | The old stage 8 put specialists first |
+| Shadow control portfolios: equal-weight shortlist, random pick | The shortlist average exists as a view, without costs, turnover or drawdown; no random control |
+| Pre-register a criterion and a date | A measure exists; no threshold and no date |
+| Postpone the bigger hosted model (#50, Jev) and more specialists | #50 is open and untouched |
+
+**The dividend finding.** Asked to find out now whether yfinance's adjusted close is used:
+- The **instrument leg** of an outcome runs from `ReferencePrice` - the decision price, which is
+  `info["currentPrice"]` and unadjusted - to the close on the landing bar
+  (`OutcomeCalculator.Measure`). A share falls by its dividend on the ex-date and nothing adds it
+  back, so **a dividend inside the horizon is scored as a loss.**
+- The **benchmark leg** is close to close on XACT-OMXS30.ST's history. XACT OMXS30 ESG pays no
+  dividend - its fund rules, § 12, say all income is reinvested; the last distribution was in 2011
+  - so **the benchmark is total return.**
+- The history comes from `Ticker.history`, whose `auto_adjust` defaults to on in yfinance 1.7.0
+  (`scrapers/history.py`). In practice that changes little, because a horizon is measured soon
+  after it lands and adjustment only rewrites bars *before* a later ex-date. But it mixes an
+  unadjusted reference price with an adjusted series, so a measurement made late would compare
+  across the adjustment, and **a split inside the horizon would be scored as a crash**.
+- Screening downloads with `auto_adjust=True`, so momentum is already total return.
+- **Effect:** hit rate and excess return against the index are biased **against** the agents by
+  about the dividend yield over the horizon, most in April-May, when most Stockholm dividends go
+  ex. `shortlist_edge` compares shares with shares and is less affected. The fix belongs in stage
+  8: score both legs on one adjusted series (scale the signal day's adjusted close by the
+  reference price), with an ex-date and a split in the test table.
+
+**Hampus's decision (2026-10-11): the new order.**
+1. **Finish stage 7 small**: PR 4b (Jaeger, 7-day retention, log export) and PR 5 (the runbook).
+   The deploy stays deferred.
+2. **New stage 8, measurement hardening**: control portfolios in Shadow; the new measures; a
+   volatility-scaled HOLD band; the dividend check (done above, the fix is the stage's); the
+   pre-registered criterion. **Prerequisite:** version the screening and the risk rules like
+   `team_version`, so that later changes never pool populations - and make the rule changes in
+   one batch rather than drip by drip.
+3. **Stage 9, rules**: the sector cap, a volatility-scaled stop from the first buy, the drawdown
+   brake.
+4. **Stage 10, screening**: Large Cap, about 100 names, 12-1 momentum, value/quality as a
+   separate baseline.
+5. **Stage 11**: calibration, then quarterly reports as the first new data source.
+6. **Postponed**: Jev/#50 and more specialists.
+
+The old stage 8 stays in the roadmap as history, marked superseded. Stages 9 and 10 are written as
+switched on together, under one new `rules_version` and one new `screen_version`, because each
+switch starts a new population.
+
+**The proposed success criterion - for Hampus to confirm or change before the window starts:**
+- **Question:** do the agents' buys beat the equal-weight shortlist, after costs?
+- **Population:** BUY decisions with `selection = Shortlist`, Paper and Shadow together (a
+  shadowed buy counts as the agents' pick, per E6), one `team_version`, one `screen_version`, one
+  `rules_version`.
+- **Primary measure:** the mean of (the buy's net return − the same day's equal-weight
+  shortlist's net return) at **20 trading days**, both charged the same cost per trade.
+- **Pass:** the mean is above zero **and** the lower bound of a one-sided 90 % interval is above
+  zero, bootstrapped over *trading days* rather than decisions, because one day's buys move
+  together. The buys must also beat the random control. Hit rate, risk-adjusted return, drawdown
+  and turnover are reported and decide nothing.
+- **Date:** **six months after the window starts, or earlier once 150 buys from at least 60
+  distinct trading days are measured.** Fewer than 100 buys at six months extends it once, by
+  three months; after that it counts as a fail.
+- **Window start:** when stages 9 and 10 are switched on together, so the agents are judged under
+  the rules they will keep. Stage 8's data until then is a dry run of the measures. Nothing in the
+  team, the screen or the rules changes inside the window; a change starts a new population and a
+  new clock. If stages 9-10 merge around the end of 2026, the evaluation date is about the end of
+  June 2027.
+- **What it decides:** a pass opens the postponed work (#50, specialists). A fail means the LLM
+  chain adds cost rather than value and the effort goes into screening. An interval still
+  spanning zero after the extension counts as a fail.
+- **Why these numbers, honestly:** 20 days is the longest fixed horizon already measured and the
+  one a 30-day thesis cap can reach. A 20-day excess return on one share has a spread of several
+  percent, and correlated days cut 150 buys to far fewer independent ones, so even this criterion
+  can only see an edge of roughly a percentage point per trade or more. That limit is Alpha's main
+  risk in numbers, and the reason the universe widens in stage 10.
+
+**Open for Hampus** (none blocks stage 7's last two PRs):
+1. Confirm, or change, the criterion above - the horizon, the 90 % interval, 150/60/100, six
+   months, and the window starting at stages 9-10.
+2. The sector cap: 2 or 3 holdings, or about 25 % of NAV.
+3. The drawdown brake: 10 % or 15 % from the peak.
+4. Momentum: 12-1 or 6-1.
 
 ## Lessons and gotchas
 
