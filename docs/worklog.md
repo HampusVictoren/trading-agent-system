@@ -99,7 +99,7 @@ Two things that are easy to misread as broken:
 - **`master` is at #69** (Dependabot's seven Python bumps, `f71ad94`), after #68 (two NuGet bumps) and **#67** (one engine per database, `dc06a6c`, merged 2026-10-10 23:54 Stockholm time). Before them: PR #66 (a plain `up` starts the engine, in Shadow; `fbdeca2`), #65 (the agent service's tracing and the collector, `d2d12da`), #64 (the engine's metrics, one trace per cycle and the heartbeat, `9babe5f`), #63 (Trading:Mode and the kill switch) and #62 (the compose bring-up in CI). All five of stage 6's pull requests are on it, plus Dependabot's seven Python bumps as #57 - which merged *after* #58. Stage 4's eight pull requests and all five of stage 5's are on it, plus the live-run record as #53, the security hardening as #52 and the `CLAUDE.md` levelling as #55. **Which CI jobs block a merge is branch protection**, and three were added during stage 6 - `Agents (image)`, `Engine (image)` and `Compose`. This file has twice assumed the required list keeps up with the workflow; it does not, and nobody here can read that setting. Check it under *Settings - Branches*.
 - **Dependabot's bumps are in.** #46 (setup-uv) and #47 (six Python packages) merged to `master` on 2026-09-26 and were merged *into* `stage-5-selling` rather than rebased onto, because the branch was already pushed and a rebase would need a force-push. Two of the six matter behaviourally - **ag2 1.0.5 to 1.0.6** and **openai 3.16.1 to 3.19.1** - and the lock also *downgraded* SQLAlchemy from 2.1.1 to 2.0.54, which the Alembic fixture exercises on every database test. 476 Python tests green on all of it.
 - **Stage 5's merge history:** `stage-5-model-and-horizon` as #42, `stage-5-screening` as #43, `stage-5-sek` as #44, `stage-5-symbol-columns` as #45 - the last of those repairing #44, which merged four of its six commits and left `master` with the widened pattern and the old columns for a few minutes - `stage-5-selling` as #48 and `stage-5-cycle` as #51.
-- **Two pull requests are open as of 2026-10-11:** this roadmap reordering (`docs/roadmap-after-alpha-review`) and #50, `plan/jev-placement` - a docs-only branch adding `docs/arkitektur-jev-roadmap.md`, **not reviewed here, and left to the owner**, and since 2026-10-11 **postponed** in the roadmap until calibration shows the chain adds value - nothing in this repository's work merges, rebases or pushes to it. **Ten** remote branches are stale and can go, all merged or superseded (checked against `git ls-remote` on 2026-10-11): `security/hardening-f01-f14` (the superseded first attempt at #52), `docs/pr4-live-run` (#53), `stage-5-shortlist-edge` (#54), `stage-5-cycle` (#51), `stage-6-compose-smoke` (#62), `stage-7-trading-mode` (#63), `stage-7-engine-telemetry` (#64), `stage-7-agent-tracing` (#65), `stage-7-engine-default` (#66) and `stage-7-engine-lock` (#67). An earlier version of this sentence named `security/hardening-master-bdf5bf1`, deleted long ago - the one thing the list promises is that deleting them is a reading exercise rather than a search.
+- **Two pull requests are open as of 2026-10-11:** this roadmap reordering (`docs/roadmap-after-alpha-review`) and #50, `plan/jev-placement` - a docs-only branch adding `docs/arkitektur-jev-roadmap.md`, **not reviewed here, and left to the owner**, and since 2026-10-11 **postponed** in the roadmap until stage 8's success criterion is passed - nothing in this repository's work merges, rebases or pushes to it. **Ten** remote branches are stale and can go, all merged or superseded (checked against `git ls-remote` on 2026-10-11): `security/hardening-f01-f14` (the superseded first attempt at #52), `docs/pr4-live-run` (#53), `stage-5-shortlist-edge` (#54), `stage-5-cycle` (#51), `stage-6-compose-smoke` (#62), `stage-7-trading-mode` (#63), `stage-7-engine-telemetry` (#64), `stage-7-agent-tracing` (#65), `stage-7-engine-default` (#66) and `stage-7-engine-lock` (#67). An earlier version of this sentence named `security/hardening-master-bdf5bf1`, deleted long ago - the one thing the list promises is that deleting them is a reading exercise rather than a search.
 - **The security hardening is merged as #52 and verified live** on 2026-10-01: `POST /v1/outcomes` accepted its HMAC signature end to end (`Delivery 8097ab0f: sent 1 outcomes`), 25 market-scope calls answered 200, `/openapi.json` and `/docs` both answer 404, `/ready` returns `{"status":"ready"}` with no dependency detail, and an unauthenticated signal is refused with 401. Nothing was rate-limited. **Both of its required secrets had to be created first** - neither existed after the merge, so neither service would start.
 - **Two of its paths are not verified live:** `POST /v1/signals` and `POST /v1/screen` with their scope keys, because the verification ran on the same trading day as the live run, so no analysis was due and the shortlist was read from the database. All five call sites go through the same `AddApiKey`/`ApiKeyFor` code and no scoped keys are configured, so all five resolve to the legacy key that the 25 successful calls used - but the first new trading day is what proves it, and that is where the blocker found in review would have shown.
 - **The portfolio holds five instruments as of 2026-10-01**, up from one: ERIC-B.ST (26 at 94.96, from 2026-09-26) plus HEXA-B.ST (25 at 99.02), SEB-A.ST (10 at 229.20), EVO.ST (3 at 791.80) and KINV-B.ST (40 at 61.70), all four bought by the engine's own first screened cycle. Cash is 87 920.14 kr. Every one of the four is a *measurable* decision with `selection = Shortlist`, which is what stage 5 existed to produce.
@@ -172,8 +172,10 @@ roadmap's *Investeringsgranskningen*. Stage 7's PRs 1-4a are merged as #63-#67. 
 3. **Stages 9 and 10 in one batch**: the sector cap, a volatility-scaled stop from the first buy
    and the drawdown brake; Large Cap with about 100 names, 12-1 momentum, and value/quality as a
    separate baseline. One new `rules_version` and one new `screen_version`, switched on together.
-4. **Stage 11**: calibration, then quarterly reports as the first new data source.
-5. **Postponed**: Jev (#50) and more specialists, until the criterion is met.
+4. **Stage 11**: calibration, **analysis-only while the window is open** (a sizing change is a new
+   `rules_version`), then quarterly reports as the first new data source - both switched on only
+   after the window closes.
+5. **Postponed**: Jev (#50) and more specialists. **One condition**: stage 8's criterion passes.
 
 The PR 4a summary, as it stood when #67 merged:
 
@@ -3217,9 +3219,19 @@ few independent observations, and every rule change mixed into the series shrink
 - Screening downloads with `auto_adjust=True`, so momentum is already total return.
 - **Effect:** hit rate and excess return against the index are biased **against** the agents by
   about the dividend yield over the horizon, most in April-May, when most Stockholm dividends go
-  ex. `shortlist_edge` compares shares with shares and is less affected. The fix belongs in stage
-  8: score both legs on one adjusted series (scale the signal day's adjusted close by the
-  reference price), with an ex-date and a split in the test table.
+  ex. `shortlist_edge` compares shares with shares and is less affected.
+- **The fix, exactly** (stage 8): the start value becomes `ReferencePrice × (adjusted close /
+  unadjusted close)` on the signal day, and the end value the **adjusted** close on the landing
+  day, both from one fetch. The ratio is the factor every later dividend and split has applied,
+  so the decision's real price is kept and only scaled into the adjusted series. The history
+  endpoint must return both closes (`auto_adjust=False` gives `Close` and `Adj Close` in one
+  call); the benchmark leg uses the same adjusted series. Tested with an ex-date and a split
+  inside the horizon.
+- **NAV has the same hole.** The engine has no dividend handling at all (no match for
+  "dividend" anywhere in `src/engine`): cash is never credited, so a portfolio loses the dividend
+  in value on every ex-date. That would make stage 8's valuation series, its drawdown measure and
+  stage 9's drawdown brake too pessimistic. The valuation series credits the dividend to cash on
+  the ex-date, with a test where an ex-date leaves NAV unchanged.
 
 **Hampus's decision (2026-10-11): the new order.**
 1. **Finish stage 7 small**: PR 4b (Jaeger, 7-day retention, log export) and PR 5 (the runbook).
@@ -3247,26 +3259,61 @@ switch starts a new population.
   `rules_version`.
 - **Primary measure:** the mean of (the buy's net return − the same day's equal-weight
   shortlist's net return) at **20 trading days**, both charged the same cost per trade.
-- **Pass:** the mean is above zero **and** the lower bound of a one-sided 90 % interval is above
-  zero, bootstrapped over *trading days* rather than decisions, because one day's buys move
-  together. The buys must also beat the random control. Hit rate, risk-adjusted return, drawdown
-  and turnover are reported and decide nothing.
+- **A buy the stop sold before day 20** is still measured at 20 trading days from the decision
+  price: the measure judges the *pick*, not the trade, by the same rule as the shortlist (which
+  has no stops), so the rules can neither help nor hurt the agents' number. What the stops
+  actually did shows in the control portfolios' valuation series, which run the same rules.
+- **Pass needs both:**
+  1. the mean is above zero **and** the lower bound of a one-sided 90 % interval is above zero,
+     from a **block bootstrap over trading days with blocks of at least 20 trading days** - not
+     over decisions (one day's buys move together) and not over single days, because 20-day
+     horizons overlap: two buys a week apart share three quarters of their period;
+  2. a **permutation test against the random control**: the same measure for each of **1 000
+     seeded random draws** of as many names from the same day's shortlist as the agents bought,
+     and the agents' value must lie **above the draws' 90th percentile** (one-sided p ≤ 0.10).
+     Cheap, because every shortlisted name is already measured, bought or not.
+
+  Hit rate, risk-adjusted return, drawdown and turnover are reported and decide nothing.
 - **Date:** **six months after the window starts, or earlier once 150 buys from at least 60
   distinct trading days are measured.** Fewer than 100 buys at six months extends it once, by
   three months; after that it counts as a fail.
+- **Evaluated once.** The count may be watched; the result - mean, interval, permutation test -
+  is computed **exactly once**, when the first of the two conditions is met (or at the end of the
+  extension). Computing it weekly and stopping when it looks good would be choosing the outcome.
+  The extension is triggered by the count, not the result, so it is not a second look.
 - **Window start:** when stages 9 and 10 are switched on together, so the agents are judged under
   the rules they will keep. Stage 8's data until then is a dry run of the measures. Nothing in the
-  team, the screen or the rules changes inside the window; a change starts a new population and a
-  new clock. If stages 9-10 merge around the end of 2026, the evaluation date is about the end of
+  team, the screen, the rules or the sizing changes inside the window; a change starts a new
+  population and a new clock. That includes stage 11, which is analysis-only until the window
+  closes. If stages 9-10 merge around the end of 2026, the evaluation date is about the end of
   June 2027.
-- **What it decides:** a pass opens the postponed work (#50, specialists). A fail means the LLM
+- **What it decides:** a pass opens the postponed work (#50, specialists) - **the only condition
+  for it**; calibration has no threshold to pass and is not one. A fail means the LLM
   chain adds cost rather than value and the effort goes into screening. An interval still
   spanning zero after the extension counts as a fail.
 - **Why these numbers, honestly:** 20 days is the longest fixed horizon already measured and the
   one a 30-day thesis cap can reach. A 20-day excess return on one share has a spread of several
   percent, and correlated days cut 150 buys to far fewer independent ones, so even this criterion
-  can only see an edge of roughly a percentage point per trade or more. That limit is Alpha's main
-  risk in numbers, and the reason the universe widens in stage 10.
+  can only see an edge of roughly a percentage point per trade or more. With 20-day blocks, six
+  months (about 125 trading days) is only about six independent blocks, so a pass is hard and the
+  extension likely. That limit is Alpha's main risk in numbers, and the reason the universe
+  widens in stage 10.
+
+**Two more things the review made explicit:**
+- **12-1 momentum needs more history.** `SCREEN_HISTORY_PERIOD = "6mo"` covers 90 days but not
+  twelve months plus the skipped one: 12-1 needs **at least about 13 months** (`2y` or a start
+  date - yfinance has no `13mo`), 6-1 about 7. Twice the data per fetch for 100 names; measure it.
+- **The sector cap needs a sector source in the engine.** There is none: the quote contract
+  leaves sector out on purpose, and sector exists only in the agents' fact sheet, as clipped free
+  text from yfinance's per-share `info`. Proposed: one sector per instrument in the universe
+  configuration, versioned with `screen_version`.
+
+**Review Bot on #70 (accept-with-nits, 2026-10-11)**, all eight fixed in one docs commit: (1) a
+block bootstrap with blocks of at least 20 trading days; (2) 1 000 seeds and a permutation test
+against the 90th percentile; (3) stage 11 analysis-only while the window is open; (4) one
+condition for un-postponing, the criterion; (5) 12-1 needs about 13 months of history; (6) the
+dividend fix as a formula; (7) NAV ignores dividends too; (8) one evaluation, the 20-day measure
+when a stop sold, and the sector source.
 
 **Open for Hampus** (none blocks stage 7's last two PRs):
 1. Confirm, or change, the criterion above - the horizon, the 90 % interval, 150/60/100, six
