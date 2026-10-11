@@ -1,6 +1,6 @@
 # Arkitekturanalys och roadmap
 
-**Skriven:** 2026-09-18. **Gäller commit:** `69c965f`, gren `add-vector-db`. **Senast reviderad:** 2026-09-19 — beslut 4–5, utfallsmätning i etapp 4, ny etapp 5; därefter villkorade granskningsrundor, deterministiska exits och skärpt utfallsmätning.
+**Skriven:** 2026-09-18. **Gäller commit:** `69c965f`, gren `add-vector-db`. **Senast reviderad:** 2026-09-19 — beslut 4–5, utfallsmätning i etapp 4, ny etapp 5; därefter villkorade granskningsrundor, deterministiska exits och skärpt utfallsmätning. **Omordnad 2026-10-11** efter Alphas investeringsgranskning, godkänd av Hampus: etapp 7 avslutas smalt, mätningen härdas före nya regler, ny screening och nya agenter, och den gamla etapp 8 ersattes av etapp 8–11 och *Uppskjutet*.
 
 Det här dokumentet är en bedömning av systemets arkitektur och en etappindelad väg framåt. Det är skrivet för att läsas i början av nästa kodsession — läs *Beslut* och *Roadmap* först; resten är underlag.
 
@@ -118,9 +118,35 @@ Räkna med att TDD lägger på 20–40 % i varje etapp initialt. Det betalar til
 
 ---
 
+## Investeringsgranskningen (Alpha, 2026-10-11)
+
+En investeringskunnig agent, Alpha, granskade systemet som investeringsprocess snarare än som kod. Hampus godkände den nya ordningen 2026-10-11. **Slutsatsen: grunden håller, men den största risken är att mätserien förblir för liten och för korrelerad för att någonsin besvara huvudfrågan** — slår agenternas val kortlistan som screeningen gav dem? Trettio aktier ur samma index, som rör sig tillsammans, ger få oberoende observationer per månad, och varje regeländring som blandas in i serien gör den mindre.
+
+Det Alpha pekade på, och var det hamnar:
+
+| Fynd | Hur det ser ut i dag | Etapp |
+|---|---|---|
+| Träffsäkerhet är ett svagt mått | `trading.hit_rate` och `shortlist_edge` (snitt av överavkastning) | 8 |
+| Inga kontrollportföljer | Kortlistans snitt finns som vy, men ingen portfölj med kostnad, omsättning och drawdown, och ingen slumpkontroll | 8 |
+| Det fasta HOLD-bandet på ±2 % är godtyckligt | `HoldBandPct: 0.02`, samma för en bank som för EVO och för 1 som för 20 handelsdagar | 8 |
+| Utdelningar måste räknas på båda sidor | Räknas på XACT-sidan men inte på aktiesidan — se etapp 8 | 8 |
+| Inget förregistrerat framgångskriterium | Det finns ett mått men inget datum och ingen gräns | 8 |
+| Ingen sektorgräns | `MaxPositionPercentage: 0.05` per innehav, inget per sektor | 9 |
+| En fast stop-loss på 10 % behandlar volatila namn som banker | `StopLossPercentage: 0.10`, mätt mot snittpriset | 9 |
+| Ingen broms på portföljnivå | Kill switch finns, men den är manuell | 9 |
+| 3 månaders momentum är kort | `MOMENTUM_DAYS = 90`, volatilitetsjusterat | 10 |
+| Värde och kvalitet hör inte hemma i rankningen | Rankningen är i dag ren momentum — inget att ta bort, men värde/kvalitet ska bli en egen baslinje i stället för att blandas in | 10 |
+| 31 namn är smalt | 31 OMXS30-namn | 10 |
+| Kalibrering före nya datakällor; kvartalsrapporter före nyheter, makro och sentiment | Gamla etapp 8 lade specialisterna först | 11 |
+| Skjut upp större hostad modell som portföljförvaltare (#50, Jev) och fler specialister | #50 är öppen | Uppskjutet |
+
+**Förutsättningen för allt efter etapp 8 är versionering.** `team_version` gör att två promptversioner aldrig slås ihop. Screeningen och riskreglerna har ingen motsvarighet, så en ändring av momentumfönstret eller stop-lossen skulle i dag tyst blanda två populationer i samma mått. Därför versioneras de i etapp 8, och regeländringarna i etapp 9 och 10 görs **i ett svep**, inte en i taget — varje ändring startar en ny population, och få stora byten kostar mindre mätserie än många små.
+
+---
+
 ## Roadmap
 
-Nio etapper. Var och en lämnar systemet körbart och testat.
+Från början nio etapper (0–8). Sedan 2026-10-11 är ordningen efter etapp 7: härda mätningen (8), riskregler (9) och screening (10) aktiverade i ett svep, kalibrering och kvartalsrapporter (11) — och först därefter det som står under *Uppskjutet*. Se *Investeringsgranskningen*. Den gamla etapp 8 står kvar som historik. Var och en lämnar systemet körbart och testat.
 
 ### Etapp 0 — Fundament: reproducerbart bygge, testharnesk och CI (1 dag)
 
@@ -269,7 +295,7 @@ Requestens `team_id` slås upp i `TEAMS`; okänt id → **422**, inget tyst stan
 
 Prompterna flyttar till `app/teams/<id>/prompts/`. Uppdatera då språkregeln i CLAUDE.md, som pekar på `app/infrastructure/ag2/`.
 
-Håll det linjärt: en `TeamSpec` körs som en sekvens av steg, inte som en fri graf. Men `reads` beskriver redan beroendena, så när fler specialister tillkommer (fundamenta, teknisk analys, nyheter, makro) kan steg utan beroende av varandra köras parallellt med `asyncio.gather` — ett tillägg i pipelinen, inte en ombyggnad. Bygg det när specialisterna finns. Dynamisk routing mellan agenter hör hemma i etapp 8.
+Håll det linjärt: en `TeamSpec` körs som en sekvens av steg, inte som en fri graf. Men `reads` beskriver redan beroendena, så när fler specialister tillkommer (fundamenta, teknisk analys, nyheter, makro) kan steg utan beroende av varandra köras parallellt med `asyncio.gather` — ett tillägg i pipelinen, inte en ombyggnad. Bygg det när specialisterna finns. Dynamisk routing mellan agenter hör hemma i etapp 8 (sedan 2026-10-11: under *Uppskjutet*).
 
 **Väntar tills ett andra team behövs på riktigt:** team i `app/teams/<id>/team.yaml`, ett `TeamRegistry` som laddar och validerar dem vid startup, och register som slår upp scheman och verktyg via namn. Med ett enda team skulle YAML-formatet gissa vad som skiljer team åt; med två vet man det. Villkoret är behovet, inte en etapp — annars byggs det för att det står i planen. När det kommer: `yaml.safe_load`, aldrig `yaml.load`, och registret vägrar starta vid okänt verktyg, okänt schema eller fel sista steg.
 
@@ -357,7 +383,81 @@ Multi-stage Dockerfile för båda tjänsterna (non-root, `uv sync --locked`, `do
 
 OpenTelemetry i motorn med egna mätvärden (`decisions_total{outcome}`, `risk_rejections_total`, `agent_latency_seconds`), `ag2[tracing]` + `TelemetryMiddleware` i Python, `traceparent` propagerad från motorn så en hel cykel blir **ett** trace. `capture_content=False` i produktion så prompter inte hamnar i traces. `TradingMode: Shadow | Paper | Live` + kill switch. Rate limiting. Deploy till VPS med compose, eller Azure Container Apps / Fly.io med plattformens secret store. Runbook: hur man startar om, var loggarna finns, hur man stänger av handeln.
 
-### Etapp 8 — Riktigt team och kalibrering (öppen)
+**Status 2026-10-11:** `TradingMode` och kill switchen (#63), motorns mätvärden och ett trace per cykel (#64, #65), motorn i en vanlig `up` (#66) och en motor per databas (#67) är mergade; rate limiting fanns redan (#52). **Kvar, och det hålls smalt:** Jaeger i compose med 7 dagars lagring plus loggexport över OTLP (PR 4b), och runbooken (PR 5). Deployen är uppskjuten utan valt mål — motorn körs på Hampus maskin tills han bestämmer annat.
+
+### Etapp 8 — Mäthärdning (ny 2026-10-11)
+
+Innan något i strategin ändras ska mätningen kunna säga om en ändring hjälpte. Allt i etappen är mätning; inget ändrar vad som handlas.
+
+**Förutsättning: screeningen och riskreglerna versioneras**, på samma sätt som `team_version`. En `screen_version` (universum, fönster, filter, rankning) och en `rules_version` (`RiskPolicy` och exits) räknas som hash över de inställningar som påverkar ett beslut, och sparas på varje beslut och varje kortlista. Måtten grupperar på dem, som de redan grupperar på `team_version` och `trading_mode`. Det här kommer först, eftersom etapp 9 och 10 annars skulle blanda populationer från första dagen.
+
+**Kontrollportföljer i Shadow.** Två portföljer som motorn för vid sidan av den riktiga, utan att lägga order, men med samma kostnader och samma regler:
+- **Hela kortlistan, likaviktad** — det agenterna ska slå. Ersätter inte vyn `shortlist_edge`, men ger den en kostnad, en omsättning och en drawdown.
+- **Slumpval ur kortlistan** — lika många köp som agenterna gjorde samma dag, ur samma dags kortlista. Den skiljer "agenterna väljer bra" från "att välja ur den här kortlistan går bra". **Ett frö räcker inte**: en enda slumpportfölj är en dragning, och att slå den säger lite. Motorn för en slumpportfölj med sparat frö för värderingsserien, men testet räknas på **1 000 frön** (sparade, så att varje dragning går att återskapa). Det är billigt, eftersom varje instrument på kortlistan redan mäts, köpt eller inte — en dragning är bara ett annat urval av utfall som redan finns.
+
+**Nya mått**, bredvid träffsäkerheten som behålls: snittöveravkastning per beslut, riskjusterad avkastning (överavkastning delat med dess spridning), maxdrawdown, omsättning och kostnad. De tre sista kräver en **daglig värderingsserie** per portfölj — i dag finns ingen, bara beslut och order — så etappen lägger till den. **Den måste räkna med utdelningar**, och det gör NAV inte i dag: motorn har ingen utdelningshantering alls, så kassan krediteras aldrig och en portfölj tappar utdelningen i värde på varje x-dag. Det skulle göra värderingsserien, drawdown-måttet och drawdownbromsen i etapp 9 för pessimistiska, mest för högutdelande innehav och mest i april–maj. Rättningen hör till värderingsserien: utdelningen krediteras kassan på x-dagen, ur samma källas utdelningshistorik, med ett test där en x-dag inte rör NAV.
+
+**HOLD-bandet skalas med volatilitet och horisont.** I stället för fasta ±2 % blir bandet ungefär `k · σ_daglig · √horisont`, så att en HOLD på EVO över 20 dagar inte bedöms med samma band som en HOLD på en bank över en dag. `k` sätts en gång och versioneras med måtten.
+
+**Utdelningar, kontrollerat i koden 2026-10-11.** Svaret är *nej på aktiesidan, ja på jämförelsesidan*:
+- Instrumentets avkastning räknas från `ReferencePrice` — det pris beslutet togs på, `currentPrice` ur yfinance, ojusterat — till stängningskursen vid horisonten (`OutcomeCalculator`). Kursen faller med utdelningen på x-dagen och utdelningen läggs aldrig tillbaka, så **en utdelning under horisonten räknas som en förlust för aktien.**
+- Jämförelsen räknas från stängning till stängning i XACT-OMXS30.ST:s historik. XACT OMXS30 ESG delar inte ut (fondbestämmelserna § 12, senaste utdelning 2011) och återinvesterar utdelningarna, så **jämförelsen är totalavkastning.**
+- Historiken kommer från `Ticker.history`, vars `auto_adjust` är på som standard i yfinance 1.7. Det ändrar inget av ovanstående i praktiken, eftersom horisonten mäts kort efter att den passerat, men det gör att en sen mätning kan få en justerad slutkurs mot ett ojusterat referenspris. **Samma blandning gör att en split under horisonten skulle mätas som ett ras.**
+- Screeningen hämtar med `auto_adjust=True`, så momentum är redan totalavkastning.
+- Följden: hit rate och överavkastning mot index är snedvridna *mot* agenterna med ungefär direktavkastningen för horisonten, mest under utdelningssäsongen april–maj. `shortlist_edge` jämför aktier med aktier och påverkas mindre. **Rättningen, exakt:** instrumentets startvärde blir `ReferencePrice × (justerad stängning / ojusterad stängning)` på signaldagen, och slutvärdet blir den **justerade** stängningen på horisontdagen — båda ur samma hämtning, så att justeringen är densamma i täljare och nämnare. Kvoten justerad/ojusterad är exakt den faktor som utdelningar och splittar efter signaldagen har gett, så beslutets verkliga pris behålls och skalas bara in i den justerade serien. Det kräver att historikendpointen lämnar båda kurserna (`auto_adjust=False` ger `Close` och `Adj Close` ur samma anrop). Jämförelsebenet räknas på samma justerade serie. Testtabellen får en x-dag och en split under horisonten, och i båda ska avkastningen bli den som en innehavare fick.
+
+**Ett förregistrerat framgångskriterium — förslag till Hampus, att bekräfta eller ändra innan mätfönstret startar:**
+- **Fråga:** slår agenternas köp den likaviktade kortlistan, efter kostnader?
+- **Population:** BUY-beslut med `selection = Shortlist`, Paper och Shadow tillsammans (ett skuggat köp räknas som agenternas val, enligt E6 i worklog), en `team_version`, en `screen_version` och en `rules_version`.
+- **Primärt mått:** snittet av (köpets nettoavkastning − samma dags likaviktade kortlistas nettoavkastning) vid **20 handelsdagar**, båda med samma kostnad per affär.
+- **Ett köp som stoppen sålde före dag 20** mäts ändå vid 20 handelsdagar, från beslutets pris — måttet bedömer *valet*, inte affären. Det är samma regel som kortlistan mäts med (ingen kortlisteaktie har en stop), så jämförelsen förblir lika mot lika, och reglerna kan inte förbättra eller försämra agenternas siffra. Vad stoppen faktiskt gav syns i kontrollportföljernas värderingsserier, som har samma regler som den riktiga portföljen.
+- **Godkänt kräver båda:**
+  1. snittet är över noll **och** den nedre gränsen i ett ensidigt 90 %-intervall är över noll, med en **blockbootstrap över handelsdagar, med block om minst 20 handelsdagar**. Inte över beslut, eftersom samma dags köp rör sig tillsammans, och inte över enskilda dagar, eftersom två köp med 20 dagars horisont som görs med en veckas mellanrum delar tre fjärdedelar av sin period — horisonterna överlappar, och ett kortare block skulle räkna samma marknadsrörelse flera gånger;
+  2. ett **permutationstest mot slumpkontrollen**: samma mått räknas för var och en av de 1 000 slumpdragningarna, och agenternas värde ska ligga **över dragningarnas 90:e percentil** (ensidigt p ≤ 0,10).
+  
+  Allt annat — träffsäkerhet, riskjusterad avkastning, drawdown, omsättning — rapporteras men avgör inte. **Ärligt om styrkan:** efter sex månader (ungefär 125 handelsdagar) vilar intervallet på ungefär sex oberoende block. Det gör ett godkännande svårt och förlängningen sannolik, och det är Alphas huvudrisk uttryckt i siffror.
+- **Datum:** **sex månader efter att mätfönstret startar, eller tidigare om 150 mätta köp från minst 60 olika handelsdagar finns.** Färre än 100 köp efter sex månader förlänger en gång med tre månader; därefter räknas det som underkänt.
+- **Utvärderingen görs en gång.** Antalet mätta köp får följas löpande, men resultatet — snittet, intervallet, permutationstestet — räknas **exakt en gång**, när det första av de två villkoren ovan är uppfyllt (eller vid förlängningens slut). Att räkna det varje vecka och stanna när det ser bra ut vore att välja sitt eget utfall. Förlängningen styrs av antalet köp, inte av resultatet, så den är ingen andra titt.
+- **När fönstret startar:** när etapp 9 och 10 är aktiverade i ett svep, så att det är de reglerna agenterna bedöms under. Data från etapp 8 fram till dess är en provkörning av måtten. Under fönstret ändras varken team, screening, regler eller sizing — en ändring startar en ny population och en ny klocka. Det gäller också etapp 11 (se där).
+- **Utfallet styr:** godkänt öppnar *Uppskjutet* — och det är **det enda villkoret** för det. Underkänt betyder att LLM-kedjan tillför kostnad, inte värde, och att arbetet går till screeningen. Ett intervall som spänner över noll efter förlängningen räknas som underkänt.
+
+**Tester.** Kontrollportföljerna och måtten är rena funktioner mot fasta serier — TDD, med tabeller. Utdelningsrättningen test-först med en x-dag och en split. Versionshashen ändras av varje inställning som påverkar ett beslut och av ingen annan.
+
+*Varför:* det här är det billigaste sättet att göra mätserien större — inte fler beslut, utan färre blandade populationer och mått som säger mer per beslut.
+
+### Etapp 9 — Riskregler i ett svep (ny 2026-10-11)
+
+Tre regler, byggda test-först i `RiskPolicy` och aktiverade tillsammans under en ny `rules_version`:
+- **Sektorgräns:** högst 2–3 innehav, eller ungefär 25 % av NAV, per sektor. Trettio namn ur samma index är redan korrelerade; fem banker är ett beslut, inte fem. **Motorn har ingen sektorkälla i dag**: `quote`-kontraktet utelämnar sektor med avsikt, och sektorn finns bara i agenternas `FactSheet`, som fritext ur yfinance `info`, hämtad per aktie. Regeln behöver en egen, deterministisk källa — förslagsvis en sektor per instrument i universumkonfigurationen, versionerad med `screen_version`, så att en omklassning är en ny version och inte en tyst ändring.
+- **Volatilitetsskalad stop-loss, mätt från första köpet:** avståndet sätts som en multipel av instrumentets volatilitet i stället för fasta 10 %, och mäts från första köpets pris i stället för snittpriset, som sjunker när man köper mer.
+- **Drawdownbroms:** inga nya köp när portföljen har fallit 10–15 % från sin topp (värdet bestäms här). Sälj och exits fortsätter, precis som för kill switchen. Den behöver värderingsserien från etapp 8 — **med utdelningarna inräknade**, annars drar varje x-dag portföljen närmare bromsen utan att något har förlorats.
+
+### Etapp 10 — Screening (ny 2026-10-11)
+
+Aktiveras i samma svep som etapp 9, under en ny `screen_version`:
+- **Universum:** Large Cap Stockholm, ungefär 100 namn, med ett likviditetsfilter, i stället för 31 OMXS30-namn. Batchhämtningen klarar det — 50 namn tog 2,0 s i etapp 5.
+- **Momentum 12-1** (tolv månader utom den senaste), eller 6-1, i stället för 90 dagar. Volatilitetsjusteringen behålls. **Screeningens historik räcker inte i dag:** `SCREEN_HISTORY_PERIOD = "6mo"` täcker 90 dagar men inte tolv månader plus den överhoppade. 12-1 behöver **minst ungefär 13 månader** bakåt (yfinance har ingen period `13mo`, så `2y` eller ett startdatum), 6-1 ungefär 7 månader. Det är dubbelt så mycket data per hämtning för 100 namn, och värt att mäta innan det antas vara gratis.
+- **Värde och kvalitet som en egen baslinje**, en tredje kontrollportfölj i Shadow, inte inblandad i rankningen — så att den svarar på en egen fråga i stället för att späda ut momentumsignalen.
+
+Datakällan är fortfarande yfinance, och nyckeltal per aktie skalar fortfarande dåligt (se etapp 5). Värdebaslinjen kan därför behöva nyckeltal som hämtas en gång per dag och cachas.
+
+### Etapp 11 — Kalibrering, sedan kvartalsrapporter (ny 2026-10-11)
+
+**Kalibreringen är analys medan mätfönstret är öppet.** En justerad sizing-kurva är en ny `rules_version`, och en ny version mitt i fönstret skulle starta om klockan. Så under fönstret *räknar* etappen — conviction mot utfall per version, och replay av sparade `FactSheet`s för att jämföra promptversioner på samma underlag — men *ändrar* ingenting. Justeringarna den föreslår kopplas på först när fönstret har stängts och utvärderingen är gjord, som en ny population.
+
+**Sedan kvartalsrapporter som första nya datakälla**, också de påkopplade först efter fönstret, eftersom de ändrar teamet och därmed `team_version`. De kommer före nyheter, makro och sentiment. En rapport är strukturerad, sällsynt och daterad, och det är tidsstämplarna som avgör om den går att utvärdera: ett utfall publicerat samma dag och tydligt tidsstämplat, så att ingenting från efter beslutet kan läcka in. Villkoren från gamla etapp 8 gäller fortfarande: en mätt baslinje och prompt-hygienen från etapp 3.
+
+### Uppskjutet — tills framgångskriteriet i etapp 8 är godkänt
+
+- **En större hostad modell som portföljförvaltare** (#50, `plan/jev-placement`, Jev).
+- **Fler specialister** — nyheter, makro, sentiment — och `ag2.network`/fri routing, flera team per instrument.
+
+**Ett enda villkor: framgångskriteriet i etapp 8 är godkänt.** Inte kalibreringen — den är analys och har ingen gräns som kan passeras. En större modell och fler steg kostar mer per beslut, och det går inte att se om de tillför något förrän det finns ett mått som kan säga att kedjan som finns gör det.
+
+### Tidigare etapp 8 — Riktigt team och kalibrering (ersatt 2026-10-11)
+
+*Står kvar som historik. Kalibreringen och kvartalsrapporterna ligger nu i etapp 11, specialisterna och `ag2.network` under* Uppskjutet.
+
 
 **Utbyggnad mot nyheter och omvärld: beställd, med villkor.** Fler specialister — nyheter, makro, sentiment — som parallella steg med egna scheman, där en sammanvägande agent läser deras resultat (se `reads` i etapp 3). Det är beställt, inte önskat: det är den halva av systemet där en LLM faktiskt har ett övertag, eftersom koden redan äger siffrorna (beslut 5). Två villkor gäller först: en **mätt baslinje** från etapp 4, så att tillskottet syns i utfall i stället för i känsla, och **prompt-hygienen från etapp 3**, eftersom extern text är den enda vägen prompt injection kommer in.
 
@@ -398,7 +498,7 @@ Det som håller systemet vid liv efter att det är byggt, och som är lätt att 
 
 ## Medvetna nej
 
-- **`ag2.network`/Hub före etapp 8.** Hub, transports, passport och rules är en distribuerad plattform. Den kommer att bli projektet i stället för en del av det.
+- **`ag2.network`/Hub innan framgångskriteriet i etapp 8 är godkänt** (*Uppskjutet*). Hub, transports, passport och rules är en distribuerad plattform. Den kommer att bli projektet i stället för en del av det.
 - **Riktig MCP över protokollet före etapp 6.** In-process-anropet i `team.py:5` är inte fel — det är bara felmärkt. Gör om det till MCP när du har fler än en verktygsserver eller vill köra verktyg isolerat.
 - **`Agent.as_tool()`-delegation som huvudmönster.** 3B-modeller är opålitliga på verktygsval och du tappar determinismen i kedjan.
 - **Microservices, event bus, CQRS.** Två tjänster och en person. HTTP + Postgres räcker långt förbi den här roadmapen.
@@ -410,7 +510,7 @@ Det som håller systemet vid liv efter att det är byggt, och som är lätt att 
 - **Historiskt backtest som bevis för att agenterna fungerar.** Se lookahead-varningen i etapp 4.
 - **Blankning.** SELL utan innehav blir ingen order.
 - **Fonder.** Fokus är aktier (beslutat 2026-09-19). Kontraktet skulle klara en `fund`-variant i instrumentunionen, men den byggs inte.
-- **Derivat före etapp 8.** Kontraktet har plats för dem från etapp 2, men det svåra ligger i motorn, inte hos agenterna: `Position`, `PositionSizer` och `RiskPolicy` förutsätter aktier, och en option kräver förfallodag, multiplikator, hävstång och en riskmodell som inte är "X % av NAV". Det är ett eget projekt ovanpå en fungerande aktieversion — ett agent-team som *analyserar* derivat utan att motorn kan riskbedöma dem är värre än inget.
+- **Derivat innan aktieversionen är bevisad** (tidigare: före etapp 8). Kontraktet har plats för dem från etapp 2, men det svåra ligger i motorn, inte hos agenterna: `Position`, `PositionSizer` och `RiskPolicy` förutsätter aktier, och en option kräver förfallodag, multiplikator, hävstång och en riskmodell som inte är "X % av NAV". Det är ett eget projekt ovanpå en fungerande aktieversion — ett agent-team som *analyserar* derivat utan att motorn kan riskbedöma dem är värre än inget.
 
 ---
 
@@ -423,6 +523,8 @@ Det som håller systemet vid liv efter att det är byggt, och som är lätt att 
 **Utfallsmätningen flyttade från sista etappen till etapp 4** (2026-09-19). Den låg sist, men den är det enda sättet att veta om målet — aktier som går bra på kort sikt — nås. Varje vecka utan mätning är en vecka beslut som inte går att utvärdera i efterhand utan lookahead bias.
 
 **Screening och sälj fick en egen etapp 5** (2026-09-19), före containerisering och drift. Utan dem bedömer systemet bara en ticker som någon annan valt, och det är målet — inte hostingen — som ska styra ordningen. Senare etapper numrerades om ett steg.
+
+**Mätningen härdas före strategin** (2026-10-11), efter Alphas granskning. Den gamla etapp 8 lade fler specialister och en riktig kalibrering i samma etapp, och nyheter före rapporter. Nu kommer kontrollportföljer, bättre mått och ett förregistrerat kriterium först, sedan riskregler och screening i ett svep under nya versioner, sedan kalibrering, och först därefter nya datakällor — kvartalsrapporter före nyheter, makro och sentiment. En större modell (#50) och fler specialister väntar tills kriteriet är godkänt — det är det enda villkoret. Skälet är detsamma som när utfallsmätningen flyttade till etapp 4: det som inte går att mäta går inte att förbättra, och varje ändring före mätningen gör serien mindre.
 
 Kvar sedan tidigare: minnet ligger i etapp 4 och inte först, eftersom det blir mycket mer värt när det finns beslut med registrerade utfall att lära av.
 
@@ -452,3 +554,7 @@ Kvar sedan tidigare: minnet ligger i etapp 4 och inte först, eftersom det blir 
 6. **Etapp 5:** `POST /v1/screen` rankar hela universumet utan ett enda LLM-anrop. En cykel analyserar kortlistan plus innehaven, och en SELL på ett innehav minskar positionen i loggen. Ett innehav som faller under stop-lossen säljs utan att någon agent tillfrågas, och ett oförändrat `FactSheet` ger ingen ny analys.
 7. **Etapp 6:** `docker compose up` ger ett fungerande system från rent läge.
 8. **Etapp 7:** en analyscykel syns som ett sammanhängande trace från motorn genom agentkedjan.
+9. **Etapp 8:** varje beslut och varje kortlista bär `screen_version` och `rules_version`, och en ändrad stop-loss ger en ny `rules_version` medan en ändrad loggnivå inte gör det. Kontrollportföljerna har en daglig värdering, och slumpkontrollens val går att återskapa ur sitt frö. Ett köp över en x-dag mäts med utdelningen inräknad, och en split under horisonten ger ingen falsk förlust. Framgångskriteriet står i worklog och är bekräftat av Hampus med datum.
+10. **Etapp 9:** ett köp som tar en sektor över gränsen (antal eller andel av NAV) avvisas med ett eget skäl. En volatil aktie får en vidare stop än en bank, och ett andra köp flyttar inte stoppen. Vid ett fall från toppen över bromsen avvisas nya köp medan sälj och exits fortsätter.
+11. **Etapp 10:** screeningen rankar ungefär 100 Large Cap-namn med 12-1-momentum utan ett LLM-anrop, och värde/kvalitet finns som egen kontrollportfölj, inte i rankningen.
+12. **Etapp 11:** en kalibreringsrapport jämför conviction mot utfall per version, och under mätfönstret ändrar den ingen `rules_version`. En kvartalsrapport når en agent bara med en publiceringstid före beslutet.
